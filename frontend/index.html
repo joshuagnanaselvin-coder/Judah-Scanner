@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Judah Scanner</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="logo">
+        <span class="logo-icon">Judah Scanner</span>
+        <span class="subtitle">CRT + SMC Institutional Signals</span>
+      </div>
+      <div class="status-bar">
+        <div class="status-item" id="wsStatus">
+          <span class="status-dot disconnected" id="wsDot"></span>
+          <span id="wsLabel">Connecting...</span>
+        </div>
+        <button class="btn-restart" id="btnRestart" title="Clear signals &amp; re-bootstrap data">
+          <span class="restart-icon">↻</span>
+          <span class="restart-label">Restart</span>
+        </button>
+        <div class="status-item" id="signalCount">0 signals</div>
+        <div class="status-item" id="lastUpdate">--</div>
+      </div>
+    </header>
+
+    <div class="filters">
+      <div class="filter-group">
+        <label>Tier:</label>
+        <button class="filter-btn active" data-tier="all">All</button>
+        <button class="filter-btn" data-tier="SNIPER">SNIPER</button>
+        <button class="filter-btn" data-tier="OPPORTUNITY">OPPORTUNITY</button>
+        <button class="filter-btn" data-tier="WATCH">WATCH</button>
+      </div>
+      <div class="filter-group">
+        <label>Direction:</label>
+        <button class="filter-btn active" data-dir="all">All</button>
+        <button class="filter-btn" data-dir="BULLISH">BULL</button>
+        <button class="filter-btn" data-dir="BEARISH">BEAR</button>
+      </div>
+      <div class="filter-group">
+        <label>TF:</label>
+        <button class="filter-btn active" data-tf="all">All</button>
+        <button class="filter-btn" data-tf="1h">1H</button>
+        <button class="filter-btn" data-tf="4h">4H</button>
+        <button class="filter-btn" data-tf="1d">1D</button>
+      </div>
+      <div class="filter-group">
+        <label>Min Score:</label>
+        <input type="range" id="scoreFilter" min="40" max="100" value="40">
+        <span id="scoreVal">40</span>
+      </div>
+    </div>
+
+    <div class="signals-container" id="signalsContainer">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-icon">Judah Scanner</div>
+        <h2>Waiting for signals...</h2>
+        <p>Scanning coins across 1H, 4H, 1D</p>
+        <p class="hint">Signals appear here in real-time</p>
+      </div>
+    </div>
+
+    <div class="modal" id="modal" style="display:none">
+      <div class="modal-content" id="modalContent"></div>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
