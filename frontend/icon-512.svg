@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="86" fill="#0a0e17"/>
+  <text x="256" y="234" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="150" font-weight="800" fill="#3b82f6">J</text>
+  <text x="256" y="320" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="54" font-weight="600" fill="#a3a3a3">JUDAH</text>
+  <circle cx="256" cy="234" r="192" fill="none" stroke="#3b82f6" stroke-width="8" opacity="0.3"/>
+</svg>

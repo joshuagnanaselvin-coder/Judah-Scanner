@@ -1,0 +1,26 @@
+{
+  "name": "Judah Scanner",
+  "short_name": "Judah",
+  "description": "CRT + SMC Institutional Crypto Signal Scanner",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0e17",
+  "theme_color": "#3b82f6",
+  "categories": ["finance", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/static/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/static/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
