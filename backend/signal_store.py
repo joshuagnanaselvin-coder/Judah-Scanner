@@ -48,6 +48,7 @@ class SignalStore:
         age = signal['age_ticks']
         base = signal.get('base_score', signal.get('composite_score', 0))
         signal['base_score'] = base
+        rr = signal.get('rr', 1.5)
 
         # Decay: 1pt per ~2min, floor at 20
         # 2min=1pt, 5min=2pts, 10min=4pts, 20min=8pts, 30min=12pts
@@ -56,11 +57,12 @@ class SignalStore:
         for threshold, pts in sorted(decay_map.items()):
             if age >= threshold:
                 decay = pts
+        # Live display score (decays for visual feedback only — does NOT affect tier)
         signal['composite_score'] = max(20, base - decay)
 
-        # Recalculate tier based on current composite_score
-        rr = signal.get('rr', 1.5)
-        signal['tier'] = _recalc_tier(signal['composite_score'], rr)
+        # Tier is locked to the ORIGINAL base score — never downgraded by age decay.
+        # A SNIPER stays SNIPER until the setup is revalidated or invalidated.
+        signal['tier'] = _recalc_tier(base, rr)
 
         # Freshness state
         if age < 12:
