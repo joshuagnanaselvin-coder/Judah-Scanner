@@ -42,8 +42,8 @@ def compute_volume_profile(candles: list, num_levels: int = 12) -> dict:
             oh = min(ch, lh)
             if ch > cl:
                 vol += _cv(c, 'volume') * (oh - ol) / (ch - cl)
-        levels.append({"price": round(mid, 2), "volume": round(vol, 2),
-                       "low": round(ll, 2), "high": round(lh, 2)})
+        levels.append({"price": mid, "volume": vol,
+                       "low": ll, "high": lh})
 
     sorted_vol = sorted(levels, key=lambda x: x["volume"], reverse=True)
     poc = sorted_vol[0]
@@ -119,12 +119,12 @@ class VolumeProfile:
             try:
                 vol = _cv(candle, 'volume')
                 # Primary fill at close (50% weight)
-                close_bucket = (_cv(candle, 'close') // self.bucket_size) * self.bucket_size
+                close_bucket = round(_cv(candle, 'close') / self.bucket_size) * self.bucket_size
                 self.buckets[close_bucket] = self.buckets.get(close_bucket, 0) + vol * 0.5
 
                 # Secondary fill at high and low (25% each)
-                high_bucket = (_cv(candle, 'high') // self.bucket_size) * self.bucket_size
-                low_bucket = (_cv(candle, 'low') // self.bucket_size) * self.bucket_size
+                high_bucket = round(_cv(candle, 'high') / self.bucket_size) * self.bucket_size
+                low_bucket = round(_cv(candle, 'low') / self.bucket_size) * self.bucket_size
                 self.buckets[high_bucket] = self.buckets.get(high_bucket, 0) + vol * 0.25
                 self.buckets[low_bucket] = self.buckets.get(low_bucket, 0) + vol * 0.25
             except (TypeError, KeyError, AttributeError, ZeroDivisionError):

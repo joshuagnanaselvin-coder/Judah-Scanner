@@ -29,6 +29,103 @@ def _tier(score: float) -> str:
     return "REJECTED"
 
 
+def _detect_tick_size(price: float) -> float:
+    """Auto-detect tick size from price magnitude. Returns float."""
+    if price < 0.0001:
+        return 1e-9      # Sub-satoshi pairs (PEPE etc.)
+    elif price < 0.01:
+        return 1e-7
+    elif price < 1:
+        return 1e-5
+    elif price < 100:
+        return 0.0001
+    else:
+        return 0.001
+
+
+def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, crt: dict) -> tuple:
+    """Hybrid entry model:
+    1. If scenario has a structural anchor (OB, FVG, sweep, MSB, OTE, CRT), use that level
+    2. Otherwise fall back to market price with tick-size-aware buffer
+
+    Returns (entry_price, entry_type, distance_to_entry_pct)
+    """
+    last = candles[-1].close
+    atr_val = crt.get("atr_value", last * 0.01) or last * 0.01
+    tick_size = _detect_tick_size(last)
+    buffer = max(tick_size, atr_val * 0.05, last * 0.0005)
+
+    entry_market = last + buffer if direction == "BULLISH" else last - buffer
+
+    entry = entry_market
+    entry_type = "market"
+
+    try:
+        if scenario == "OB_BOUNCE" and smc.get("ob"):
+            ob = smc["ob"]
+            ob_high = ob.get("high", 0)
+            ob_low = ob.get("low", 0)
+            if ob_high and ob_low:
+                entry = (ob_high + ob_low) / 2
+                entry_type = "structural_ob"
+
+        elif scenario and scenario.startswith("FVG_FILL") and smc.get("fvg"):
+            fvg = smc["fvg"]
+            fvg_top = fvg.get("top", 0)
+            fvg_bot = fvg.get("bottom", 0)
+            if fvg_top and fvg_bot:
+                entry = (fvg_top + fvg_bot) / 2
+                entry_type = "structural_fvg"
+
+        elif scenario == "LIQUIDITY_SWEEP" and smc.get("liquidity"):
+            liq = smc["liquidity"]
+            level = liq.get("level", last)
+            if level and level != last:
+                entry = level
+                entry_type = "structural_sweep"
+
+        elif scenario == "MSB_RETEST" and smc.get("msb"):
+            msb = smc["msb"]
+            level = msb.get("level")
+            if level:
+                entry = level
+                entry_type = "structural_msb"
+
+        elif scenario == "DISPLACEMENT_RETRACEMENT" and crt.get("displacement"):
+            d = crt["displacement"]
+            disp_low = d.get("low", 0)
+            disp_high = d.get("high", 0)
+            if disp_low and disp_high and disp_high > disp_low:
+                if direction == "BULLISH":
+                    entry = disp_low + (disp_high - disp_low) * 0.59
+                else:
+                    entry = disp_high - (disp_high - disp_low) * 0.59
+                entry_type = "structural_ote"
+
+        elif scenario == "CRT_SETUP" and crt.get("range"):
+            rng = crt["range"]
+            rng_low = rng.get("low", last)
+            rng_high = rng.get("high", last)
+            # Range reversion: entry at the boundary price is rejecting FROM
+            if direction == "BULLISH":
+                candidate = rng_low
+            else:
+                candidate = rng_high
+            # Only use structural if boundary is reasonably close (within 5%)
+            if abs(candidate - last) / last <= 0.05:
+                entry = candidate
+                entry_type = "structural_crt"
+            else:
+                entry = entry_market
+
+    except Exception:
+        entry = entry_market
+        entry_type = "market"
+
+    distance_pct = (entry - last) / last * 100 if last else 0
+    return round(entry, 5), entry_type, round(distance_pct, 2)
+
+
 # ---------------------------------------------------------------------------
 # Structural SL/TP — hedge fund methodology
 # ---------------------------------------------------------------------------
@@ -191,21 +288,22 @@ def build_signal(
     atr_val = atr(candles)
     last = candles[-1].close
 
-    # Structural SL/TP — replaces fixed ATR multiplier
+    # ── Scenario-aware hybrid entry (replaces fixed last ± 0.0001) ──────
+    scenario = _scenario(crt, smc)
+    entry, entry_type, distance_to_entry_pct = _calculate_entry(
+        scenario, direction, candles, smc, crt
+    )
+
+    # Structural SL/TP — passes hybrid entry so RR reflects structural-to-structural
     fvgs = detect_fvg(candles) or []
     smc_fvgs = smc.get("fvg_zones", []) or fvgs
     stop_loss, tp1, tp2, risk_reward = calculate_structural_sl_tp(
-        entry_price=last,
+        entry_price=entry,
         direction=direction,
         candles=candles,
         fvg_zones=smc_fvgs,
         atr_val=atr_val,
     )
-
-    if direction == "BULLISH":
-        entry = +(last + 0.0001)
-    else:
-        entry = +(last - 0.0001)
 
     risk = abs(entry - stop_loss)
     reward = abs(tp1 - entry)
@@ -323,6 +421,7 @@ def build_signal(
 
         # TRADE — Structural SL/TP
         "entry": round(entry, 5),
+        "entry_type": entry_type,
         "stop_loss": round(stop_loss, 5),
         "take_profit_1": round(tp1, 5),
         "take_profit_2": round(tp2, 5),
@@ -335,7 +434,7 @@ def build_signal(
         "risk": round(risk, 5),
         "reward": round(reward, 5),
         "rr": round(risk_reward, 2),
-        "scenario": _scenario(crt, smc),
+        "scenario": scenario,
 
         # MARKET DATA
         "current_price": last,
@@ -343,7 +442,7 @@ def build_signal(
         "atr_value": round(atr_val, 5),
         "atr_percent": round((atr_val / last * 100) if last > 0 else 0, 2),
         "atr_sl_distance": round(risk, 5),
-        "distance_to_entry_pct": round(abs(candles[-1].close - entry) / candles[-1].close * 100, 2),
+        "distance_to_entry_pct": distance_to_entry_pct,
 
         # FRESHNESS
         "freshness_state": "hot",
