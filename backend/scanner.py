@@ -143,7 +143,10 @@ class Scanner:
         if agreeing:
             signal["confluence"] = agreeing
             signal["confluence_boost"] = signal.get("confluence_boost", 0) + 10
-            # Do NOT modify base_score or composite_score — builder already set them
+            # Apply confluence boost to composite_score so MTF agreement lifts score above the 60+40 ceiling.
+            base = signal.get("composite_score", 0)
+            if base < 100:
+                signal["composite_score"] = min(base + 10, 100)
 
         return signal
 
