@@ -1,13 +1,31 @@
-"""Single engine file — scan any coin on any timeframe."""
+"""Single engine file — flow-first, structure-confirm, CRT-time.
+
+Pipeline order (institutional):
+  1. Flow gate:      Is there volume + sweep + VWAP reclaim or RS vs BTC?
+                     If no flow → SKIP (don't show neutral coins)
+  2. Structure:      CRT + SMC (OB, FVG, MSB, VSP)
+  3. Time:           CRT timing (OTE, displacement, session)
+  4. Signal:         Combine into entry / SL / TP / RR
+"""
 from backend.engines.crt_engine import run_crt
 from backend.engines.smc_engine import run_smc
 from backend.engines.signal_builder import build_signal
 from backend.engines.fast_mover import detect_fast_mover
+from backend.engines.flow_analyzer import analyze_flow, detect_vwap_reclaim, compute_session_vwap
 from backend.market_data import market_data
 from backend.helpers.candle_math import atr, atr_percent, calc_envelope, _get
 from backend.vsp_helpers import detect_swing_points
+from backend.helpers.session import get_current_session, session_score, get_session_label
 from backend.config import (
     MIN_ATR_PERCENT, MIN_ATR_ABSOLUTE, MIN_RANGE_MULTIPLIER,
+    SESSION_SCORES,
+    CRT_SCORE_DISPLACEMENT, CRT_SCORE_RETRACEMENT, CRT_SCORE_SESSION, CRT_SCORE_RANGE_BREAK,
+    SMC_SCORE_SWING, SMC_SCORE_VSP, SMC_SCORE_OB, SMC_SCORE_MSB,
+    SMC_SCORE_FVG, SMC_SCORE_FVG_PROXIMITY_BONUS, SMC_SCORE_LIQUIDITY,
+    CONFLUENCE_MULTI_TF, CONFLUENCE_FVG_AT_ENTRY,
+    CONFLUENCE_VOLUME_POC, CONFLUENCE_LIQUIDITY_TARGET,
+    TIER_SNIPER_SCORE, TIER_ACTIVE_SCORE, TIER_WATCH_SCORE,
+    SWING_LOOKBACK, FVG_LOOKBACK, RANGE_LOOKBACK,
 )
 import logging
 
@@ -165,6 +183,29 @@ def scan(symbol: str, timeframe: str) -> dict | None:
         logger.debug(f"[engine] SKIP {symbol} {timeframe}: range {range_size:.6f} < {MIN_RANGE_MULTIPLIER}x ATR")
         return None
 
+    # === FLOW GATE: skip neutral / coiled coins ===
+    # No flow = no signal. We only show coins where volume/sweep/VWAP/RS
+    # confirm that real money is moving.
+    swings = detect_swing_points(candles[-30:])
+    btc_candles = market_data.get_candles("BTCUSDT", timeframe)
+    flow = analyze_flow(symbol, candles, swings, timeframe, btc_candles)
+    fast = detect_fast_mover(candles, swings)
+
+    if not flow["is_flowing"] and not fast["is_fast_mover"]:
+        logger.debug(f"[engine] SKIP {symbol} {timeframe}: no flow (no VWAP/sweep/RS + no fast_mover)")
+        return None
+
+    # Strong flow gate: require weight_total >= 2 OR a confirmed fast-mover
+    if flow["raw_weight"] < 2 and not fast["is_fast_mover"]:
+        logger.debug(f"[engine] SKIP {symbol} {timeframe}: weak flow "
+                     f"(weight={flow['raw_weight']}, no fast_mover)")
+        return None
+
+    logger.debug(f"[engine] FLOW {symbol} {timeframe}: boost=+{flow['boost']} "
+                 f"triggers={[t['name'] for t in flow['triggers']]} kz={flow['killzone']['zone']} "
+                 f"dir={flow['direction']} fast_mover={fast['is_fast_mover']}")
+    # ============================================
+
     # === PRIMARY PATH: CRT + SMC ===
     logger.debug(f"[engine] Running CRT for {symbol} {timeframe} ({len(candles)} candles, last={last_price:.5f})")
     crt = run_crt(candles)
@@ -198,42 +239,43 @@ def scan(symbol: str, timeframe: str) -> dict | None:
         path = "SMC-ONLY"
 
     # Signal builder
-    # === FAST-MOVER BOOST: applies +20/+30/+40 to crt_score for impulse coins ===
-    fm = detect_fast_mover(candles)
-    fm_boost = 0
-    if fm["is_fast_mover"]:
-        fm_boost = fm["score"]
-        logger.info(f"[fast_mover] {symbol} {timeframe}: dir={fm['direction']} "
-                     f"triggers={[t['name'] for t in fm['triggers']]} "
-                     f"boost=+{fm_boost} conf={fm['confidence']}")
-    # ==========================================================================
+    # Apply fast_mover + flow triggers to the composite score
+    fm = detect_fast_mover(candles, swings)
+    flow_boost = flow["boost"]
+    fast_mover_boost = fm["score"] if fm["is_fast_mover"] else 0
+    total_boost = flow_boost + fast_mover_boost
 
-    logger.debug(f"[engine] Building signal for {symbol} {timeframe} ({path})")
+    logger.debug(f"[engine] Building signal for {symbol} {timeframe} ({path}) "
+                 f"flow_boost={flow_boost} fast_mover_boost={fast_mover_boost}")
     signal = build_signal(symbol, timeframe, crt, smc, candles)
 
     if signal:
-        # Apply fast-mover boost to the CRT component of the composite score
-        if fm_boost > 0:
+        # Apply flow + fast_mover boost to the composite score
+        if total_boost > 0:
             old_score = signal.get("composite_score", 0)
-            signal["composite_score"] = min(old_score + fm_boost, 100)
+            signal["composite_score"] = min(old_score + total_boost, 100)
+            signal["flow"] = flow
+            signal["flow_boost"] = flow_boost
             signal["fast_mover"] = fm
-            signal["fast_mover_boost"] = fm_boost
+            signal["fast_mover_boost"] = fast_mover_boost
             # Recalculate tier with boosted score
-            from backend.schemas import Tier
             composite = signal["composite_score"]
-            if composite >= 70:
+            if composite >= TIER_SNIPER_SCORE:
                 signal["tier"] = "SNIPER"
-            elif composite >= 55:
+            elif composite >= TIER_ACTIVE_SCORE:
                 signal["tier"] = "ACTIVE"
-            elif composite >= 40:
+            elif composite >= TIER_WATCH_SCORE:
                 signal["tier"] = "WATCH"
             else:
                 signal["tier"] = "REJECTED"
 
         signal["engine_path"] = path
+        signal["flow_direction"] = flow["direction"]
+        signal["killzone"] = flow["killzone"]
         logger.info(f"[engine] SIGNAL {symbol} {timeframe}: {signal['tier']} score={signal['composite_score']} "
                      f"dir={signal['direction']} rr={signal['rr']:.1f} entry={signal['entry']:.5f} "
-                     f"sl={signal['stop_loss']:.5f} tp={signal['take_profit']:.5f} path={path}")
+                     f"sl={signal['stop_loss']:.5f} tp={signal['take_profit']:.5f} "
+                     f"path={path} flow={[t['name'] for t in flow['triggers']]}")
     else:
         logger.debug(f"[engine] SKIP {symbol} {timeframe}: build_signal returned None")
     return signal

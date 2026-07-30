@@ -408,6 +408,43 @@ def calculate_structural_sl_tp(
     )
 
 
+def _find_fvg_target(direction: str, fvg_zones: list, candles: list) -> list:
+    """Find the nearest opposing FVG zone to use as TP target(s).
+
+    For BULLISH: target is nearest BULLISH FVG above entry (price runs up into it).
+    For BEARISH: target is nearest BEARISH FVG below entry (price runs down into it).
+
+    Returns list of price levels [tp1, tp2] sorted by proximity, or empty list.
+    """
+    if not fvg_zones or not candles:
+        return []
+
+    entry_price = candles[-1].close
+    targets = []
+
+    for fvg in fvg_zones:
+        fvg_type = fvg.get("type", "")
+        # For BULLISH: FVG above entry → price can rise into it
+        # For BEARISH: FVG below entry → price can fall into it
+        if direction == "BULLISH" and fvg_type == "BULLISH":
+            fvg_top = fvg.get("top", 0)
+            if fvg_top > entry_price:
+                targets.append(fvg_top)
+        elif direction == "BEARISH" and fvg_type == "BEARISH":
+            fvg_bottom = fvg.get("bottom", 0)
+            if fvg_bottom < entry_price and fvg_bottom > 0:
+                targets.append(fvg_bottom)
+
+    if not targets:
+        return []
+
+    # Sort by proximity to entry
+    targets.sort(key=lambda t: abs(t - entry_price))
+
+    # Return up to 2 levels
+    return targets[:2]
+
+
 def _find_nearest_swing(direction: str, candles: list, lookback: int = 20) -> Optional[float]:
     """Deprecated: kept for backwards compatibility. Use _find_institutional_sl."""
     import warnings

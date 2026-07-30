@@ -360,7 +360,10 @@ function buildCard(s, newIds) {
       '<div class="inst-item"><div class="inst-label">VP VAL</div><div class="inst-value">' + (val ? fmtPrice(val) : 'N/A') + '</div></div>' +
       '<div class="inst-item"><div class="inst-label">ATR</div><div class="inst-value">' + fmtPrice(atrVal) + ' <span class="atr-pct ' + volClass + '">' + atrPct.toFixed(2) + '%</span></div></div>' +
       '<div class="inst-item"><div class="inst-label">Zone</div><div class="inst-value ' + pdClass + '">' + pd + '</div></div>' +
-      '<div class="inst-item"><div class="inst-label">Flow</div><div class="inst-value ' + flowClass + '">' + (orderFlow.net_pressure || 'N/A') + '</div><div class="flow-bar"><div class="flow-fill ' + flowClass + '" style="width:' + flowPct + '%"></div></div></div>' +
+      '<div class="inst-item"><div class="inst-label">Flow</div>' +
+      (s.killzone ? '<div class="inst-value flow-badge ' + (s.killzone.relevant ? 'strong-buy' : '') + '">' + (s.killzone.zone || '') + ' x' + s.killzone.multiplier + '</div>' : '<div class="inst-value">N/A</div>') +
+      (s.flow && s.flow.triggers ? '<div class="inst-value" style="font-size:10px;color:var(--accent)">' + s.flow.triggers.map(t => t.name).join(', ') + '</div>' : '') +
+    '</div>' +
       '<div class="inst-item"><div class="inst-label">OB</div><div class="inst-value">' + (ob.touches > 0 ? ob.touches + 'x' : 'None') + '</div></div>' +
       '<div class="inst-item"><div class="inst-label">FVG</div><div class="inst-value">' + (fvg.size_atr > 0 ? fvg.size_atr.toFixed(1) + 'x' : 'None') + '</div></div>' +
       '<div class="inst-item"><div class="inst-label">Liq</div><div class="inst-value">' + (liqTarget ? fmtPrice(liqTarget) : 'None') + '</div></div>' +
