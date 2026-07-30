@@ -51,20 +51,19 @@ SMC_SCORE_FVG = 10
 SMC_SCORE_FVG_PROXIMITY_BONUS = 5
 SMC_SCORE_LIQUIDITY = 5
 
-# === CONFLUENCE BOOSTS ===
-CONFLUENCE_MULTI_TF = 10
-CONFLUENCE_FVG_AT_ENTRY = 5
-CONFLUENCE_VOLUME_POC = 5
-CONFLUENCE_LIQUIDITY_TARGET = 5
-CONFLUENCE_FRESH_OB = 5
+# === SCORING ARCHITECTURE (hedge fund model) ===
+# Total max = 90 points across 4 independent components.
+# No single component can carry a signal to SNIPER alone.
+# CRT (timing)        0-25   — is the entry timed right?
+# SMC (structure)     0-20   — is smart money structure there?
+# Flow (conviction)   0-25   — is real money flowing RIGHT NOW?
+# Momentum (ignition) 0-20   — is price about to explode?
+# Base max (CRT+SMC) = 45/90. Flow + Momentum required for SNIPER.
 
-# === TIERS ===
-TIER_SNIPER_SCORE = 70
-TIER_SNIPER_RR = 1.5
-TIER_ACTIVE_SCORE = 55
-TIER_ACTIVE_RR = 1.5
-TIER_WATCH_SCORE = 40
-TIER_WATCH_RR = 1.5
+# === TIERS (matches README and original spec) ===
+TIER_SNIPER_SCORE = 70       # SNIPER >= 70: highest probability
+TIER_OPPORTUNITY_SCORE = 55  # OPPORTUNITY >= 55: strong setups
+TIER_WATCH_SCORE = 40        # WATCH >= 40: partial confirmation
 MIN_RR = 1.5
 
 # === RISK ===

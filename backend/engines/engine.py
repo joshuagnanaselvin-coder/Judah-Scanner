@@ -18,7 +18,7 @@ from backend.vsp_helpers import detect_swing_points
 from backend.helpers.session import get_session_at, session_score, get_session_label
 from backend.config import (
     MIN_ATR_PERCENT, MIN_ATR_ABSOLUTE, MIN_RANGE_MULTIPLIER,
-    TIER_SNIPER_SCORE, TIER_ACTIVE_SCORE, TIER_WATCH_SCORE,
+    TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE,
 )
 import logging
 
@@ -33,7 +33,7 @@ def _synth_crt_score(direction: str, msb_level, candles: list) -> int:
     """Award synthetic CRT points for confirmed impulse structure.
 
     Returns up to 40 pts (replaces the 0 from synthesized CRT) so impulse coins
-    with strong SMC structure can reach ACTIVE/SNIPER tiers.
+    with strong SMC structure can reach OPPORTUNITY/SNIPER tiers.
 
     Awards:
     - MSB break:           +15
@@ -121,7 +121,7 @@ def _build_smc_only_context(candles: list) -> dict | None:
     return {
         # Synthesized CRT context — score represents the structural quality of the impulse,
         # not a real consolidation/range pattern. Awarded so impulse coins can reach
-        # ACTIVE/SNIPER when SMC confirms MSB + OB + FVG.
+        # OPPORTUNITY/SNIPER when SMC confirms MSB + OB + FVG.
         "crt_score": _synth_crt_score(direction, level, candles),
         "displacement": {
             "direction": direction,
@@ -232,39 +232,28 @@ def scan(symbol: str, timeframe: str) -> dict | None:
         path = "SMC-ONLY"
 
     # Signal builder
-    # Apply fast_mover + flow triggers to the composite score
+    # 4-component scoring: CRT(25) + SMC(20) + Flow(25) + Momentum(20) = 90 max
     fm = detect_fast_mover(candles, swings)
-    flow_boost = flow["boost"]
-    fast_mover_boost = fm["score"] if fm["is_fast_mover"] else 0
-    total_boost = flow_boost + fast_mover_boost
+    flow_score = min(flow["boost"], 25)
+    momentum_score = min(fm["score"] if fm["is_fast_mover"] else 0, 20)
 
     logger.debug(f"[engine] Building signal for {symbol} {timeframe} ({path}) "
-                 f"flow_boost={flow_boost} fast_mover_boost={fast_mover_boost}")
-    signal = build_signal(symbol, timeframe, crt, smc, candles)
+                 f"flow={flow_score} momentum={momentum_score}")
+    signal = build_signal(symbol, timeframe, crt, smc, candles, flow_score, momentum_score)
 
     if signal:
-        # Apply flow + fast_mover boost — capped relative to CRT+SMC base
-        # so the CRT:SMC bar segments always sum to composite_score.
-        # Max boost = 35% of base score, hard cap at +30.
-        base_score = signal.get("composite_score", 0)
-        raw_boost = flow_boost + fast_mover_boost
-        max_boost = min(int(base_score * 0.35), 30)
-        total_boost = min(raw_boost, max_boost)
+        signal["flow"] = flow
+        signal["flow_score"] = flow_score
+        signal["flow_boost"] = flow_score
+        signal["fast_mover"] = fm
+        signal["fast_mover_boost"] = momentum_score
+        signal["momentum_score"] = momentum_score
 
-        if total_boost > 0:
-            signal["composite_score"] = min(base_score + total_boost, 100)
-            signal["boost_score"] = total_boost
-            signal["flow"] = flow
-            signal["flow_boost"] = min(flow_boost, 15)
-            signal["fast_mover"] = fm
-            signal["fast_mover_boost"] = min(fast_mover_boost, 20)
-
-        # Recalculate tier with boosted composite_score
         composite = signal["composite_score"]
         if composite >= TIER_SNIPER_SCORE:
             signal["tier"] = "SNIPER"
-        elif composite >= TIER_ACTIVE_SCORE:
-            signal["tier"] = "ACTIVE"
+        elif composite >= TIER_OPPORTUNITY_SCORE:
+            signal["tier"] = "OPPORTUNITY"
         elif composite >= TIER_WATCH_SCORE:
             signal["tier"] = "WATCH"
         else:
@@ -276,7 +265,10 @@ def scan(symbol: str, timeframe: str) -> dict | None:
         logger.info(f"[engine] SIGNAL {symbol} {timeframe}: {signal['tier']} score={signal['composite_score']} "
                      f"dir={signal['direction']} rr={signal['rr']:.1f} entry={signal['entry']:.5f} "
                      f"sl={signal['stop_loss']:.5f} tp={signal['take_profit']:.5f} "
-                     f"path={path} flow={[t['name'] for t in flow['triggers']]}")
+                     f"path={path} crt={signal['crt_score']} smc={signal['smc_score']} "
+                     f"flow={flow_score} mom={momentum_score} "
+                     f"triggers={[t['name'] for t in flow['triggers']]}")
     else:
         logger.debug(f"[engine] SKIP {symbol} {timeframe}: build_signal returned None")
     return signal
+

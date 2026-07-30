@@ -191,14 +191,14 @@ def detect_fast_mover(candles: list, swings: Optional[dict] = None) -> dict:
         if t["name"] == "consecutive" and t.get("direction"):
             direction = t["direction"]; break
 
-    # Score: weighted by trigger weights
+    # Score: weighted by trigger weights (max 20 for momentum component)
     weight_total = sum(t.get("weight", 1) for t in triggers)
     if weight_total >= 7:
-        score = 40
-    elif weight_total >= 5:
-        score = 30
-    else:
         score = 20
+    elif weight_total >= 5:
+        score = 14
+    else:
+        score = 10
 
     confidence = min(weight_total / 8.0, 1.0)
 

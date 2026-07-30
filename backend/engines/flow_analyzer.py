@@ -1,11 +1,16 @@
-"""Flow Analyzer — institutional flow detection beyond CRT.
+"""Flow Analyzer — institutional flow detection. Max flow score: 25.
 
-These are the "flow is moving" signals that CRT alone misses:
+CRT + SMC tell you WHERE the structure is.
+Flow tells you IF real money is moving there RIGHT NOW.
+Momentum tells you IF the price is about to EXPLODE.
 
-  1. VWAP RECLAIM       — price reclaimed the session VWAP from below/above
-  2. SWEEP + REVERSAL   — liquidity sweep occurred in the last 3-5 bars
-                          followed by a reversal candle (not just last candle)
-  3. RS vs BTC          — coin's 1H return >> BTC's 1H return (relative strength)
+CRT+SMC max = 45 (25+20). Flow max = 25. Momentum max = 20.
+Total possible = 90. No single component can carry a signal alone.
+
+Triggers:
+  1. VWAP RECLAIM       — price reclaimed session VWAP from below/above
+  2. SWEEP + REVERSAL   — ICT Turtle Soup / Liquidity Grab
+  3. RS vs BTC          — relative strength (outperforming/underperforming BTC)
   4. KILLZONE BONUS     — ICT killzones (London/NY open, DST-aware)
 """
 from __future__ import annotations
@@ -374,10 +379,11 @@ def analyze_flow(symbol: str, candles: list, swings: dict,
     if not kz["in_killzone"]:
         kz = {"zone": "OFF_HOURS", "multiplier": 0.85, "in_killzone": False}  # slight penalty
 
-    # Aggregate
+    # Aggregate: 5 pts per weight unit, capped at 25 total
     weight_total = sum(t.get("weight", 1) for t in triggers)
-    raw_boost = weight_total * 10  # 10 points per weight unit
+    raw_boost = weight_total * 5
     adjusted_boost = int(raw_boost * kz["multiplier"])
+    adjusted_boost = min(adjusted_boost, 25)
 
     # Direction: sweep > vwap > rs
     direction = None

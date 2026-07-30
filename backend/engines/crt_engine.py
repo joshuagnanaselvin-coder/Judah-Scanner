@@ -1,4 +1,4 @@
-"""CRT Engine - proper Candle Range Theory (ICT methodology).
+"""CRT Engine - Candle Range Theory (ICT methodology). Max score: 25.
 
 CRT has 5 mandatory steps in order:
   1. CONSOLIDATION  - tight range (5-20 bars, compressing)
@@ -7,16 +7,12 @@ CRT has 5 mandatory steps in order:
   4. FILL           - price RETURNS to fill the FVG (retracement back into body)
   5. ENTRY          - trade taken at retest, IN THE DIRECTION of the range candle
 
-Trade direction rule:
-  Bullish range candle (green, broke up)  -> CRT trade is BULLISH
-  Bearish range candle (red, broke down)  -> CRT trade is BEARISH
-
-CRT scoring breakdown (max 60):
-  Consolidation quality:  0-15
-  Range candle strength:  0-15
-  FVG quality:            0-10
-  Retest quality:         0-15
-  Premium/Discount zone:  0-5
+CRT scoring breakdown (max 25):
+  Consolidation quality:  0-8
+  Range candle strength:  0-8
+  FVG quality:            0-3
+  Retest quality:         0-4
+  Premium/Discount zone:  0-2
 """
 import logging
 from typing import Optional
@@ -43,12 +39,12 @@ _RANGE_CANDLE_LOOKAHEAD = 20
 _FILL_RECENCY_MAX = 20
 _FILL_RECENCY_HALF = 12
 
-_W_CONSOLIDATION = 15
-_W_RANGE_CANDLE = 15
-_W_FVG = 10
-_W_RETEST = 15
-_W_ZONE = 5
-_CRT_MAX_SCORE = 60
+_W_CONSOLIDATION = 8
+_W_RANGE_CANDLE = 8
+_W_FVG = 3
+_W_RETEST = 4
+_W_ZONE = 2
+_CRT_MAX_SCORE = 25
 
 
 def run_crt(candles: list) -> Optional[dict]:
@@ -371,83 +367,81 @@ def _calc_crt_trade(crt_direction, rc_direction, rc_open, rc_close,
     return round(entry, 5), round(sl, 5), round(tp, 5)
 
 
-# --- SCORING COMPONENTS (sum to 60 max) ---
+# --- SCORING COMPONENTS (sum to 25 max) ---
 
 def _score_consolidation(consolidation: dict) -> int:
-    """0-15: tighter + more bars touched = higher score."""
+    """0-8: tighter + more bars touched = higher score."""
     tight_pct = consolidation.get("tight_pct", 0)
     bar_count = consolidation.get("bar_count", 0)
 
     if tight_pct >= 0.9:
-        score = 15
+        score = 8
     elif tight_pct >= 0.75:
-        score = 12
-    elif tight_pct >= 0.60:
-        score = 9
-    elif tight_pct >= 0.50:
         score = 6
-    else:
+    elif tight_pct >= 0.60:
+        score = 5
+    elif tight_pct >= 0.50:
         score = 3
+    else:
+        score = 2
 
     if bar_count >= 10:
-        score = min(score + 2, 15)
+        score = min(score + 1, 8)
 
     return score
 
 
 def _score_range_candle_strength(ratio: float) -> int:
-    """0-15: stronger displacement = higher score."""
+    """0-8: stronger displacement = higher score."""
     if ratio >= 3.0:
-        return 15
+        return 8
     if ratio >= 2.5:
-        return 12
+        return 7
     if ratio >= 2.0:
-        return 9
+        return 5
     if ratio >= 1.5:
-        return 6
-    return 3
+        return 3
+    return 2
 
 
 def _score_fvg_quality(fill: dict) -> int:
-    """0-10: better fill quality = higher score."""
+    """0-3: better fill quality = higher score."""
     quality = fill.get("quality", 0)
     touches = fill.get("touch_count", 0)
 
     if quality >= 0.8 and touches >= 3:
-        return 10
+        return 3
     if quality >= 0.6 and touches >= 2:
-        return 8
-    if quality >= 0.4 and touches >= 2:
-        return 6
+        return 2
     if touches >= 1:
-        return 4
-    return 2
+        return 1
+    return 1
 
 
 def _score_retest_quality(fill_quality: float, rc_direction: str) -> int:
-    """0-15: deeper retracement into body = higher score."""
+    """0-4: deeper retracement into body = higher score."""
     if fill_quality >= 0.8:
-        return 15
+        return 4
     if fill_quality >= 0.6:
-        return 12
+        return 3
     if fill_quality >= 0.4:
-        return 9
+        return 2
     if fill_quality >= 0.2:
-        return 6
-    return 3
+        return 1
+    return 1
 
 
 def _score_zone_alignment(price: float, rng: dict) -> int:
-    """0-5: price in premium/discount zone = bonus."""
+    """0-2: price in premium/discount zone = bonus."""
     if not rng or rng.get("range_size", 0) <= 0:
-        return 2
+        return 1
 
     pct = ((price - rng["low"]) / rng["range_size"]) * 100
 
     if pct <= 20 or pct >= 80:
-        return 5
+        return 2
     if pct <= 35 or pct >= 65:
-        return 4
+        return 2
     if pct <= 45 or pct >= 55:
-        return 3
-    return 2
+        return 1
+    return 1

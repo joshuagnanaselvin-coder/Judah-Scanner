@@ -8,10 +8,9 @@ Identifies high-probability trade setups using Candle Range Theory (timing) and 
 
 | Tier | Score | Min RR | Meaning |
 |------|-------|--------|---------|
-| SNIPER | >= 70 | 1.5:1 | Trade — highest probability setups |
-| OPPORTUNITY | 60-69 | 1.5:1 | Monitor only — not traded |
-| WATCH | 50-59 | 1.5:1 | Partial confirmation, monitor |
-| REJECTED | < 50 | — | Filtered out |
+| SNIPER | >= 70 | 1.5:1 | Highest probability setups |
+| OPPORTUNITY | >= 55 | 1.5:1 | Strong setups |
+| WATCH | >= 40 | 1.5:1 | Partial confirmation, monitor |
 
 ## Quick Start
 

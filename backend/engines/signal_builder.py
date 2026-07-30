@@ -21,7 +21,7 @@ from backend.config import (
     SL_BUFFER_PERCENT,
     TP_RR_MULTIPLIER,
     TIER_SNIPER_SCORE,
-    TIER_ACTIVE_SCORE,
+    TIER_OPPORTUNITY_SCORE,
     TIER_WATCH_SCORE,
 )
 
@@ -38,8 +38,8 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
 def _tier(score: float) -> str:
     if score >= TIER_SNIPER_SCORE:
         return "SNIPER"
-    if score >= TIER_ACTIVE_SCORE:
-        return "ACTIVE"
+    if score >= TIER_OPPORTUNITY_SCORE:
+        return "OPPORTUNITY"
     if score >= TIER_WATCH_SCORE:
         return "WATCH"
     return "REJECTED"
@@ -48,7 +48,7 @@ def _tier(score: float) -> str:
 def _tier_label(tier: str) -> str:
     return {
         "SNIPER": "Sniper",
-        "ACTIVE": "Active",
+        "OPPORTUNITY": "Opportunity",
         "WATCH": "Watch",
         "REJECTED": "Rejected",
     }.get(tier, tier)
@@ -470,22 +470,38 @@ def build_signal(
     crt: dict,
     smc: dict,
     candles: list,
+    flow_score: float = 0.0,
+    momentum_score: float = 0.0,
 ) -> Optional[dict]:
     """Build final trade signal with all institutional features.
+
+    4-component scoring:
+      CRT (timing)       max 25
+      SMC (structure)    max 20
+      Flow (conviction)  max 25   — passed in from engine
+      Momentum (ignite)  max 20   — passed in from engine
+    Total max = 90.
 
     Parameters
     ----------
     symbol : str — Trading pair, e.g. "BTCUSDT".
     timeframe : str — Candle timeframe, e.g. "1h", "4h", "1d".
-    crt : dict — Full CRT engine result (from engines/crt_engine.run_crt).
-    smc : dict — Full SMC engine result (from engines/smc_engine.run_smc).
-    candles : list — Recent candle list (Candle dataclass objects).
+    crt : dict — Full CRT engine result.
+    smc : dict — Full SMC engine result.
+    candles : list — Recent candle list.
+    flow_score : float — Flow boost from flow_analyzer (capped 25).
+    momentum_score : float — Fast-mover momentum (capped 20).
     """
     crt_score = crt.get("crt_score", 0)
     smc_score = smc.get("smc_score", 0)
-    total = crt_score + smc_score
 
-    if total < 10:
+    # 4-component composite
+    composite_score = crt_score + smc_score + flow_score + momentum_score
+
+    total = composite_score
+
+    # Minimum total score to produce a signal
+    if total < 15:
         logger.debug(f"[builder] REJECT {symbol} {timeframe}: score too low {total}")
         return None
 
@@ -559,10 +575,11 @@ def build_signal(
     # === LIQUIDITY ===
     liq_pools = detect_liquidity_pools(swings) if swings else {"pools": []}
 
-    # === COMPOSITE SCORE ===
-    composite_score = crt_score + smc_score
+    # === COMPOSITE SCORE (4 components) ===
+    # CRT(25) + SMC(20) + Flow(25) + Momentum(20) = 90 max
+    composite_score = crt_score + smc_score + flow_score + momentum_score
 
-    logger.info(f"COMPOSITE: {crt_score}+{smc_score}={composite_score}/100")
+    logger.info(f"COMPOSITE: CRT={crt_score} SMC={smc_score} Flow={flow_score} Mom={momentum_score} = {composite_score}/90")
 
     # === SIGNAL DICT ===
     signal = {

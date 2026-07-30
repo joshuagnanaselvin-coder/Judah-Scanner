@@ -1,4 +1,4 @@
-"""SMC Engine — Smart Money Concepts (ICT-aligned). Max SMC score: 40."""
+"""SMC Engine — Smart Money Concepts (ICT-aligned). Max SMC score: 20."""
 import logging
 from typing import Optional
 from backend.vsp_helpers import detect_swing_points, detect_fvg
@@ -13,7 +13,7 @@ logger = logging.getLogger("judah.smc")
 
 
 def run_smc(candles: list, crt: dict) -> Optional[dict]:
-    """SMC Engine — strict ICT scoring. Max SMC score: 40."""
+    """SMC Engine — strict ICT scoring. Max SMC score: 20."""
     if not candles or len(candles) < 50 or not crt or not crt.get("displacement"):
         return None
 
@@ -30,32 +30,32 @@ def run_smc(candles: list, crt: dict) -> Optional[dict]:
         "lows": len(swings["swing_lows"]),
     }
 
-    # 2. Market Structure (max 10)
+    # 2. Market Structure (max 5)
     m, msb = _score_msb(candles, swings)
     result["msb"] = msb
     score += m
 
-    # 3. Order Block (max 10)
+    # 3. Order Block (max 5)
     o, ob = _score_ob(candles, crt, swings)
     if ob:
         result["ob"] = ob
     score += o
 
-    # 4. Fair Value Gap (max 10)
+    # 4. Fair Value Gap (max 5)
     f, fvg = _score_fvg(candles, crt)
     if fvg:
         result["fvg"] = fvg
     score += f
 
-    # 5. Liquidity Sweep (max 10)
+    # 5. Liquidity Sweep (max 5)
     l, liq = _score_liquidity(candles, swings)
     if liq:
         result["liquidity"] = liq
     score += l
 
-    smc_score = min(score, 40)
+    smc_score = min(score, 20)
 
-    logger.debug(f"SMC: msb={m} ob={o} fvg={f} liq={l} = {smc_score}/40")
+    logger.debug(f"SMC: msb={m} ob={o} fvg={f} liq={l} = {smc_score}/20")
 
     return {
         **result,
@@ -63,32 +63,31 @@ def run_smc(candles: list, crt: dict) -> Optional[dict]:
     }
 
 
-# ─── SMC SUB-SCORERS (per spec: max 40 total) ────────────────────────────────
+# ─── SMC SUB-SCORERS (per spec: max 20 total) ────────────────────────────────
 
 def _score_msb(candles, swings) -> tuple[int, dict]:
-    """Max 10: CHOCH confirmed = 10, BOS = 3, minor swing = 3, none = 0."""
+    """Max 5: CHOCH confirmed = 5, BOS = 2, none = 0."""
     msb = _detect_msb(candles, swings)
     if not msb or not msb.get("confirmed"):
         return 0, {"confirmed": False, "type": None, "level": None}
 
     msb_type = msb.get("type", "")
     if msb_type == "CHOCH":
-        return 10, msb
+        return 5, msb
     if msb_type == "BOS":
-        return 3, msb
-    return 3, msb
+        return 2, msb
+    return 1, msb
 
 
 def _score_ob(candles, crt, swings) -> tuple[int, dict | None]:
-    """Max 10: swing-point OB with 2+ retests = 10, 1 retest = 4, 0 retests = 0."""
+    """Max 5: swing-point OB with 2+ retests = 5, 1 retest = 2, 0 retests = 0."""
     ob = _detect_ob(candles, crt)
     if not ob:
         return 0, None
 
-    # Count retests: how many times price has touched/rejected this OB zone
     retests = _count_ob_touches(candles, ob)
     ob["touches"] = retests
-    ob["strength"] = min(retests + 1, 10)
+    ob["strength"] = min(retests + 1, 5)
 
     # Premium/discount zone
     rng = crt.get("range", {})
@@ -99,14 +98,14 @@ def _score_ob(candles, crt, swings) -> tuple[int, dict | None]:
         ob["zone"] = "UNKNOWN"
 
     if retests >= 2:
-        return 10, ob
+        return 5, ob
     if retests >= 1:
-        return 4, ob
+        return 2, ob
     return 0, ob
 
 
 def _score_fvg(candles, crt) -> tuple[int, dict | None]:
-    """Max 10: >=1.5x ATR unfilled = 10, >=1.0x ATR unfilled = 8, >=0.5x ATR unfilled = 3, partial = 0."""
+    """Max 5: >=1.5x ATR unfilled = 5, >=1.0x = 3, >=0.5x = 1, partial = 0."""
     all_fvgs = detect_fvg(candles)
     fvg = _find_relevant_fvg(all_fvgs, crt, candles)
     if not fvg:
@@ -131,18 +130,18 @@ def _score_fvg(candles, crt) -> tuple[int, dict | None]:
     fvg["filled_pct"] = round(filled_pct, 1)
 
     if not fvg.get("filled", False) and size_atr >= 1.5:
-        return 10, fvg
+        return 5, fvg
     if not fvg.get("filled", False) and size_atr >= 1.0:
-        return 8, fvg
-    if not fvg.get("filled", False) and size_atr >= 0.5:
         return 3, fvg
+    if not fvg.get("filled", False) and size_atr >= 0.5:
+        return 1, fvg
     if filled_pct > 0 and filled_pct < 100:
         return 0, fvg
     return 0, fvg
 
 
 def _score_liquidity(candles, swings) -> tuple[int, dict | None]:
-    """Max 10: significant sweep (2+ touches) + reversal = 10, single + reversal = 5, no reversal = 0."""
+    """Max 5: significant sweep (2+ touches) + reversal = 5, single + reversal = 2, no reversal = 0."""
     liq = _detect_liquidity(candles, swings)
     if not liq or not liq.get("swept"):
         return 0, None
@@ -155,9 +154,9 @@ def _score_liquidity(candles, swings) -> tuple[int, dict | None]:
 
     # Reversal confirmed?
     if liq["direction"] == "BULLISH" and last.close > level:
-        return 10 if significant else 5, liq
+        return 5 if significant else 2, liq
     if liq["direction"] == "BEARISH" and last.close < level:
-        return 10 if significant else 5, liq
+        return 5 if significant else 2, liq
 
     # No reversal
     return 0, liq

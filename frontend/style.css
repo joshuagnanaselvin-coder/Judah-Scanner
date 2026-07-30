@@ -318,7 +318,8 @@ input[type="range"] { width: 80px; accent-color: var(--accent); }
 }
 .crt-segment { background: var(--crt); height: 100%; transition: width 0.5s; }
 .smc-segment { background: var(--smc); height: 100%; transition: width 0.5s; }
-.boost-segment { background: var(--accent); height: 100%; transition: width 0.5s; min-width: 2px; }
+.flow-segment { background: #10b981; height: 100%; transition: width 0.5s; min-width: 2px; }
+.mom-segment { background: #f59e0b; height: 100%; transition: width 0.5s; min-width: 2px; }
 
 /* === INSTITUTIONAL DATA STRIP === */
 .inst-strip {

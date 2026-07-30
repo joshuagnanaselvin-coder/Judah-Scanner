@@ -210,8 +210,12 @@ function buildCard(s, newIds) {
   const isNew = newIds.some(id => id === s.id);
   const tier = ((s.tier || 'WATCH').toLowerCase());
   const scoreVal = s.composite_score || 0;
-  const crtPct = Math.min((s.crt_score || 0) / 60 * 100, 100);
-  const smcPct = Math.min((s.smc_score || 0) / 40 * 100, 100);
+  const crtPct = Math.min((s.crt_score || 0) / 25 * 100, 100);
+  const smcPct = Math.min((s.smc_score || 0) / 20 * 100, 100);
+  const flowScore = s.flow_score || s.flow_boost || 0;
+  const momScore = s.momentum_score || s.fast_mover_boost || 0;
+  const flowPct = Math.min(flowScore / 25 * 100, 100);
+  const momPct = Math.min(momScore / 20 * 100, 100);
   const distVal = s.distance_to_entry_pct || 0;
   const distClass = distVal <= 1 ? 'near' : distVal <= 2 ? 'mid' : 'far';
 
@@ -336,20 +340,23 @@ function buildCard(s, newIds) {
 
     '<div class="score-section">' +
       '<div class="score-bar-container">' +
-        '<span class="score-number">' + scoreVal + '</span>' +
+        '<span class="score-number">' + scoreVal + '/90</span>' +
         '<div style="flex:1;min-width:0;">' +
-          '<div class="score-bar-bg"><div class="score-bar-fill ' + tier + '" style="width:' + Math.min(scoreVal, 100) + '%"></div></div>' +
+          '<div class="score-bar-bg"><div class="score-bar-fill ' + tier + '" style="width:' + (scoreVal/90*100).toFixed(1) + '%"></div></div>' +
           '<div class="crt-smc-bar">' +
-            '<div class="crt-segment" style="width:' + crtPct.toFixed(1) + '%" title="CRT: ' + (s.crt_score || 0) + '/60"></div>' +
-            '<div class="smc-segment" style="width:' + smcPct.toFixed(1) + '%" title="SMC: ' + (s.smc_score || 0) + '/40"></div>' +
-            (s.boost_score ? '<div class="boost-segment" style="width:' + (s.boost_score / scoreVal * 100).toFixed(1) + '%" title="Boost: +' + s.boost_score + '"></div>' : '') +
+            '<div class="crt-segment" style="width:' + crtPct.toFixed(1) + '%" title="CRT: ' + (s.crt_score || 0) + '/25"></div>' +
+            '<div class="smc-segment" style="width:' + smcPct.toFixed(1) + '%" title="SMC: ' + (s.smc_score || 0) + '/20"></div>' +
+            '<div class="flow-segment" style="width:' + flowPct.toFixed(1) + '%" title="Flow: ' + flowScore + '/25"></div>' +
+            '<div class="mom-segment" style="width:' + momPct.toFixed(1) + '%" title="Momentum: ' + momScore + '/20"></div>' +
           '</div>' +
         '</div>' +
       '</div>' +
       '<div class="score-labels">' +
-        '<span>CRT:' + (s.crt_score || 0) + '/60</span>' +
-        '<span>SMC:' + (s.smc_score || 0) + '/40</span>' +
-        '<span style="color:var(--accent)">=' + scoreVal + '/100</span>' +
+        '<span>CRT:' + (s.crt_score || 0) + '/25</span>' +
+        '<span>SMC:' + (s.smc_score || 0) + '/20</span>' +
+        '<span>Flow:' + flowScore + '/25</span>' +
+        '<span>Mom:' + momScore + '/20</span>' +
+        '<span style="color:var(--accent)">=' + scoreVal + '/90</span>' +
         '<span class="freshness-badge" style="color:' + freshnessColor + ';font-weight:600">' + freshnessState + '</span>' +
         '<span class="live-tracker" data-id="' + s.id + '" style="font-size:11px;margin-left:auto;white-space:nowrap"></span>' +
       '</div>' +
