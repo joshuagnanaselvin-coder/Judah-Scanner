@@ -6,15 +6,13 @@ These are the "flow is moving" signals that CRT alone misses:
   2. SWEEP + REVERSAL   — liquidity sweep occurred in the last 3-5 bars
                           followed by a reversal candle (not just last candle)
   3. RS vs BTC          — coin's 1H return >> BTC's 1H return (relative strength)
-  4. KILLZONE BONUS     — London/NY open windows (8-11 UTC, 13-16 UTC)
-
-All triggers return a weighted contribution that flows into the composite
-score through the engine.
+  4. KILLZONE BONUS     — ICT killzones (London/NY open, DST-aware)
 """
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from typing import Optional
 
 logger = logging.getLogger("judah.flow")
@@ -273,35 +271,66 @@ def compute_relative_strength(symbol_candles: list, btc_candles: list,
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# 4. KILLZONE MULTIPLIER
+# 4. KILLZONE MULTIPLIER — DST-aware using IANA timezones
 # ─────────────────────────────────────────────────────────────────────────
 
-# ICT killzones (UTC) — institutional high-probability windows
-KILLZONES = {
-    "ASIA_OPEN":   (0, 2),     # 00:00-02:00 — Asian open
-    "LONDON_OPEN": (7, 10),    # 07:00-10:00 — London open
-    "NY_OPEN":     (12, 15),   # 12:00-15:00 — NY open (with overlap)
-    "NY_LUNCH":    (17, 19),   # 17:00-19:00 — typically choppy, skip
-}
+# ICT killzones are defined in the MARKET'S LOCAL CLOCK TIME, not UTC.
+# Local clock times never change with DST — only the UTC offset does.
+# zoneinfo handles the UTC offset automatically for any given moment.
+#
+#  LONDON_OPEN: 08:00-11:00 London local
+#     - GMT (winter): UTC+0 → 08:00-11:00 UTC
+#     - BST (summer): UTC+1 → 07:00-10:00 UTC
+#
+#  NY_OPEN: 09:00-11:00 NY local (covers NY cash open + first 2h)
+#     - EST (winter): UTC-5 → 14:00-16:00 UTC
+#     - EDT (summer): UTC-4 → 13:00-15:00 UTC
+#
+#  OVERLAP: London + NY simultaneous
+#     - GMT + EST (winter): 13:00-16:00 UTC
+#     - BST + EDT (summer): 12:00-15:00 UTC
+#
+#  ASIA_OPEN: 09:00-11:00 Tokyo (UTC+9, no DST) → 00:00-02:00 UTC
+
+_KILLZONE_DEFS = [
+    # (name,        tz,                 local_start_hour, local_end_hour, multiplier)
+    ("ASIA_OPEN",   "Asia/Tokyo",        9, 11, 1.10),
+    ("LONDON_OPEN", "Europe/London",     8, 11, 1.20),
+    ("NY_OPEN",     "America/New_York",  9, 11, 1.25),
+    ("OVERLAP",     "America/New_York", 13, 16, 1.30),
+]
 
 
 def killzone_multiplier(timestamp_ms: int = None) -> dict:
-    """Return the killzone state and score multiplier.
+    """Return the killzone state and score multiplier for a given timestamp.
 
-    The multiplier boosts flow signals during high-probability windows.
+    DST-aware: converts UTC to market-local time using zoneinfo, so London
+    BST vs GMT and NY EDT vs EST are handled automatically.
     """
     if timestamp_ms is None:
         ts = datetime.now(timezone.utc).timestamp()
     else:
         ts = timestamp_ms / 1000 if timestamp_ms > 4_000_000_000 else timestamp_ms
-    hour = datetime.fromtimestamp(ts, tz=timezone.utc).hour
 
-    for zone, (start, end) in KILLZONES.items():
-        if start <= hour < end:
-            mult = {"LONDON_OPEN": 1.20, "NY_OPEN": 1.25, "ASIA_OPEN": 1.10}.get(zone, 1.0)
-            return {"zone": zone, "multiplier": mult, "in_killzone": True}
+    # Check each killzone — convert UTC hour to local hour for that zone
+    for name, tz_name, start_local, end_local, mult in _KILLZONE_DEFS:
+        local_dt = datetime.fromtimestamp(ts, tz=ZoneInfo(tz_name))
+        if start_local <= local_dt.hour < end_local:
+            return {
+                "zone": name,
+                "multiplier": mult,
+                "in_killzone": True,
+                "local_time": local_dt.strftime("%H:%M"),
+                "tz": str(local_dt.tzinfo),
+            }
 
-    return {"zone": "OFF_HOURS", "multiplier": 1.0, "in_killzone": False}
+    return {
+        "zone": "OFF_HOURS",
+        "multiplier": 0.85,
+        "in_killzone": False,
+        "local_time": datetime.fromtimestamp(ts, tz=ZoneInfo("America/New_York")).strftime("%H:%M ET"),
+        "tz": "OFF",
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────

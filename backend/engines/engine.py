@@ -15,17 +15,10 @@ from backend.engines.flow_analyzer import analyze_flow, detect_vwap_reclaim, com
 from backend.market_data import market_data
 from backend.helpers.candle_math import atr, atr_percent, calc_envelope, _get
 from backend.vsp_helpers import detect_swing_points
-from backend.helpers.session import get_current_session, session_score, get_session_label
+from backend.helpers.session import get_session_at, session_score, get_session_label
 from backend.config import (
     MIN_ATR_PERCENT, MIN_ATR_ABSOLUTE, MIN_RANGE_MULTIPLIER,
-    SESSION_SCORES,
-    CRT_SCORE_DISPLACEMENT, CRT_SCORE_RETRACEMENT, CRT_SCORE_SESSION, CRT_SCORE_RANGE_BREAK,
-    SMC_SCORE_SWING, SMC_SCORE_VSP, SMC_SCORE_OB, SMC_SCORE_MSB,
-    SMC_SCORE_FVG, SMC_SCORE_FVG_PROXIMITY_BONUS, SMC_SCORE_LIQUIDITY,
-    CONFLUENCE_MULTI_TF, CONFLUENCE_FVG_AT_ENTRY,
-    CONFLUENCE_VOLUME_POC, CONFLUENCE_LIQUIDITY_TARGET,
     TIER_SNIPER_SCORE, TIER_ACTIVE_SCORE, TIER_WATCH_SCORE,
-    SWING_LOOKBACK, FVG_LOOKBACK, RANGE_LOOKBACK,
 )
 import logging
 
