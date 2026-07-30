@@ -226,8 +226,8 @@ function buildCard(s, newIds) {
   const pocNear = pocPrice ? Math.abs((s.current_price || s.entry || 1) - pocPrice) / (s.current_price || s.entry || 1) * 100 < 0.5 : false;
 
   const orderFlow = s.institutional_order_flow || {};
-  const flowPct = orderFlow.buying_pct || 50;
-  const flowClass = flowPct >= 65 ? 'strong-buy' : flowPct >= 55 ? 'buy' : flowPct <= 35 ? 'strong-sell' : flowPct <= 45 ? 'sell' : 'neutral';
+  const buyingPct = orderFlow.buying_pct || 50;
+  const flowClass = buyingPct >= 65 ? 'strong-buy' : buyingPct >= 55 ? 'buy' : buyingPct <= 35 ? 'strong-sell' : buyingPct <= 45 ? 'sell' : 'neutral';
 
   const msb = s.market_structure || {};
   const msbType = (msb.type || 'NONE').toUpperCase();
@@ -296,7 +296,7 @@ function buildCard(s, newIds) {
   if (s.volume_profile) {
     shortHTML += '<div class="inst-row"><span class="inst-label">VP</span><span>POC:' + fmtPrice(s.volume_profile.poc_price) + ' VAH:' + fmtPrice(s.volume_profile.va_high) + ' VAL:' + fmtPrice(s.volume_profile.va_low) + '</span></div>';
   }
-  shortHTML += '<div class="inst-row"><span class="inst-label">Zone</span><span class="zone-badge ' + pdClass + '">' + pd + '</span><span class="inst-label" style="margin-left:10px">Flow</span><span class="flow-badge ' + flowClass + '">' + (orderFlow.net_pressure || 'N/A') + '</span><span style="margin-left:8px">' + flowPct + '%</span></div>';
+  shortHTML += '<div class="inst-row"><span class="inst-label">Zone</span><span class="zone-badge ' + pdClass + '">' + pd + '</span><span class="inst-label" style="margin-left:10px">Flow</span><span class="flow-badge ' + flowClass + '">' + (orderFlow.net_pressure || 'N/A') + '</span><span style="margin-left:8px">' + buyingPct + '%</span></div>';
   if (vsp.type) {
     shortHTML += '<div class="inst-row"><span class="inst-label">VSP</span><span>' + vsp.type + ' @ ' + fmtPrice(vsp.price) + '</span></div>';
   }
