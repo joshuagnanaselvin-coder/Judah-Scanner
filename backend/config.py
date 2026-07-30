@@ -61,9 +61,9 @@ CONFLUENCE_FRESH_OB = 5
 # === TIERS ===
 TIER_SNIPER_SCORE = 70
 TIER_SNIPER_RR = 1.5
-TIER_ACTIVE_SCORE = 60
+TIER_ACTIVE_SCORE = 55
 TIER_ACTIVE_RR = 1.5
-TIER_WATCH_SCORE = 50
+TIER_WATCH_SCORE = 40
 TIER_WATCH_RR = 1.5
 MIN_RR = 1.5
 
@@ -71,6 +71,19 @@ MIN_RR = 1.5
 SL_BUFFER_PERCENT = 0.15
 TP_RR_MULTIPLIER = 2.0
 TP_MAX_RR = 4.0
+
+# === INSTITUTIONAL SL (hedge fund methodology) ===
+# Relevance gate — only use a swing if it's within this % of entry
+SL_RELEVANCE_PCT = 3.0
+# Maximum allowed structural SL distance; beyond this, fall back to ATR
+SL_MAX_STRUCTURAL_DISTANCE_PCT = 4.0
+# Fallback: ATR multiplier when no nearby swing exists
+SL_ATR_FALLBACK_MULT = 1.5
+# Skip swing points that have already been "swallowed" (price traded
+# through them and closed back on the other side). Stale structure.
+SL_SKIP_SWEPT = True
+# Lookback cap on how many candles we search for valid swing
+SWING_SL_LOOKBACK = 8
 
 # === FRESHNESS ===
 FRESH_MAX_AGE_MIN = 3

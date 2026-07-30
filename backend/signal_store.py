@@ -193,14 +193,12 @@ class SignalStore:
 
 
 def _recalc_tier(score, rr):
-    _SNIPER_SCORE, _SNIPER_RR = 70, 1.5
-    _OPPORTUNITY_SCORE, _OPPORTUNITY_RR = 60, 1.5
-    _WATCH_SCORE, _WATCH_RR = 50, 1.5
-    if score >= _SNIPER_SCORE and rr >= _SNIPER_RR:
+    from backend.config import TIER_SNIPER_SCORE, TIER_SNIPER_RR, TIER_ACTIVE_SCORE, TIER_ACTIVE_RR, TIER_WATCH_SCORE, TIER_WATCH_RR
+    if score >= TIER_SNIPER_SCORE and rr >= TIER_SNIPER_RR:
         return "SNIPER"
-    if score >= _OPPORTUNITY_SCORE and rr >= _OPPORTUNITY_RR:
-        return "OPPORTUNITY"
-    if score >= _WATCH_SCORE and rr >= _WATCH_RR:
+    if score >= TIER_ACTIVE_SCORE and rr >= TIER_ACTIVE_RR:
+        return "ACTIVE"
+    if score >= TIER_WATCH_SCORE and rr >= TIER_WATCH_RR:
         return "WATCH"
     return "REJECTED"
 

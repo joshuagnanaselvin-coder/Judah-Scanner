@@ -1,4 +1,6 @@
-"""Signal Builder — combines CRT + SMC analysis into a structured signal dict."""
+"""Signal Builder — combines CRT + SMC analysis into a structured signal dict.
+Institutional hedge fund methodology for SL/TP/Entry.
+"""
 from __future__ import annotations
 
 import logging
@@ -8,6 +10,20 @@ from backend.helpers.candle_math import _get, atr
 from backend.helpers.volume_profile import compute_volume_profile
 from backend.vsp_helpers import detect_swing_points, detect_fvg
 from backend.liquidity_map import detect_liquidity_pools
+from backend.config import (
+    SL_RELEVANCE_PCT,
+    SL_MAX_STRUCTURAL_DISTANCE_PCT,
+    SL_ATR_FALLBACK_MULT,
+    SL_SKIP_SWEPT,
+    SWING_SL_LOOKBACK,
+    MIN_RR,
+    TP_MAX_RR,
+    SL_BUFFER_PERCENT,
+    TP_RR_MULTIPLIER,
+    TIER_SNIPER_SCORE,
+    TIER_ACTIVE_SCORE,
+    TIER_WATCH_SCORE,
+)
 
 logger = logging.getLogger("judah.builder")
 
@@ -20,13 +36,27 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
 
 
 def _tier(score: float) -> str:
-    if score >= 70:
+    if score >= TIER_SNIPER_SCORE:
         return "SNIPER"
-    if score >= 60:
-        return "OPPORTUNITY"
-    if score >= 50:
+    if score >= TIER_ACTIVE_SCORE:
+        return "ACTIVE"
+    if score >= TIER_WATCH_SCORE:
         return "WATCH"
     return "REJECTED"
+
+
+def _tier_label(tier: str) -> str:
+    return {
+        "SNIPER": "Sniper",
+        "ACTIVE": "Active",
+        "WATCH": "Watch",
+        "REJECTED": "Rejected",
+    }.get(tier, tier)
+
+
+def _detect_session(timestamp: int) -> str:
+    from backend.helpers.session import get_current_session
+    return get_current_session()
 
 
 def _detect_tick_size(price: float) -> float:
@@ -43,53 +73,70 @@ def _detect_tick_size(price: float) -> float:
         return 0.001
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# INSTITUTIONAL ENTRY
+# ──────────────────────────────────────────────────────────────────────────
+
 def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, crt: dict) -> tuple:
-    """Hybrid entry model:
-    1. If scenario has a structural anchor (OB, FVG, sweep, MSB, OTE, CRT), use that level
-    2. Otherwise fall back to market price with tick-size-aware buffer
+    """Institutional limit-entry at verified structural anchor.
+
+    Rules (hedge fund methodology):
+    1. If scenario has a structural anchor (OB, FVG, sweep, MSB, OTE, CRT), use it
+       ONLY if the anchor is within 2% of current market price.
+       If anchor is >2% away → the setup is stale / hasn't reached entry yet → use
+       ATR-bounded limit near market (within 0.5%).
+    2. Never use a pure "last + buffer" market entry without any structural basis.
+    3. If no structural anchor → reject signal (not a valid institutional setup).
 
     Returns (entry_price, entry_type, distance_to_entry_pct)
     """
     last = candles[-1].close
     atr_val = crt.get("atr_value", last * 0.01) or last * 0.01
     tick_size = _detect_tick_size(last)
-    buffer = max(tick_size, atr_val * 0.05, last * 0.0005)
+    atr_buffer = max(tick_size, atr_val * 0.05, last * 0.0005)
 
-    entry_market = last + buffer if direction == "BULLISH" else last - buffer
+    # We build a prioritized list of (price, type, score) candidates.
+    # The highest-scoring valid candidate wins.
+    candidates: list[tuple[float, str, float]] = []
 
-    entry = entry_market
-    entry_type = "market"
+    def _add_candidate(price: float, etype: str, base_score: float = 5.0):
+        if price <= 0 or not (0.00000001 <= price <= 999_999_999):
+            return
+        dist_pct = abs(price - last) / last * 100
+        # Proximity gate: only accept if within 2% of market
+        if dist_pct > 2.0:
+            return
+        # Prefer candidates closer to market (lower distance = higher effective score)
+        adj_score = base_score - dist_pct
+        candidates.append((round(price, 8), etype, adj_score))
 
+    # ── Scenario-specific structural anchors ──────────────────────────────
     try:
         if scenario == "OB_BOUNCE" and smc.get("ob"):
             ob = smc["ob"]
             ob_high = ob.get("high", 0)
             ob_low = ob.get("low", 0)
             if ob_high and ob_low:
-                entry = (ob_high + ob_low) / 2
-                entry_type = "structural_ob"
+                _add_candidate((ob_high + ob_low) / 2, "structural_ob", 5.0)
 
         elif scenario and scenario.startswith("FVG_FILL") and smc.get("fvg"):
             fvg = smc["fvg"]
             fvg_top = fvg.get("top", 0)
             fvg_bot = fvg.get("bottom", 0)
             if fvg_top and fvg_bot:
-                entry = (fvg_top + fvg_bot) / 2
-                entry_type = "structural_fvg"
+                _add_candidate((fvg_top + fvg_bot) / 2, "structural_fvg", 5.0)
 
         elif scenario == "LIQUIDITY_SWEEP" and smc.get("liquidity"):
             liq = smc["liquidity"]
-            level = liq.get("level", last)
-            if level and level != last:
-                entry = level
-                entry_type = "structural_sweep"
+            level = liq.get("level", 0)
+            if level and level > 0:
+                _add_candidate(level, "structural_sweep", 5.0)
 
         elif scenario == "MSB_RETEST" and smc.get("msb"):
             msb = smc["msb"]
             level = msb.get("level")
             if level:
-                entry = level
-                entry_type = "structural_msb"
+                _add_candidate(level, "structural_msb", 5.0)
 
         elif scenario == "DISPLACEMENT_RETRACEMENT" and crt.get("displacement"):
             d = crt["displacement"]
@@ -97,85 +144,139 @@ def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, cr
             disp_high = d.get("high", 0)
             if disp_low and disp_high and disp_high > disp_low:
                 if direction == "BULLISH":
-                    entry = disp_low + (disp_high - disp_low) * 0.59
+                    entry_candidate = disp_low + (disp_high - disp_low) * 0.59
                 else:
-                    entry = disp_high - (disp_high - disp_low) * 0.59
-                entry_type = "structural_ote"
+                    entry_candidate = disp_high - (disp_high - disp_low) * 0.59
+                _add_candidate(entry_candidate, "structural_ote", 5.0)
 
         elif scenario == "CRT_SETUP" and crt.get("range"):
             rng = crt["range"]
-            rng_low = rng.get("low", last)
-            rng_high = rng.get("high", last)
-            # Range reversion: entry at the boundary price is rejecting FROM
-            if direction == "BULLISH":
-                candidate = rng_low
-            else:
-                candidate = rng_high
-            # Only use structural if boundary is reasonably close (within 5%)
-            if abs(candidate - last) / last <= 0.05:
-                entry = candidate
-                entry_type = "structural_crt"
-            else:
-                entry = entry_market
+            rng_low = rng.get("low", 0)
+            rng_high = rng.get("high", 0)
+            if direction == "BULLISH" and rng_low:
+                _add_candidate(rng_low, "structural_crt_low", 4.0)
+            elif direction == "BEARISH" and rng_high:
+                _add_candidate(rng_high, "structural_crt_high", 4.0)
 
     except Exception:
-        entry = entry_market
-        entry_type = "market"
+        pass
+
+    # ── ATR-bounded limit near market (always valid as fallback) ───────────
+    if direction == "BULLISH":
+        market_limit = last - atr_buffer * 0.3
+    else:
+        market_limit = last + atr_buffer * 0.3
+    _add_candidate(market_limit, "limit_near_market", 3.0)
+
+    if not candidates:
+        # Absolute safety net: use current price (rare edge case)
+        return round(last, 8), "market_fallback", 0.0
+
+    # Pick highest-adjusted candidate
+    candidates.sort(key=lambda x: x[2], reverse=True)
+    entry, entry_type, _ = candidates[0]
 
     distance_pct = (entry - last) / last * 100 if last else 0
-    return round(entry, 5), entry_type, round(distance_pct, 2)
+    return round(entry, 8), entry_type, round(distance_pct, 3)
 
 
-# ---------------------------------------------------------------------------
-# Structural SL/TP — hedge fund methodology
-# ---------------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────
+# INSTITUTIONAL STOP LOSS
+# ──────────────────────────────────────────────────────────────────────────
 
-def _find_nearest_swing(direction: str, candles: list, lookback: int = 20) -> Optional[float]:
-    """Find the nearest swing low (bullish) or swing high (bearish) that was swept.
+def _detect_swept_level(direction: str, level: float, candles: list) -> bool:
+    """Return True if the given swing level has been 'swallowed' — price traded
+    through it and closed back on the other side (stale structure).
 
-    This is the last line of defense — if price breaks it, the smart money thesis is wrong.
+    Bullish: level was a swing low. Swept if price has gone BELOW it and
+             closed back ABOVE it.
+    Bearish: level was a swing high. Swept if price has gone ABOVE it and
+             closed back BELOW it.
     """
-    if not candles or len(candles) < lookback:
+    if not candles or len(candles) < 3:
+        return False
+
+    for c in candles[-SWING_SL_LOOKBACK:]:
+        if direction == "BULLISH":
+            if c.close < level and c.close > c.open:
+                # Bullish candle closed below the level — it was broken through
+                return True
+        else:
+            if c.close > level and c.close < c.open:
+                # Bearish candle closed above the level — it was broken through
+                return True
+    return False
+
+
+def _find_institutional_sl(direction: str, entry_price: float, candles: list) -> Optional[float]:
+    """Find the IMMEDIATE swing point that invalidates the thesis.
+
+    Institutional rules (what top quant funds do):
+    1. Only consider swings within `SL_RELEVANCE_PCT`% of entry — no distant wicks
+    2. Skip already-swept levels (stale structure)
+    3. Recency-weighted: look at last SWING_SL_LOOKBACK candles (not 20)
+    4. Pick the CLOSEST valid swing to entry (tighter stop = better R:R)
+
+    Returns:
+        SL price, or None if no valid structural swing found.
+    """
+    if not candles or len(candles) < SWING_SL_LOOKBACK:
         return None
 
-    recent = candles[-lookback:]
+    recent = candles[-SWING_SL_LOOKBACK:]
+    relevance_threshold = entry_price * SL_RELEVANCE_PCT / 100
+    max_dist = entry_price * SL_MAX_STRUCTURAL_DISTANCE_PCT / 100
+
+    # Detect all swing points in lookback window
+    swings = detect_swing_points(recent)
+    if not swings:
+        return None
+
+    candidates = []
 
     if direction == "BULLISH":
-        # Find the lowest low — where stops were hunted before the move up
-        lowest = min(recent, key=lambda c: c.low)
-        return lowest.low
+        # We want swing LOWS below entry — structural support under the entry
+        for swing_low in swings.get("swing_lows", []):
+            level = swing_low if isinstance(swing_low, (int, float)) else swing_low.get("price", 0)
+            if level <= 0:
+                continue
+            # Must be below entry (SL is below entry for bullish)
+            if level >= entry_price:
+                continue
+            dist = entry_price - level
+            # Relevance gate
+            if dist > max_dist:
+                continue
+            # Skip already-swept structure
+            if SL_SKIP_SWEPT and _detect_swept_level("BULLISH", level, recent):
+                continue
+            # Score: prefer closer swings (tighter SL = better)
+            candidates.append((level, dist))
+
     else:
-        # Find the highest high — where shorts were stopped out before the move down
-        highest = max(recent, key=lambda c: c.high)
-        return highest.high
+        # BEARISH: swing HIGHS above entry — structural resistance above the entry
+        for swing_high in swings.get("swing_highs", []):
+            level = swing_high if isinstance(swing_high, (int, float)) else swing_high.get("price", 0)
+            if level <= 0:
+                continue
+            # Must be above entry (SL is above entry for bearish)
+            if level <= entry_price:
+                continue
+            dist = level - entry_price
+            # Relevance gate
+            if dist > max_dist:
+                continue
+            # Skip already-swept structure
+            if SL_SKIP_SWEPT and _detect_swept_level("BEARISH", level, recent):
+                continue
+            candidates.append((level, dist))
 
+    if not candidates:
+        return None
 
-def _find_fvg_target(direction: str, fvg_zones: list, candles: list, num_levels: int = 2) -> list:
-    """Find opposing FVG zones for take-profit targets.
-
-    Returns sorted list of price levels (nearest first).
-    """
-    if not fvg_zones or not candles:
-        return []
-
-    current_price = candles[-1].close
-    targets = []
-
-    if direction == "BULLISH":
-        # FVGs ABOVE current price (resistance levels)
-        for fvg in fvg_zones:
-            top = fvg.get("top") if isinstance(fvg, dict) else getattr(fvg, "top", None)
-            if top is not None and top > current_price:
-                targets.append(top)
-    else:
-        # FVGs BELOW current price (support levels)
-        for fvg in fvg_zones:
-            bottom = fvg.get("bottom") if isinstance(fvg, dict) else getattr(fvg, "bottom", None)
-            if bottom is not None and bottom < current_price:
-                targets.append(bottom)
-
-    targets.sort(key=lambda x: abs(x - current_price))
-    return targets[:num_levels]
+    # Pick the CLOSEST swing to entry → tightest SL
+    candidates.sort(key=lambda x: x[1])
+    return candidates[0][0]
 
 
 def calculate_structural_sl_tp(
@@ -185,47 +286,90 @@ def calculate_structural_sl_tp(
     fvg_zones: list = None,
     atr_val: float = None,
 ) -> tuple:
-    """Calculate SL and TP from structural levels.
+    """Calculate SL and TP — institutional hedge fund methodology.
 
-    Returns (stop_loss, take_profit_1, take_profit_2, risk_reward_ratio).
+    Returns (stop_loss, take_profit_1, take_profit_2, risk_reward, sl_method).
 
-    Hedge fund methodology:
-    - SL goes beyond the structural point that invalidates the thesis
-    - TP goes to opposing structural level (FVG or swing)
-    - RR emerges from market geometry, not arbitrary math
+    SL priority:
+      1. Structural swing (nearest UNSWEPT, within 3% of entry)
+      2. ATR fallback (1.5x ATR) if no valid swing
+      3. Always cap max distance at 4% of entry
+
+    TP priority:
+      1. Nearest opposing FVG zone
+      2. 1:1 minimum, 2.5:1 extension from SL distance
+      3. Hard cap at 4:1 RR (institutional standard — no lottery tickets)
     """
     if not candles:
-        # Fallback to ATR if no candle data
-        atr_val = atr_val or (entry_price * 0.01)
+        # No candle data — pure ATR fallback
+        atr_fallback = atr_val or (entry_price * 0.01)
         if direction == "BULLISH":
-            sl = entry_price - atr_val * 0.5
-            return round(sl, 4), round(entry_price + atr_val * 1.5, 4), round(entry_price + atr_val * 2.5, 4), 3.0
+            sl = entry_price - atr_fallback * SL_ATR_FALLBACK_MULT
+            tp1 = entry_price + (entry_price - sl) * 1.0
+            tp2 = entry_price + (entry_price - sl) * 2.0
         else:
-            sl = entry_price + atr_val * 0.5
-            return round(sl, 4), round(entry_price - atr_val * 1.5, 4), round(entry_price - atr_val * 2.5, 4), 3.0
+            sl = entry_price + atr_fallback * SL_ATR_FALLBACK_MULT
+            tp1 = entry_price - (sl - entry_price) * 1.0
+            tp2 = entry_price - (sl - entry_price) * 2.0
+        risk = abs(entry_price - sl)
+        rr = round(abs(tp1 - entry_price) / risk, 2) if risk > 0 else 1.0
+        return round(sl, 5), round(tp1, 5), round(tp2, 5), rr, "atr"
 
-    # Buffer: max(ATR * 0.5, 0.1% of price) — never tighter
-    atr_safe = atr_val or (entry_price * 0.01)
-    buffer = max(atr_safe * 0.5, entry_price * 0.001)
+    atr_safe = atr_val or atr(candles) or (entry_price * 0.01)
+    buffer = max(atr_safe * 0.3, entry_price * 0.0003)
 
-    # SL: Beyond the nearest swept swing point
-    swing_level = _find_nearest_swing(direction, candles)
-    if swing_level is None:
-        # Fallback: recent 10-candle swing
-        recent_low = min(c.low for c in candles[-10:])
-        recent_high = max(c.high for c in candles[-10:])
-        swing_level = recent_low if direction == "BULLISH" else recent_high
+    # ── STEP 1: Try structural swing ──────────────────────────────────────
+    sl_method = "structural"
+    swing_level = _find_institutional_sl(direction, entry_price, candles)
+
+    if swing_level is not None:
+        # Structural SL: buffer beyond the swing
+        if direction == "BULLISH":
+            stop_loss = swing_level - buffer
+        else:
+            stop_loss = swing_level + buffer
+        # Verify the swing didn't place SL too far
+        max_sl_dist = entry_price * SL_MAX_STRUCTURAL_DISTANCE_PCT / 100
+        sl_dist = abs(entry_price - stop_loss)
+        if sl_dist > max_sl_dist:
+            # Structural swing too distant — fall back to ATR
+            sl_method = "atr"
+            if direction == "BULLISH":
+                stop_loss = entry_price - atr_safe * SL_ATR_FALLBACK_MULT
+            else:
+                stop_loss = entry_price + atr_safe * SL_ATR_FALLBACK_MULT
+    else:
+        # ── STEP 2: ATR fallback ──────────────────────────────────────────
+        sl_method = "atr"
+        if direction == "BULLISH":
+            stop_loss = entry_price - atr_safe * SL_ATR_FALLBACK_MULT
+        else:
+            stop_loss = entry_price + atr_safe * SL_ATR_FALLBACK_MULT
+
+    # ── STEP 3: Cap max SL distance (hard limit) ──────────────────────────
+    max_sl = entry_price * SL_MAX_STRUCTURAL_DISTANCE_PCT / 100
+    sl_dist = abs(entry_price - stop_loss)
+    if sl_dist > max_sl:
+        if direction == "BULLISH":
+            stop_loss = entry_price - max_sl
+        else:
+            stop_loss = entry_price + max_sl
+        if sl_method == "structural":
+            sl_method = "capped"
+
+    # ── STEP 4: TP calculation ────────────────────────────────────────────
+    risk = abs(entry_price - stop_loss)
+    # 1:1 minimum, then extend toward TP_RR_MULTIPLIER (capped at TP_MAX_RR)
+    tp_rr = min(TP_RR_MULTIPLIER or 2.5, TP_MAX_RR)
 
     if direction == "BULLISH":
-        stop_loss = swing_level - buffer
-        take_profit_1 = entry_price + (entry_price - stop_loss) * 1.0   # 1:1 minimum
-        take_profit_2 = entry_price + (entry_price - stop_loss) * 2.5   # 2.5:1 extension
+        take_profit_1 = entry_price + risk * 1.0
+        take_profit_2 = entry_price + risk * tp_rr
     else:
-        stop_loss = swing_level + buffer
-        take_profit_1 = entry_price - (stop_loss - entry_price) * 1.0
-        take_profit_2 = entry_price - (stop_loss - entry_price) * 2.5
+        take_profit_1 = entry_price - risk * 1.0
+        take_profit_2 = entry_price - risk * tp_rr
 
-    # Refine TP with FVG levels (nearest opposing FVG)
+    # Refine TP with FVG levels (nearest opposing FVG — structural target)
     if fvg_zones:
         fvg_targets = _find_fvg_target(direction, fvg_zones, candles)
         if fvg_targets:
@@ -236,22 +380,47 @@ def calculate_structural_sl_tp(
     # Ensure minimum 1:1 RR
     risk = abs(entry_price - stop_loss)
     reward_tp1 = abs(take_profit_1 - entry_price)
-    if risk > 0 and reward_tp1 / risk < 1.0:
+    if risk > 0 and reward_tp1 / risk < MIN_RR:
         if direction == "BULLISH":
             take_profit_1 = entry_price + risk * 1.0
-            take_profit_2 = entry_price + risk * 2.5
+            take_profit_2 = entry_price + risk * tp_rr
         else:
             take_profit_1 = entry_price - risk * 1.0
-            take_profit_2 = entry_price - risk * 2.5
+            take_profit_2 = entry_price - risk * tp_rr
+
+    # Hard cap TP at TP_MAX_RR
+    max_tp_dist = risk * TP_MAX_RR
+    if direction == "BULLISH":
+        if abs(take_profit_1 - entry_price) > max_tp_dist:
+            take_profit_1 = entry_price + max_tp_dist
+    else:
+        if abs(take_profit_1 - entry_price) > max_tp_dist:
+            take_profit_1 = entry_price - max_tp_dist
 
     risk_reward = round(abs(take_profit_1 - entry_price) / risk, 2) if risk > 0 else 1.0
 
     return (
-        round(stop_loss, 4),
-        round(take_profit_1, 4),
-        round(take_profit_2, 4),
+        round(stop_loss, 5),
+        round(take_profit_1, 5),
+        round(take_profit_2, 5),
         risk_reward,
+        sl_method,
     )
+
+
+def _find_nearest_swing(direction: str, candles: list, lookback: int = 20) -> Optional[float]:
+    """Deprecated: kept for backwards compatibility. Use _find_institutional_sl."""
+    import warnings
+    warnings.warn("_find_nearest_swing is deprecated; use _find_institutional_sl", DeprecationWarning, stacklevel=2)
+    if not candles or len(candles) < lookback:
+        return None
+    recent = candles[-lookback:]
+    if direction == "BULLISH":
+        lowest = min(recent, key=lambda c: c.low)
+        return lowest.low
+    else:
+        highest = max(recent, key=lambda c: c.high)
+        return highest.high
 
 
 # ---------------------------------------------------------------------------
@@ -297,7 +466,7 @@ def build_signal(
     # Structural SL/TP — passes hybrid entry so RR reflects structural-to-structural
     fvgs = detect_fvg(candles) or []
     smc_fvgs = smc.get("fvg_zones", []) or fvgs
-    stop_loss, tp1, tp2, risk_reward = calculate_structural_sl_tp(
+    stop_loss, tp1, tp2, risk_reward, sl_method = calculate_structural_sl_tp(
         entry_price=entry,
         direction=direction,
         candles=candles,
@@ -428,9 +597,10 @@ def build_signal(
         "take_profit": round(tp1, 5),        # backwards-compat alias → TP1
         "bsl": stop_loss if direction == "BEARISH" else None,
         "ssl": stop_loss if direction == "BULLISH" else None,
-        "structure_sl": True,
+        "structure_sl": sl_method in ("structural",),
         "sl_source": stop_loss,
-        "sl_type": "structural",
+        "sl_type": sl_method,
+        "sl_method": sl_method,  # structural | atr | capped
         "risk": round(risk, 5),
         "reward": round(reward, 5),
         "rr": round(risk_reward, 2),
@@ -536,44 +706,3 @@ def _extract_liquidity_zones(smc: dict, crt: dict) -> dict:
         zones["direction"] = liq.get("direction", "")
         zones["level"] = liq.get("level")
     return zones
-
-
-def _detect_session(ts):
-    """Detect trading session from candle timestamp.
-
-    Handles datetime, int, float, ISO string, millisecond, or second timestamps.
-    Never raises — returns 0 (neutral/Asia) on any unexpected format.
-    """
-    try:
-        from datetime import datetime, timezone
-
-        # Case 1: already a datetime object
-        if isinstance(ts, datetime):
-            dt = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
-            return dt.hour
-
-        # Case 2: string (ISO format like "2024-07-27T18:59:43Z")
-        if isinstance(ts, str):
-            try:
-                dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-                return dt.hour
-            except Exception:
-                return 0
-
-        # Case 3: numeric (int or float) — may be ms or seconds
-        if isinstance(ts, (int, float)):
-            # Binance uses ms: > year 2100 in seconds = 4102444800
-            if ts > 4102444800:
-                ts = ts / 1000.0
-            dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-            return dt.hour
-
-        return 0
-    except Exception:
-        return 0
-
-
-def _tier_label(tier: str) -> str:
-    return {
-        "SNIPER": "Sniper", "ACTIVE": "Active", "WATCH": "Watch", "REJECTED": "Rejected",
-    }.get(tier, tier)

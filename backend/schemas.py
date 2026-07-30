@@ -9,7 +9,7 @@ class Direction(str, Enum):
 
 class Tier(str, Enum):
     SNIPER = "SNIPER"
-    OPPORTUNITY = "OPPORTUNITY"
+    ACTIVE = "ACTIVE"
     WATCH = "WATCH"
     REJECTED = "REJECTED"
 
