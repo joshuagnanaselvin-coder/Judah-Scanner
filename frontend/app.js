@@ -342,6 +342,7 @@ function buildCard(s, newIds) {
           '<div class="crt-smc-bar">' +
             '<div class="crt-segment" style="width:' + crtPct.toFixed(1) + '%" title="CRT: ' + (s.crt_score || 0) + '/60"></div>' +
             '<div class="smc-segment" style="width:' + smcPct.toFixed(1) + '%" title="SMC: ' + (s.smc_score || 0) + '/40"></div>' +
+            (s.boost_score ? '<div class="boost-segment" style="width:' + (s.boost_score / scoreVal * 100).toFixed(1) + '%" title="Boost: +' + s.boost_score + '"></div>' : '') +
           '</div>' +
         '</div>' +
       '</div>' +

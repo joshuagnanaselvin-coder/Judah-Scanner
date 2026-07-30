@@ -243,24 +243,32 @@ def scan(symbol: str, timeframe: str) -> dict | None:
     signal = build_signal(symbol, timeframe, crt, smc, candles)
 
     if signal:
-        # Apply flow + fast_mover boost to the composite score
+        # Apply flow + fast_mover boost — capped relative to CRT+SMC base
+        # so the CRT:SMC bar segments always sum to composite_score.
+        # Max boost = 35% of base score, hard cap at +30.
+        base_score = signal.get("composite_score", 0)
+        raw_boost = flow_boost + fast_mover_boost
+        max_boost = min(int(base_score * 0.35), 30)
+        total_boost = min(raw_boost, max_boost)
+
         if total_boost > 0:
-            old_score = signal.get("composite_score", 0)
-            signal["composite_score"] = min(old_score + total_boost, 100)
+            signal["composite_score"] = min(base_score + total_boost, 100)
+            signal["boost_score"] = total_boost
             signal["flow"] = flow
-            signal["flow_boost"] = flow_boost
+            signal["flow_boost"] = min(flow_boost, 15)
             signal["fast_mover"] = fm
-            signal["fast_mover_boost"] = fast_mover_boost
-            # Recalculate tier with boosted score
-            composite = signal["composite_score"]
-            if composite >= TIER_SNIPER_SCORE:
-                signal["tier"] = "SNIPER"
-            elif composite >= TIER_ACTIVE_SCORE:
-                signal["tier"] = "ACTIVE"
-            elif composite >= TIER_WATCH_SCORE:
-                signal["tier"] = "WATCH"
-            else:
-                signal["tier"] = "REJECTED"
+            signal["fast_mover_boost"] = min(fast_mover_boost, 20)
+
+        # Recalculate tier with boosted composite_score
+        composite = signal["composite_score"]
+        if composite >= TIER_SNIPER_SCORE:
+            signal["tier"] = "SNIPER"
+        elif composite >= TIER_ACTIVE_SCORE:
+            signal["tier"] = "ACTIVE"
+        elif composite >= TIER_WATCH_SCORE:
+            signal["tier"] = "WATCH"
+        else:
+            signal["tier"] = "REJECTED"
 
         signal["engine_path"] = path
         signal["flow_direction"] = flow["direction"]
