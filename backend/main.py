@@ -1,6 +1,13 @@
-"""FastAPI entry point — serves frontend, REST API, and WebSocket."""
+"""FastAPI entry point — serves frontend, REST API, and WebSocket.
+
+3 Dimensions:
+  D1 (HTF) → backend/scanner.py — WebSocket /ws for D1 signals
+  D2 (LTF) → backend/engines/ltf_engine.py — runs in background
+  D3 (Fusion) → backend/engines/signal_fusion.py — WebSocket /ws-fusion for frontend
+"""
 import asyncio
 import logging
+import json
 from datetime import datetime, timezone
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
@@ -9,7 +16,10 @@ from backend.market_data import market_data
 from backend.scanner import scanner
 from backend.signal_store import signal_store
 from backend.performance_tracker import performance_tracker
-from backend.config import HOST, PORT, TIMEFRAMES, BINANCE_REST_BASE
+from backend.state_store import state_store
+from backend.engines.ltf_engine import ltf_engine
+from backend.ws_hub import broadcast, get_initial_payload
+from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -20,7 +30,7 @@ logger = logging.getLogger("judah")
 
 app = FastAPI(title="Judah Scanner")
 
-# Serve frontend static files with NO caching (edits always show immediately)
+# Serve frontend static files with NO caching
 import os
 frontend_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend")
 if os.path.exists(frontend_dir):
@@ -35,93 +45,54 @@ if os.path.exists(frontend_dir):
             return response
     app.mount("/static", _NoCacheStaticFiles(directory=frontend_dir), name="static")
 
-# ---- REST API ----
+# ---- D3 FUSION WEBSOCKET (Frontend) ----
 
-@app.get("/")
-async def dashboard():
+_fusion_clients: list = []
+
+@app.websocket("/ws-fusion")
+async def ws_fusion(ws: WebSocket):
+    await ws.accept()
+    _fusion_clients.append(ws)
+    ws_hub.add_client(ws)
+    logger.info(f"[ws-fusion] Client connected ({len(_fusion_clients)} total)")
+
+    # Send current state immediately
     try:
-        with open(os.path.join(frontend_dir, "index.html")) as f:
-            return HTMLResponse(content=f.read())
-    except FileNotFoundError:
-        return HTMLResponse(content="<h1>Judah Scanner</h1><p>Frontend not found. Check frontend/index.html</p>")
+        await ws.send_json(get_initial_payload(state_store))
+    except Exception:
+        pass
 
-@app.get("/api/signals")
-async def get_signals():
-    signals = signal_store.get_all()
-    return {"count": len(signals), "timestamp": _now_ms(),
-            "stats": performance_tracker.get_stats(), "signals": signals}
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        logger.info("[ws-fusion] Client disconnected")
+    finally:
+        if ws in _fusion_clients:
+            _fusion_clients.remove(ws)
+        ws_hub.remove_client(ws)
 
-@app.get("/api/health")
-async def health():
-    return {"status": "ok", "ws_connected": market_data.ws_connected,
-            "signal_count": len(signal_store.signals),
-            "stats": performance_tracker.get_stats()}
 
-@app.get("/api/pairs")
-async def get_pairs():
-    return {"pairs": scanner.symbols, "timeframes": TIMEFRAMES}
+async def broadcast_to_frontend(message: dict):
+    """Push a message to all connected frontend clients."""
+    if not _fusion_clients:
+        return
+    dead = []
+    for ws in _fusion_clients:
+        try:
+            await ws.send_json(message)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        _fusion_clients.remove(ws)
 
-@app.get("/api/stats")
-async def get_stats():
-    return performance_tracker.get_stats()
 
-@app.get("/api/logs")
-async def get_logs(limit: int = 100):
-    from backend.signal_logger import get_recent_logs
-    return get_recent_logs(limit)
-
-@app.get("/api/performance")
-async def get_performance():
-    from backend.performance_tracker import PerformanceTrackerCSV
-    tracker = PerformanceTrackerCSV()
-    tracker.load_from_csv()
-    return {
-        "summary": tracker.get_summary(),
-        "by_scenario": tracker.get_scenario_report(),
-    }
-
-@app.post("/api/restart")
-async def restart_scanner():
-    """Wipe signals + FVG ledger, re-bootstrap candles, reconnect WS.
-    Returns when restart begins (async — watch status bar for completion)."""
-    logger.info("[restart] Initiating full scanner restart...")
-    result = await scanner.restart()
-    return {"ok": True, "msg": "Restart triggered", "detail": result}
-
-# ---- HELPERS ----
-
-def _now_ms() -> int:
-    return int(datetime.now(timezone.utc).timestamp() * 1000)
-
-def _safe(obj):
-    """Make object JSON-serializable — convert datetime, bytes, and unknown types."""
-    if obj is None:
-        return None
-    if isinstance(obj, (str, int, float, bool)):
-        return obj
-    if isinstance(obj, dict):
-        return {k: _safe(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_safe(x) for x in obj]
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    # Fallback: convert to string
-    return str(obj)
-
-# ---- WEBSOCKET ----
+# ---- D1 WEBSOCKET (existing, for backward compat) ----
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
 
-    # Send initial snapshot
-    await ws.send_json({
-        "type": "INITIAL",
-        "signals": signal_store.get_all(),
-        "stats": performance_tracker.get_stats(),
-    })
-
-    # Register callback for new signals
     async def on_new(new_signals, all_signals, refreshed, revalidated=None):
         try:
             if revalidated:
@@ -147,8 +118,87 @@ async def ws_endpoint(ws: WebSocket):
     except WebSocketDisconnect:
         logger.info("[ws] Client disconnected")
 
-def _now_ms():
+
+# ---- REST API ----
+
+@app.get("/")
+async def dashboard():
+    try:
+        with open(os.path.join(frontend_dir, "index.html")) as f:
+            return HTMLResponse(content=f.read())
+    except FileNotFoundError:
+        return HTMLResponse(content="<h1>Judah Scanner</h1><p>Frontend not found.</p>")
+
+@app.get("/api/signals")
+async def get_signals():
+    """D1 signals (HTF)."""
+    signals = signal_store.get_all()
+    return {"count": len(signals), "timestamp": _now_ms(),
+            "stats": performance_tracker.get_stats(), "signals": signals}
+
+@app.get("/api/fusion")
+async def get_fusion():
+    """D3 fusion signals (frontend display)."""
+    return {"count": len(state_store.d3_fusion),
+            "timestamp": _now_ms(),
+            "stats": state_store.get_stats(),
+            "signals": state_store.get_all_fusion()}
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "ws_connected": market_data.ws_connected,
+            "signal_count": len(signal_store.signals),
+            "fusion_count": len(state_store.d3_fusion),
+            "stats": state_store.get_stats()}
+
+@app.get("/api/pairs")
+async def get_pairs():
+    return {"pairs": scanner.symbols, "timeframes": TIMEFRAMES_HTF}
+
+@app.get("/api/stats")
+async def get_stats():
+    return performance_tracker.get_stats()
+
+@app.get("/api/logs")
+async def get_logs(limit: int = 100):
+    from backend.signal_logger import get_recent_logs
+    return get_recent_logs(limit)
+
+@app.get("/api/performance")
+async def get_performance():
+    from backend.performance_tracker import PerformanceTrackerCSV
+    tracker = PerformanceTrackerCSV()
+    tracker.load_from_csv()
+    return {
+        "summary": tracker.get_summary(),
+        "by_scenario": tracker.get_scenario_report(),
+    }
+
+@app.post("/api/restart")
+async def restart_scanner():
+    logger.info("[restart] Initiating full scanner restart...")
+    result = await scanner.restart()
+    return {"ok": True, "msg": "Restart triggered", "detail": result}
+
+
+# ---- HELPERS ----
+
+def _now_ms() -> int:
     return int(datetime.now(timezone.utc).timestamp() * 1000)
+
+def _safe(obj):
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_safe(x) for x in obj]
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return str(obj)
+
 
 # ---- STARTUP ----
 
@@ -169,16 +219,28 @@ async def startup():
         logger.error(f"[server] Failed to fetch pairs from Binance: {e}")
 
     if not pairs:
-        logger.error("[server] No pairs found! Server starting but scanner will be empty.")
-        pairs = ["BTCUSDT", "ETHUSDT"]  # fallback minimal set
+        logger.error("[server] No pairs found! Using fallback.")
+        pairs = ["BTCUSDT", "ETHUSDT"]
 
     scanner.symbols = pairs
     logger.info(f"[server] Found {len(pairs)} USDT pairs")
 
+    # Hook D1 scanner to trigger D2 on tier changes
+    scanner.on_tier_change = ltf_engine.on_d1_tier_change
+    scanner.on_candle_close = ltf_engine.on_candle_close
+
+    # Start D1
     try:
         await scanner.start(pairs)
     except Exception as e:
-        logger.error(f"[server] Scanner failed to start: {e}")
+        logger.error(f"[server] D1 scanner failed to start: {e}")
+
+    # Start D2 engine
+    try:
+        await ltf_engine.start()
+        logger.info("[server] D2 LTF engine started")
+    except Exception as e:
+        logger.error(f"[server] D2 engine failed to start: {e}")
 
     logger.info(f" Judah Scanner running at http://{HOST}:{PORT}")
 

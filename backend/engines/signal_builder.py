@@ -579,7 +579,7 @@ def build_signal(
     # CRT(25) + SMC(20) + Flow(25) + Momentum(20) = 90 max
     composite_score = crt_score + smc_score + flow_score + momentum_score
 
-    logger.info(f"COMPOSITE: CRT={crt_score} SMC={smc_score} Flow={flow_score} Mom={momentum_score} = {composite_score}/90")
+    logger.info(f"COMPOSITE: CRT={crt_score} SMC={smc_score} Flow={flow_score} Mom={momentum_score} = {composite_score}/90 → capped→{min(composite_score, 100)}")
 
     # === SIGNAL DICT ===
     signal = {
@@ -648,16 +648,8 @@ def build_signal(
         "stop_loss": round(stop_loss, 5),
         "take_profit_1": round(tp1, 5),
         "take_profit_2": round(tp2, 5),
-        "take_profit": round(tp1, 5),        # backwards-compat alias → TP1
-        "bsl": stop_loss if direction == "BEARISH" else None,
-        "ssl": stop_loss if direction == "BULLISH" else None,
-        "structure_sl": sl_method in ("structural",),
-        "sl_source": stop_loss,
-        "sl_type": sl_method,
-        "sl_method": sl_method,  # structural | atr | capped
-        "risk": round(risk, 5),
-        "reward": round(reward, 5),
-        "rr": round(risk_reward, 2),
+        "rr1": round(risk_reward, 2),
+        "rr2": round(risk_reward * 2.0, 2),
         "scenario": scenario,
 
         # MARKET DATA

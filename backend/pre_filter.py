@@ -2,14 +2,14 @@
 import logging
 from backend.helpers.candle_math import atr_percent
 from backend.config import (
-    MIN_ATR_PERCENT, MIN_ATR_ABSOLUTE,
+    MIN_ATR_PERCENT, ADAPTIVE_ATR_MIN_ABSOLUTE,
     MIN_PRICE_CHANGE_4H_PCT, MIN_24H_VOLUME_USDT,
 )
 
 logger = logging.getLogger("judah.pre_filter")
 
 def should_scan(symbol: str, candles_by_tf: dict) -> bool:
-    candles = candles_by_tf.get("4H") or candles_by_tf.get("4h")
+    candles = candles_by_tf.get("4H")
     if not candles or len(candles) < 20:
         logger.debug(f"[prefilter] {symbol}: no candles or < 20")
         return False
@@ -18,9 +18,9 @@ def should_scan(symbol: str, candles_by_tf: dict) -> bool:
     last_price = candles[-1].close if candles else 0
     atr_val = (atr_p / 100.0) * last_price if last_price > 0 else 0
 
-    if atr_p < MIN_ATR_PERCENT or atr_val < MIN_ATR_ABSOLUTE:
+    if atr_p < MIN_ATR_PERCENT or atr_val < ADAPTIVE_ATR_MIN_ABSOLUTE:
         logger.debug(f"[prefilter] {symbol}: ATR {atr_p:.3f}% / {atr_val:.6f} below threshold "
-                      f"{MIN_ATR_PERCENT}% / {MIN_ATR_ABSOLUTE}")
+                      f"{MIN_ATR_PERCENT}% / {ADAPTIVE_ATR_MIN_ABSOLUTE}")
         return False
 
     if len(candles) >= 3:

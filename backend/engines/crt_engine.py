@@ -158,9 +158,9 @@ def run_crt(candles: list) -> Optional[dict]:
     return {
         "session": session,
         "session_label": get_session_label(session),
-        "session_bullish": session_score("BULLISH"),
-        "session_bearish": session_score("BEARISH"),
-        "session_score": session_score(crt_trade_direction),
+        "session_bullish": session_score(get_session_at(candles[-1].time)),
+        "session_bearish": session_score(get_session_at(candles[-1].time)),
+        "session_score": session_score(session),
         "range": rng,
         "displacement": {
             "candle_index": rc_index,

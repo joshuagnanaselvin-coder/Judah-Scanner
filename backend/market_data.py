@@ -8,7 +8,7 @@ from typing import Optional
 from backend.config import (
     BINANCE_REST_BASE, BINANCE_WS_BASE,
     WS_RECONNECT_DELAY_SEC, WS_MAX_STREAMS_PER_CONN,
-    BOOTSTRAP_CANDLES, TIMEFRAMES
+    BOOTSTRAP_CANDLES, TIMEFRAMES_HTF, ALL_TIMEFRAMES
 )
 from backend.schemas import Candle
 
@@ -42,15 +42,22 @@ class MarketData:
         print(f"[marketdata] Bootstrapping {len(symbols)} coins...")
 
         # Build all tasks: flat list of (symbol, tf) pairs
-        task_pairs = []
+        # Bootstrap HTF first (D1), then LTF (D2) in next batches
+        hf_pairs = []
+        lf_pairs = []
         for symbol in symbols:
-            for tf in TIMEFRAMES:
-                task_pairs.append((symbol, tf))
+            for tf in TIMEFRAMES_HTF:
+                hf_pairs.append((symbol, tf))
+            for tf in ALL_TIMEFRAMES:
+                if tf not in TIMEFRAMES_HTF:
+                    lf_pairs.append((symbol, tf))
+
+        task_pairs = hf_pairs + lf_pairs
 
         batch_size = 30
         total = len(task_pairs)
         total_batches = (total + batch_size - 1) // batch_size
-        print(f"[marketdata] {len(symbols)} pairs x {len(TIMEFRAMES)} TFs = {total} requests ({total_batches} batches @ {batch_size}/batch)")
+        print(f"[marketdata] {len(symbols)} pairs x {len(TIMEFRAMES_HTF)} HTF + {len(ALL_TIMEFRAMES) - len(TIMEFRAMES_HTF)} LTF = {total} requests ({total_batches} batches @ {batch_size}/batch)")
 
         for batch_idx in range(total_batches):
             start = batch_idx * batch_size
@@ -105,19 +112,17 @@ class MarketData:
     def connect_websocket(self, symbols: list):
         all_streams = []
         for symbol in symbols:
-            for tf in TIMEFRAMES:
-                # Binance expects lowercase intervals: 1h, 4h, 1d (not 1H, 1D)
+            for tf in ALL_TIMEFRAMES:
                 tf_lower = tf.lower()
                 all_streams.append(f"{symbol.lower()}@kline_{tf_lower}")
 
-        # Split into chunks, each chunk gets its own persistent connection
         chunk_size = WS_MAX_STREAMS_PER_CONN
         chunks = [all_streams[i:i + chunk_size]
                   for i in range(0, len(all_streams), chunk_size)]
         self._ws_tasks = [asyncio.create_task(self._ws_connection(i, chunk))
                           for i, chunk in enumerate(chunks)]
         logger.info(f"[ws] Created {len(chunks)} WS connections "
-                    f"({len(all_streams)} streams, ~{len(symbols)} pairs x {len(TIMEFRAMES)} TFs)")
+                    f"({len(all_streams)} streams, ~{len(symbols)} pairs x {len(ALL_TIMEFRAMES)} TFs)")
 
     async def _ws_connection(self, conn_id, streams):
         """Runs one persistent WS connection with auto-reconnect."""
@@ -175,7 +180,16 @@ class MarketData:
                     self.on_candle_update(symbol, tf)
 
     def get_candles(self, symbol, tf):
-        return self.candles.get(f"{symbol}_{tf}", [])
+        """Lookup candles with case-insensitive timeframe key."""
+        key = f"{symbol}_{tf}"
+        if key in self.candles:
+            return self.candles[key]
+        # Case-insensitive fallback
+        tf_upper = tf.upper()
+        key2 = f"{symbol}_{tf_upper}"
+        if key2 in self.candles:
+            return self.candles[key2]
+        return []
 
     async def close(self):
         if self.session:

@@ -5,6 +5,10 @@ SCAN_INTERVAL_SECONDS = 5
 SIGNAL_TTL_MINUTES = 30
 MAX_SIGNALS = 200
 BOOTSTRAP_CANDLES = 200
+D2_SIGNAL_TTL_MINUTES = 30
+D2_MIN_SCORE = 40
+TIMEFRAMES_HTF = ["1H", "4H", "1D"]
+D1_TTL_SECONDS = 120        # D1 tier freshness window (2x scan interval)
 
 # === LOGGING (Excel/CSV) ===
 # Set to False to disable signal logging (production mode)
@@ -12,12 +16,24 @@ BOOTSTRAP_CANDLES = 200
 ENABLE_SIGNAL_LOGGING = False
 LOG_FILE = "signal_log.csv"
 
-# === PRE-FILTER ===
-MIN_24H_VOLUME_USDT = 500_000
-MIN_ATR_PERCENT = 0.05
-MIN_ATR_ABSOLUTE = 0.0001
-MIN_PRICE_CHANGE_4H_PCT = 0.05
-MIN_RANGE_MULTIPLIER = 1.5
+# === CANDIDATE SELECTION ENGINE (formerly pre-filter) ===
+# Adaptive ATR threshold: each coin's threshold = 60% of its own 50-period rolling ATR baseline.
+# No fixed % per TF. Self-tuning per coin.
+ADAPTIVE_ATR_LOOKBACK = 50
+ADAPTIVE_ATR_MIN_MULTIPLIER = 0.60
+ADAPTIVE_ATR_BASELINE_MIN_PCT = 0.03   # Floor: 0.03% ATR
+ADAPTIVE_ATR_BASELINE_MAX_PCT = 5.0    # Ceiling: 5% ATR
+ADAPTIVE_ATR_MIN_ABSOLUTE = 0.00001   # Absolute floor for dust coins
+MIN_ATR_ABSOLUTE = ADAPTIVE_ATR_MIN_ABSOLUTE  # deprecated alias — use ADAPTIVE_ATR_MIN_ABSOLUTE
+
+# Fixed-threshold pre-filter (used by pre_filter.py alongside adaptive selector)
+MIN_ATR_PERCENT = 0.15                 # Min ATR% to pass pre-filter
+MIN_PRICE_CHANGE_4H_PCT = 0.15        # Min 4H price change %
+MIN_24H_VOLUME_USDT = 5_000_000       # Min 24h volume in USDT
+
+# CRT ===
+MIN_RANGE_MULTIPLIER = 0.5
+MIN_PRICE_CHANGE_PCT = 0.05            # Min price movement to be "active"
 
 
 # === CRT ===
@@ -97,8 +113,18 @@ WARM_SCORE_FACTOR = 0.95
 COOLING_SCORE_FACTOR = 0.85
 STALE_SCORE_FACTOR = 0.75
 
+# === DIMENSION 2 (LTF Scanner) ===
+D2_TIMEFRAME = "15M"
+D2_SIGNAL_TTL_MINUTES = 15          # LTF signals decay faster
+D2_MIN_SCORE = 70                   # SNIPER-only output
+D2_SKIP_ALL_WATCH = True            # Skip coins where ALL D1 TFs = WATCH
+D2_SCAN_INTERVAL_SECONDS = 5        # Hybrid: 5s safety timer + WS events
+
 # === TIMEFRAMES ===
-TIMEFRAMES = ["1h", "4h", "1d"]
+TIMEFRAMES_HTF = ["1H", "4H", "1D"]  # Dimension 1
+ALL_TIMEFRAMES = ["15M", "1H", "4H", "1D"]  # All including D2
+# Backward-compat alias (D1 scanner still uses this name)
+TIMEFRAMES = TIMEFRAMES_HTF
 
 # === BINANCE ===
 BINANCE_REST_BASE = "https://api.binance.com/api/v3"

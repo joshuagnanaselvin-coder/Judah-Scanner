@@ -1,12 +1,18 @@
-"""Orchestrator — event-driven scan with 5s fallback, confluence, freshness."""
+"""Orchestrator — Dimension 1 HTF scanner. 5s safety timer + WS events.
+
+Writes D1 tiers to shared state store after each scan cycle.
+Hooks for D2 engine (on_tier_change, on_candle_close).
+"""
 import asyncio
 import logging
+import time as _time_module
 from datetime import datetime, timezone
 from backend.market_data import market_data
 from backend.signal_store import signal_store
 from backend.engines.engine import scan
-from backend.pre_filter import should_scan
-from backend.config import SCAN_INTERVAL_SECONDS, TIMEFRAMES, SIGNAL_TTL_MINUTES
+from backend.candidate_selector import should_select
+from backend.state_store import state_store
+from backend.config import SCAN_INTERVAL_SECONDS, TIMEFRAMES_HTF, SIGNAL_TTL_MINUTES
 from backend.performance_tracker import performance_tracker
 from backend.signal_logger import log_signal
 
@@ -18,6 +24,11 @@ class Scanner:
         self.running: bool = False
         self.scan_task = None
         self._callback = None
+        # Hooks for D2 engine
+        self.on_tier_change = None
+        self.on_candle_close = None
+        # Track previous D1 tiers for change detection
+        self._prev_tiers: dict[str, str] = {}
 
     async def start(self, symbols: list):
         self.symbols = symbols
@@ -31,25 +42,25 @@ class Scanner:
         market_data.on_candle_close = self._on_candle_close
 
         self.scan_task = asyncio.create_task(self._scan_loop())
-        print(f"[scanner] Live - {len(symbols)} coins x {len(TIMEFRAMES)} TFs")
+        print(f"[scanner] Live - {len(symbols)} coins x {len(TIMEFRAMES_HTF)} TFs")
 
     async def _scan_loop(self):
         while self.running:
             try:
                 await self._run_fallback_scan()
+            except asyncio.CancelledError:
+                break
             except Exception:
                 logger.exception("[scanner] Scan error")
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
 
     async def _run_fallback_scan(self):
-        # === PASS 1: Refresh ALL active signals every cycle + broadcast per signal ===
         refreshed = []
         revalidated = []
 
         for key, sig in list(signal_store.signals.items()):
             candles = market_data.get_candles(sig['symbol'], sig['engine'])
             if candles:
-                # === REVALIDATION: at 15min and 30min checkpoints ===
                 if signal_store.should_revalidate(sig):
                     logger.info(f"[revalidate] Checking {sig['symbol']} {sig['engine']} "
                                 f"at {sig.get('age_minutes', 0)}min checkpoint...")
@@ -57,26 +68,26 @@ class Scanner:
                     if new_sig:
                         new_sig = self._apply_confluence(sig['symbol'], new_sig)
                         new_sig = self._apply_boosts(new_sig, sig['engine'])
-                    # Revalidate: reset if setup still valid, invalidate if not
                     updated = signal_store.revalidate(sig, new_sig)
                     revalidated.append(updated)
                     if updated.get("freshness_state") == "hot":
                         log_signal(updated, action='revalidated')
-                    continue  # Skip regular refresh this cycle — revalidation already set fresh state
+                    continue
 
                 updated = signal_store.refresh(sig, candles[-1].close)
                 refreshed.append(updated)
 
-        # === PASS 2: Scan for new signals ===
+        # PASS 2: Scan for new signals (only candidates)
         new_signals = []
+        d1_tiers_this_cycle: dict[str, dict] = {}
 
         for symbol in self.symbols:
-            for tf in TIMEFRAMES:
+            for tf in TIMEFRAMES_HTF:
                 if signal_store.was_recently_scanned(symbol, tf, max_age_sec=30):
                     continue
 
-                candles_4h = market_data.get_candles(symbol, "4h")
-                if not should_scan(symbol, {"4h": candles_4h}):
+                # Universal candidate selection — uses TF-specific candles
+                if not should_select(symbol, tf):
                     continue
 
                 signal = scan(symbol, tf)
@@ -92,6 +103,35 @@ class Scanner:
 
                 signal_store.mark_scanned(symbol, tf)
 
+        # Build D1 tiers per coin (best across all TFs) and write to state store
+        coin_tf_map: dict[str, dict] = {}
+        for sig in signal_store.signals.values():
+            coin = sig['symbol']
+            if coin not in coin_tf_map:
+                coin_tf_map[coin] = {}
+            coin_tf_map[coin][sig['engine']] = {
+                "tier": sig.get('tier', 'WATCH'),
+                "score": sig.get('composite_score', 0),
+            }
+
+        for coin, tfs in coin_tf_map.items():
+            best_tf = max(tfs.items(), key=lambda x: x[1]['score'])
+            best_tier = best_tf[1]['tier']
+            best_score = best_tf[1]['score']
+
+            # Detect tier change and notify D2
+            prev_tier = self._prev_tiers.get(coin, "WATCH")
+            if prev_tier != best_tier:
+                if self.on_tier_change:
+                    self.on_tier_change(coin, prev_tier, best_tier)
+                self._prev_tiers[coin] = best_tier
+
+            # Write to state store (overwrite each cycle)
+            await state_store.set_d1_tier(coin, best_tier, best_score, tfs)
+            d1_tiers_this_cycle[coin] = best_tier
+
+        await state_store.set_timestamp("last_d1_scan")
+
         if new_signals:
             for s in new_signals:
                 print(f"[{s['engine']}] {s['symbol']}: {s['tier']} "
@@ -102,38 +142,100 @@ class Scanner:
                 state = s.get('freshness_state', '?')
                 score = s.get('composite_score', 0)
                 print(f"[reval] {s['symbol']} {s['engine']}: {state} score={score}")
-        print(f"[scan] {len(new_signals)} new, {len(refreshed)} refreshed, {len(revalidated)} revalidated")
+        print(f"[scan] {len(new_signals)} new, {len(refreshed)} refreshed, "
+              f"{len(revalidated)} revalidated, {len(d1_tiers_this_cycle)} D1 tiers updated")
 
         if self._callback:
             all_signals = signal_store.get_all()
             await self._callback(new_signals, all_signals, refreshed, revalidated)
-            # Send full list every cycle so frontend stays in sync
             await self._callback([], all_signals, [], [])
 
     def _on_candle_close(self, symbol: str, tf: str):
-        signal = scan(symbol, tf)
-        if signal:
-            signal = self._apply_confluence(symbol, signal)
-            signal = self._apply_boosts(signal, tf)
-            if signal_store.add(signal):
-                print(f"[{signal['engine']}] {signal['symbol']}: {signal['tier']} "
-                      f"score={signal['composite_score']} dir={signal['direction']} "
-                      f"RR={signal['rr']:.1f}")
-                log_signal(signal, action='new')
-                logger.info(f"[OUT] {symbol} {tf}: "
-                            f"composite={signal.get('composite_score')} "
-                            f"score={signal.get('score')}")
+        """WS callback — offload blocking scan() to avoid blocking the WS read loop."""
+        # Defensive guard: skip duplicates within 2 seconds
+        key = f"{symbol}_{tf}"
+        last = getattr(self, '_ws_trigger_ts', {}).get(key, 0)
+        now = _time_module.time()
+        if now - last < 2.0:
+            return
+        ts_map = getattr(self, '_ws_trigger_ts', {})
+        ts_map[key] = now
+        self._ws_trigger_ts = ts_map
 
-                if self._callback:
-                    all_sigs = signal_store.get_all()
-                    asyncio.create_task(
-                        self._callback([signal], all_sigs, [], [])
-                    )
+        # Offload blocking work — WS callback must return immediately
+        asyncio.get_running_loop().create_task(
+            self._ws_scan_task(symbol, tf)
+        )
 
         signal_store.mark_scanned(symbol, tf)
 
+    async def _ws_scan_task(self, symbol: str, tf: str):
+        """Async wrapper — runs scan() without blocking the WS read loop."""
+        try:
+            signal = scan(symbol, tf)
+        except Exception as e:
+            logger.warning(f"[ws_scan] {symbol} {tf}: scan raised {e}")
+            return
+
+        if not signal:
+            return
+
+        try:
+            signal = self._apply_confluence(symbol, signal)
+            signal = self._apply_boosts(signal, tf)
+        except Exception as e:
+            logger.warning(f"[ws_scan] {symbol} {tf}: boost/confluence failed {e}")
+
+        if signal_store.add(signal):
+            print(f"[{signal['engine']}] {signal['symbol']}: {signal['tier']} "
+                  f"score={signal['composite_score']} dir={signal['direction']} "
+                  f"RR={signal['rr']:.1f}")
+            log_signal(signal, action='new')
+            logger.info(f"[OUT] {symbol} {tf}: "
+                        f"composite={signal.get('composite_score')} "
+                        f"tier={signal.get('tier', '?')} dir={signal.get('direction')}")
+
+            if self._callback:
+                all_sigs = signal_store.get_all()
+                try:
+                    await self._callback([signal], all_sigs, [], [])
+                except Exception as e:
+                    logger.warning(f"[ws_scan] callback error: {e}")
+
+        # Update D1 tier in state store after WS-triggered scan
+        try:
+            await self._update_d1_tier_for(symbol)
+        except Exception as e:
+            logger.warning(f"[ws_scan] tier update error: {e}")
+
+    async def _update_d1_tier_for(self, coin: str):
+        """Update D1 tier for a single coin (called after WS candle close)."""
+        tfs = {}
+        for tf in TIMEFRAMES_HTF:
+            sig = signal_store.get(coin, tf)
+            if sig:
+                tfs[tf] = {
+                    "tier": sig.get('tier', 'WATCH'),
+                    "score": sig.get('composite_score', 0),
+                }
+
+        if not tfs:
+            return
+
+        best_tf = max(tfs.items(), key=lambda x: x[1]['score'])
+        best_tier = best_tf[1]['tier']
+        best_score = best_tf[1]['score']
+
+        prev_tier = self._prev_tiers.get(coin, "WATCH")
+        if prev_tier != best_tier:
+            if self.on_tier_change:
+                self.on_tier_change(coin, prev_tier, best_tier)
+            self._prev_tiers[coin] = best_tier
+
+        await state_store.set_d1_tier(coin, best_tier, best_score, tfs)
+
     def _apply_confluence(self, symbol, signal):
-        other_tfs = [tf for tf in ["1h", "4h", "1d"] if tf != signal["engine"]]
+        other_tfs = [tf for tf in TIMEFRAMES_HTF if tf != signal["engine"]]
         agreeing = []
         for otf in other_tfs:
             existing = signal_store.get(symbol, otf)
@@ -152,15 +254,41 @@ class Scanner:
 
     def _apply_boosts(self, signal, tf):
         reasons = []
+        boost = 0
 
         if signal.get("fvg") and signal["fvg"]["proximity"] <= 1.0:
             reasons.append("FVG at entry")
+            boost += 5
 
         ob = signal.get("ob")
         if ob and ob.get("touches", 0) == 0:
             reasons.append("Fresh OB")
+            boost += 5
 
-        signal["priority_boosts"] = reasons
+        # Flow boost — if flow_analyzer returned conviction data
+        flow = signal.get("flow", {})
+        if flow:
+            if flow.get("vwap_side") == signal.get("direction"):
+                reasons.append("VWAP aligned")
+                boost += 5
+            if flow.get("sweep"):
+                reasons.append("Liquidity sweep")
+                boost += 3
+            if flow.get("killzone"):
+                reasons.append("Killzone")
+
+        # Momentum boost — if a strong move preceded this signal
+        if signal.get("displacement_pct", 0) > 1.0:
+            reasons.append("Displacement")
+            boost += 5
+
+        if reasons:
+            base = signal.get("composite_score", 0)
+            # Cap total boost at +20 to keep max score at 90 per scoring architecture
+            signal["composite_score"] = min(base + boost, 100)
+            signal["boost_reasons"] = reasons
+            signal["boost_total"] = boost
+
         return signal
 
     def _clean_expired(self) -> list:
@@ -231,7 +359,7 @@ class Scanner:
         market_data.candles.clear()
 
         # 4. Re-bootstrap (fresh REST pull for every symbol x TF)
-        print(f"[restart] Re-bootstrapping {len(self.symbols)} pairs x {len(TIMEFRAMES)} TFs...")
+        print(f"[restart] Re-bootstrapping {len(self.symbols)} pairs x {len(TIMEFRAMES_HTF)} TFs...")
         count = await market_data.bootstrap(self.symbols)
         print(f"[restart] Bootstrapped {count} candle sets")
 

@@ -4,85 +4,69 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Judah Scanner</title>
-  <link rel="manifest" href="/static/manifest.json">
-  <meta name="theme-color" content="#3b82f6">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="Judah">
-  <link rel="apple-touch-icon" href="/static/icon-192.svg">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <div class="app">
+    <!-- HEADER -->
     <header class="header">
       <div class="logo">
-        <span class="logo-icon">Judah Scanner</span>
-        <span class="subtitle">CRT + SMC Institutional Signals</span>
+        <h1>Judah Scanner</h1>
+        <span>D3 Fusion — 15M LTF on HTF Context</span>
       </div>
-      <div class="status-bar">
-        <div class="status-item" id="wsStatus">
+      <div class="header-right">
+        <div class="status-item">
           <span class="status-dot disconnected" id="wsDot"></span>
           <span id="wsLabel">Connecting...</span>
         </div>
-        <button class="btn-restart" id="btnRestart" title="Clear signals &amp; re-bootstrap data">
-          <span class="restart-icon">↻</span>
+        <div class="stat-chip" title="D1 coins analyzed">D1: <strong id="d1Count">0</strong></div>
+        <div class="stat-chip" title="D2 LTF signals">D2: <strong id="d2Count">0</strong></div>
+        <div class="stat-chip" title="D3 fusion signals">Fusion: <strong id="totalSignals">0</strong></div>
+        <button class="btn-restart" id="btnRestart" title="Clear &amp; re-bootstrap">
+          <span class="restart-icon">&#x21BB;</span>
           <span class="restart-label">Restart</span>
         </button>
-        <div class="status-item" id="signalCount">0 signals</div>
+        <div class="status-item" id="signalCount">0 setups</div>
         <div class="status-item" id="lastUpdate">--</div>
       </div>
     </header>
 
-    <div class="filters">
-      <div class="filter-group">
-        <label>Tier:</label>
-        <button class="filter-btn active" data-tier="all">All</button>
-        <button class="filter-btn" data-tier="SNIPER">SNIPER</button>
-        <button class="filter-btn" data-tier="OPPORTUNITY">OPPORTUNITY</button>
-        <button class="filter-btn" data-tier="WATCH">WATCH</button>
+    <!-- BUCKET FILTER BAR -->
+    <div class="bucket-bar">
+      <div class="bucket-group">
+        <label>Bucket:</label>
+        <button class="filter-btn active" data-filter-bucket="all">All</button>
+        <button class="filter-btn" data-filter-bucket="READY">
+          READY <span class="bucket-count ready" id="countReady">0</span>
+        </button>
+        <button class="filter-btn" data-filter-bucket="EARLY">
+          EARLY <span class="bucket-count early" id="countEarly">0</span>
+        </button>
+        <button class="filter-btn" data-filter-bucket="TRAP">
+          TRAP <span class="bucket-count trap" id="countTrap">0</span>
+        </button>
       </div>
-      <div class="filter-group">
-        <label>Direction:</label>
-        <button class="filter-btn active" data-dir="all">All</button>
-        <button class="filter-btn" data-dir="BULLISH">BULL</button>
-        <button class="filter-btn" data-dir="BEARISH">BEAR</button>
-      </div>
-      <div class="filter-group">
-        <label>TF:</label>
-        <button class="filter-btn active" data-tf="all">All</button>
-        <button class="filter-btn" data-tf="1h">1H</button>
-        <button class="filter-btn" data-tf="4h">4H</button>
-        <button class="filter-btn" data-tf="1d">1D</button>
-      </div>
-      <div class="filter-group">
-        <label>Min Score:</label>
-        <input type="range" id="scoreFilter" min="40" max="100" value="40">
-        <span id="scoreVal">40</span>
+      <div class="dir-group">
+        <div class="bucket-group">
+          <label>Dir:</label>
+          <button class="filter-btn active" data-filter-dir="all">All</button>
+          <button class="filter-btn" data-filter-dir="BULLISH">Long</button>
+          <button class="filter-btn" data-filter-dir="BEARISH">Short</button>
+        </div>
       </div>
     </div>
 
+    <!-- SIGNALS -->
     <div class="signals-container" id="signalsContainer">
       <div class="empty-state" id="emptyState">
-        <div class="empty-icon">Judah Scanner</div>
+        <div class="empty-icon">&#x1F4CA;</div>
         <h2>Waiting for signals...</h2>
-        <p>Scanning coins across 1H, 4H, 1D</p>
-        <p class="hint">Signals appear here in real-time</p>
+        <p>Scanning 529 coins across 1H / 4H / 1D (D1) + 15M (D2)</p>
+        <p class="hint">Fusion signals appear here in real-time</p>
       </div>
     </div>
-
-    <div class="modal" id="modal" style="display:none">
-      <div class="modal-content" id="modalContent"></div>
-    </div>
   </div>
-  <script src="/static/app.js?v=2"></script>
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/static/service-worker.js')
-          .then(reg => console.log('[PWA] Service worker registered:', reg.scope))
-          .catch(err => console.warn('[PWA] Service worker registration failed:', err));
-      });
-    }
-  </script>
+
+  <script src="/static/app.js"></script>
 </body>
 </html>

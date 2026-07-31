@@ -400,4 +400,5 @@ def analyze_flow(symbol: str, candles: list, swings: dict,
         "is_flowing": len(triggers) >= 1 and weight_total >= 2,
         "direction": direction,
         "raw_weight": weight_total,
+        "flow_pct": round(adjusted_boost / 25 * 100, 1),  # % of max flow score (25)
     }
