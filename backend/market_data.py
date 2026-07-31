@@ -6,13 +6,17 @@ import aiohttp
 from datetime import datetime, timezone
 from typing import Optional
 from backend.config import (
-    BINANCE_REST_BASE, BINANCE_WS_BASE,
+    BINANCE_REST_BASE, BINANCE_WS_BASE, BINANCE_INTERVAL_MAP,
     WS_RECONNECT_DELAY_SEC, WS_MAX_STREAMS_PER_CONN,
     BOOTSTRAP_CANDLES, TIMEFRAMES_HTF, ALL_TIMEFRAMES
 )
 from backend.schemas import Candle
 
 logger = logging.getLogger("judah.md")
+
+def _binance_interval(tf: str) -> str:
+    """Convert internal TF (1H, 4H, 1D, 15M) to Binance REST/WS interval (1h, 4h, 1d, 15m)."""
+    return BINANCE_INTERVAL_MAP.get(tf.upper(), tf.lower())
 
 class MarketData:
     _instance = None
@@ -89,7 +93,8 @@ class MarketData:
         return count
 
     async def _fetch_klines(self, symbol, interval, limit):
-        url = f"{BINANCE_REST_BASE}/klines?symbol={symbol}&interval={interval}&limit={limit}"
+        binance_tf = _binance_interval(interval)
+        url = f"{BINANCE_REST_BASE}/klines?symbol={symbol}&interval={binance_tf}&limit={limit}"
         try:
             async with self.session.get(
                 url, timeout=aiohttp.ClientTimeout(total=15)

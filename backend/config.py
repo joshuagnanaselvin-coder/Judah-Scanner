@@ -132,6 +132,12 @@ BINANCE_WS_BASE = "wss://stream.binance.com:9443/stream?streams="
 WS_RECONNECT_DELAY_SEC = 5
 WS_MAX_STREAMS_PER_CONN = 793
 
+# Internal TF → Binance REST/WS interval (Binance uses lowercase)
+BINANCE_INTERVAL_MAP = {
+    "1H": "1h", "4H": "4h", "1D": "1d",
+    "15M": "15m", "30M": "30m", "1W": "1w", "1M": "1M",
+}
+
 # === SERVER ===
 HOST = "0.0.0.0"
 PORT = 8000
