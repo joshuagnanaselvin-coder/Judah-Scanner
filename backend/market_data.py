@@ -8,7 +8,7 @@ from typing import Optional
 from backend.config import (
     BINANCE_REST_BASE, BINANCE_WS_BASE, BINANCE_INTERVAL_MAP,
     WS_RECONNECT_DELAY_SEC, WS_MAX_STREAMS_PER_CONN,
-    BOOTSTRAP_CANDLES, TIMEFRAMES_HTF, ALL_TIMEFRAMES
+    BOOTSTRAP_CANDLES, TIMEFRAMES_HTF, ALL_TIMEFRAMES,
 )
 from backend.schemas import Candle
 
@@ -45,8 +45,6 @@ class MarketData:
 
         print(f"[marketdata] Bootstrapping {len(symbols)} coins...")
 
-        # Build all tasks: flat list of (symbol, tf) pairs
-        # Bootstrap HTF first (D1), then LTF (D2) in next batches
         hf_pairs = []
         lf_pairs = []
         for symbol in symbols:
@@ -57,42 +55,39 @@ class MarketData:
                     lf_pairs.append((symbol, tf))
 
         task_pairs = hf_pairs + lf_pairs
-
-        batch_size = 30
         total = len(task_pairs)
-        total_batches = (total + batch_size - 1) // batch_size
-        print(f"[marketdata] {len(symbols)} pairs x {len(TIMEFRAMES_HTF)} HTF + {len(ALL_TIMEFRAMES) - len(TIMEFRAMES_HTF)} LTF = {total} requests ({total_batches} batches @ {batch_size}/batch)")
+        print(f"[marketdata] {len(symbols)} pairs x 3 HTF + {len(ALL_TIMEFRAMES) - len(TIMEFRAMES_HTF)} LTF = {total} requests")
 
-        for batch_idx in range(total_batches):
-            start = batch_idx * batch_size
-            end = min(start + batch_size, total)
-            batch = task_pairs[start:end]
+        # Sequential bootstrap to stay safely under Binance IP rate limits (1200 req/min)
+        # With 1 request/sec this takes ~32 min for 1916 pairs — but we only NEED
+        # the HTF (D1) data for the scanner to start. LTF comes from WebSocket.
+        HTF_ONLY = True   # bootstrap HTF first; LTF fills via WS
+        if HTF_ONLY:
+            task_pairs = [(s, tf) for s, tf in task_pairs if tf in TIMEFRAMES_HTF]
+            total = len(task_pairs)
+            print(f"[marketdata] HTF-only mode: {total} requests")
 
-            # Create tasks for this batch only
-            tasks = [self._fetch_klines(sym, tf, BOOTSTRAP_CANDLES) for sym, tf in batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+        errors = 0
+        for idx, (symbol, tf) in enumerate(task_pairs):
+            result = await self._fetch_klines_with_retry(symbol, tf, BOOTSTRAP_CANDLES)
+            if result and len(result) >= 50:
+                key = f"{symbol}_{tf}"
+                self.candles[key] = result
+                count += 1
+            else:
+                errors += 1
 
-            # Map results back using enumerate (local index within batch)
-            for local_idx, result in enumerate(results):
-                global_idx = start + local_idx
-                symbol, tf = task_pairs[global_idx]
-                if isinstance(result, Exception):
-                    continue
-                if result and len(result) >= 50:
-                    key = f"{symbol}_{tf}"
-                    self.candles[key] = result
-                    count += 1
+            if (idx + 1) % 50 == 0:
+                print(f"[marketdata] {idx + 1}/{total} — {count} OK, {errors} failed")
 
-            if (batch_idx + 1) % 10 == 0:
-                print(f"[marketdata] Batch {batch_idx + 1}/{total_batches} — {count} candle sets so far")
+            # 1 req/sec = safe for Binance IP limits
+            await asyncio.sleep(1.0)
 
-            if batch_idx < total_batches - 1:
-                await asyncio.sleep(1)
-
-        print(f"[marketdata] Bootstrapped {count} candle sets")
+        print(f"[marketdata] Bootstrapped {count}/{total} candle sets ({errors} failed)")
         return count
 
     async def _fetch_klines(self, symbol, interval, limit):
+        """Single-shot fetch (no retry). Used by LTF refresh."""
         binance_tf = _binance_interval(interval)
         url = f"{BINANCE_REST_BASE}/klines?symbol={symbol}&interval={binance_tf}&limit={limit}"
         try:
@@ -101,18 +96,28 @@ class MarketData:
             ) as resp:
                 text = await resp.text()
                 if resp.status != 200:
-                    logger.warning(f"HTTP {resp.status} for {symbol} {interval}: {text[:200]}")
+                    logger.debug(f"HTTP {resp.status} for {symbol} {binance_tf}: {text[:100]}")
                     return []
                 data = json.loads(text)
                 if not isinstance(data, list):
-                    logger.warning(f"Unexpected response for {symbol} {interval}: {text[:200]}")
                     return []
                 return [Candle(time=k[0], open=float(k[1]), high=float(k[2]),
                                low=float(k[3]), close=float(k[4]), volume=float(k[5]),
                                close_time=k[6], is_closed=True) for k in data]
         except Exception as e:
-            logger.warning(f"Fetch error {symbol} {interval}: {e}")
+            logger.debug(f"Fetch error {symbol} {binance_tf}: {e}")
             return []
+
+    async def _fetch_klines_with_retry(self, symbol, interval, limit, max_retries=3):
+        """Fetch with retry on rate-limit (429) and server errors (5xx)."""
+        for attempt in range(max_retries):
+            result = await self._fetch_klines(symbol, interval, limit)
+            if result:
+                return result
+            if attempt < max_retries - 1:
+                wait = (2 ** attempt) * 0.5   # 0.5s, 1s, 2s backoff
+                await asyncio.sleep(wait)
+        return []
 
     def connect_websocket(self, symbols: list):
         all_streams = []
