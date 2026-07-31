@@ -145,3 +145,7 @@ class LTFEngine:
         await fuse(coin)
 
         return True
+
+
+# Module-level singleton (matches scanner.py pattern: `scanner = Scanner()`)
+ltf_engine = LTFEngine()
