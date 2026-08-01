@@ -45,43 +45,40 @@ class MarketData:
 
         print(f"[marketdata] Bootstrapping {len(symbols)} coins...")
 
-        hf_pairs = []
-        lf_pairs = []
-        for symbol in symbols:
-            for tf in TIMEFRAMES_HTF:
-                hf_pairs.append((symbol, tf))
-            for tf in ALL_TIMEFRAMES:
-                if tf not in TIMEFRAMES_HTF:
-                    lf_pairs.append((symbol, tf))
+        hf_pairs = [(s, tf) for s in symbols for tf in TIMEFRAMES_HTF]
+        total = len(hf_pairs)
+        print(f"[marketdata] HTF-only: {total} requests ({len(TIMEFRAMES_HTF)} TFs x {len(symbols)} pairs)")
 
-        task_pairs = hf_pairs + lf_pairs
-        total = len(task_pairs)
-        print(f"[marketdata] {len(symbols)} pairs x 3 HTF + {len(ALL_TIMEFRAMES) - len(TIMEFRAMES_HTF)} LTF = {total} requests")
-
-        # Sequential bootstrap to stay safely under Binance IP rate limits (1200 req/min)
-        # With 1 request/sec this takes ~32 min for 1916 pairs — but we only NEED
-        # the HTF (D1) data for the scanner to start. LTF comes from WebSocket.
-        HTF_ONLY = True   # bootstrap HTF first; LTF fills via WS
-        if HTF_ONLY:
-            task_pairs = [(s, tf) for s, tf in task_pairs if tf in TIMEFRAMES_HTF]
-            total = len(task_pairs)
-            print(f"[marketdata] HTF-only mode: {total} requests")
+        # === Batch-wise concurrent bootstrap ===
+        # Binance IP limit: 1200 req/min. We fire bursts of BATCH_SIZE concurrently,
+        # then sleep BATCH_DELAY_SEC between bursts. ~15-20s total instead of 26 min.
+        BATCH_SIZE = 40          # concurrent requests per burst
+        BATCH_DELAY_SEC = 3.0    # 40 reqs per 3s = 800/min — comfortable under 1200/min IP limit
 
         errors = 0
-        for idx, (symbol, tf) in enumerate(task_pairs):
-            result = await self._fetch_klines_with_retry(symbol, tf, BOOTSTRAP_CANDLES)
-            if result and len(result) >= 50:
-                key = f"{symbol}_{tf}"
-                self.candles[key] = result
-                count += 1
-            else:
-                errors += 1
+        batches = [hf_pairs[i:i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
+        for batch_idx, batch in enumerate(batches):
+            tasks = [self._fetch_klines_with_retry(sym, tf, BOOTSTRAP_CANDLES)
+                     for sym, tf in batch]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            if (idx + 1) % 50 == 0:
-                print(f"[marketdata] {idx + 1}/{total} — {count} OK, {errors} failed")
+            for (sym, tf), result in zip(batch, results):
+                if isinstance(result, Exception):
+                    errors += 1
+                    continue
+                if result and len(result) >= 50:
+                    key = f"{sym}_{tf}"
+                    self.candles[key] = result
+                    count += 1
+                else:
+                    errors += 1
 
-            # 1 req/sec = safe for Binance IP limits
-            await asyncio.sleep(1.0)
+            done = min((batch_idx + 1) * BATCH_SIZE, total)
+            print(f"[marketdata] {done}/{total} — {count} OK, {errors} failed")
+
+            # Delay between bursts to stay under Binance IP rate limits
+            if batch_idx < len(batches) - 1:
+                await asyncio.sleep(BATCH_DELAY_SEC)
 
         print(f"[marketdata] Bootstrapped {count}/{total} candle sets ({errors} failed)")
         return count

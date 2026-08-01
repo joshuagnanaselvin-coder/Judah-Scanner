@@ -21,11 +21,11 @@ logger = logging.getLogger("judah.fusion")
 def bucket(d1_tier: str, d2_score: float) -> str:
     """Assign bucket based on D1 tier + D2 score.
 
-    | D1 Tier    | D2 Score | Bucket  |
-    | SNIPER     | >= 70    | READY   |
-    | OPPORTUNITY| >= 70    | EARLY   |
-    | WATCH      | >= 70    | TRAP    |
-    | All WATCH  | any      | FILTERED|
+    | D1 Tier  | D2 Score | Bucket  |
+    | SNIPER   | >= 70    | READY   |
+    | OPPORTUNITY | >= 70    | EARLY   |
+    | WATCH    | >= 70    | TRAP    |
+    | All WATCH| any      | FILTERED|
     """
     if d2_score < 70:
         return "FILTERED"

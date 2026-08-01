@@ -87,7 +87,7 @@ class Scanner:
                         new_sig = self._apply_boosts(new_sig, sig['engine'])
                     updated = signal_store.revalidate(sig, new_sig)
                     revalidated.append(updated)
-                    if updated.get("freshness_state") == "FRESH":
+                    if updated.get("freshness_state") == "hot":
                         log_signal(updated, action='revalidated')
                     continue
 

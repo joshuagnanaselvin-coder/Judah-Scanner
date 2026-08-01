@@ -377,16 +377,15 @@ def calculate_structural_sl_tp(
             if len(fvg_targets) > 1:
                 take_profit_2 = fvg_targets[1]
 
-    # Ensure minimum 1:1 RR
+    # Ensure minimum RR
     risk = abs(entry_price - stop_loss)
     reward_tp1 = abs(take_profit_1 - entry_price)
     if risk > 0 and reward_tp1 / risk < MIN_RR:
+        # Force TP1 to MIN_RR distance to pass the gate
         if direction == "BULLISH":
-            take_profit_1 = entry_price + risk * 1.0
-            take_profit_2 = entry_price + risk * tp_rr
+            take_profit_1 = entry_price + risk * MIN_RR
         else:
-            take_profit_1 = entry_price - risk * 1.0
-            take_profit_2 = entry_price - risk * tp_rr
+            take_profit_1 = entry_price - risk * MIN_RR
 
     # Hard cap TP at TP_MAX_RR
     max_tp_dist = risk * TP_MAX_RR
@@ -476,11 +475,11 @@ def build_signal(
     """Build final trade signal with all institutional features.
 
     4-component scoring:
-      CRT (timing)       max 25
+      CRT (timing)       max 40
       SMC (structure)    max 20
       Flow (conviction)  max 25   — passed in from engine
       Momentum (ignite)  max 20   — passed in from engine
-    Total max = 90.
+    Total max = 105.
 
     Parameters
     ----------
@@ -576,10 +575,10 @@ def build_signal(
     liq_pools = detect_liquidity_pools(swings) if swings else {"pools": []}
 
     # === COMPOSITE SCORE (4 components) ===
-    # CRT(25) + SMC(20) + Flow(25) + Momentum(20) = 90 max
+    # CRT(40) + SMC(20) + Flow(25) + Momentum(20) = 105 max
     composite_score = crt_score + smc_score + flow_score + momentum_score
 
-    logger.info(f"COMPOSITE: CRT={crt_score} SMC={smc_score} Flow={flow_score} Mom={momentum_score} = {composite_score}/90 → capped→{min(composite_score, 100)}")
+    logger.info(f"COMPOSITE: CRT={crt_score} SMC={smc_score} Flow={flow_score} Mom={momentum_score} = {composite_score}/105")
 
     # === SIGNAL DICT ===
     signal = {

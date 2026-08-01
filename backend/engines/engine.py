@@ -184,14 +184,10 @@ def scan(symbol: str, timeframe: str) -> dict | None:
     flow = analyze_flow(symbol, candles, swings, timeframe, btc_candles)
     fast = detect_fast_mover(candles, swings)
 
+    # === FLOW GATE: only skip if ZERO flow triggers (completely neutral) ===
+    # On D1, rarely get multiple triggers — a single meaningful trigger is enough.
     if not flow["is_flowing"] and not fast["is_fast_mover"]:
-        logger.debug(f"[engine] SKIP {symbol} {timeframe}: no flow (no VWAP/sweep/RS + no fast_mover)")
-        return None
-
-    # Strong flow gate: require weight_total >= 2 OR a confirmed fast-mover
-    if flow["raw_weight"] < 2 and not fast["is_fast_mover"]:
-        logger.debug(f"[engine] SKIP {symbol} {timeframe}: weak flow "
-                     f"(weight={flow['raw_weight']}, no fast_mover)")
+        logger.debug(f"[engine] SKIP {symbol} {timeframe}: no flow triggers (flat market)")
         return None
 
     logger.debug(f"[engine] FLOW {symbol} {timeframe}: boost=+{flow['boost']} "
@@ -232,7 +228,7 @@ def scan(symbol: str, timeframe: str) -> dict | None:
         path = "SMC-ONLY"
 
     # Signal builder
-    # 4-component scoring: CRT(25) + SMC(20) + Flow(25) + Momentum(20) = 90 max
+    # 4-component scoring: CRT(40) + SMC(20) + Flow(25) + Momentum(20) = 105 max
     fm = detect_fast_mover(candles, swings)
     flow_score = min(flow["boost"], 25)
     momentum_score = min(fm["score"] if fm["is_fast_mover"] else 0, 20)

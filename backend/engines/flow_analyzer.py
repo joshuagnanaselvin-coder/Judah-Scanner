@@ -4,8 +4,8 @@ CRT + SMC tell you WHERE the structure is.
 Flow tells you IF real money is moving there RIGHT NOW.
 Momentum tells you IF the price is about to EXPLODE.
 
-CRT+SMC max = 45 (25+20). Flow max = 25. Momentum max = 20.
-Total possible = 90. No single component can carry a signal alone.
+CRT max = 40, SMC max = 20, Flow max = 25, Momentum max = 20.
+Total possible = 105. No single component can carry a signal alone.
 
 Triggers:
   1. VWAP RECLAIM       — price reclaimed session VWAP from below/above
@@ -397,7 +397,7 @@ def analyze_flow(symbol: str, candles: list, swings: dict,
         "boost": adjusted_boost,
         "triggers": triggers,
         "killzone": kz,
-        "is_flowing": len(triggers) >= 1 and weight_total >= 2,
+        "is_flowing": len(triggers) >= 1,  # any meaningful trigger = flowing
         "direction": direction,
         "raw_weight": weight_total,
         "flow_pct": round(adjusted_boost / 25 * 100, 1),  # % of max flow score (25)
