@@ -1,14 +1,16 @@
 """ALL tunable parameters in one place. Edit this to tune the scanner."""
 
 # === SCANNER ===
-SCAN_INTERVAL_SECONDS = 5
+SCAN_INTERVAL_SECONDS = 15        # Full D1 scan cycle (candidate filter + CRT/SMC pipeline)
 SIGNAL_TTL_MINUTES = 30
 MAX_SIGNALS = 200
 BOOTSTRAP_CANDLES = 200
+SCAN_CONCURRENCY = 20             # Max parallel CRT+SMC scans per cycle
 D2_SIGNAL_TTL_MINUTES = 30
 D2_MIN_SCORE = 40
+D2_SCAN_INTERVAL_SECONDS = 5     # LTF safety timer
 TIMEFRAMES_HTF = ["1H", "4H", "1D"]
-D1_TTL_SECONDS = 120        # D1 tier freshness window (2x scan interval)
+D1_TTL_SECONDS = 120
 
 # === LOGGING (Excel/CSV) ===
 # Set to False to disable signal logging (production mode)
@@ -24,19 +26,15 @@ ADAPTIVE_ATR_MIN_MULTIPLIER = 0.60
 ADAPTIVE_ATR_BASELINE_MIN_PCT = 0.03   # Floor: 0.03% ATR
 ADAPTIVE_ATR_BASELINE_MAX_PCT = 5.0    # Ceiling: 5% ATR
 ADAPTIVE_ATR_MIN_ABSOLUTE = 0.00001   # Absolute floor for dust coins
-MIN_ATR_ABSOLUTE = ADAPTIVE_ATR_MIN_ABSOLUTE  # deprecated alias — use ADAPTIVE_ATR_MIN_ABSOLUTE
 
 # Fixed-threshold pre-filter (used by pre_filter.py alongside adaptive selector)
 MIN_ATR_PERCENT = 0.15                 # Min ATR% to pass pre-filter
 MIN_PRICE_CHANGE_4H_PCT = 0.15        # Min 4H price change %
 MIN_24H_VOLUME_USDT = 5_000_000       # Min 24h volume in USDT
 
-# CRT ===
+# === CRT ===
 MIN_RANGE_MULTIPLIER = 0.5
 MIN_PRICE_CHANGE_PCT = 0.05            # Min price movement to be "active"
-
-
-# === CRT ===
 RANGE_LOOKBACK = 20
 DISPLACEMENT_BODY_RATIO = 1.5
 EXTREME_DISPLACEMENT_RATIO = 3.0

@@ -165,7 +165,7 @@ def scan(symbol: str, timeframe: str) -> dict | None:
     # Volatility gate
     atr_val = atr(candles)
     atr_pct = (atr_val / last_price * 100) if last_price > 0 else 0.0
-    if atr_pct < MIN_ATR_PERCENT or atr_val < MIN_ATR_ABSOLUTE:
+    if atr_pct < MIN_ATR_PERCENT or atr_val < ADAPTIVE_ATR_MIN_ABSOLUTE:
         logger.debug(f"[engine] SKIP {symbol} {timeframe}: ATR {atr_val:.6f} ({atr_pct:.3f}%) below threshold")
         return None
 
