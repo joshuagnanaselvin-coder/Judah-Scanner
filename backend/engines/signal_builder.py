@@ -648,7 +648,8 @@ def build_signal(
         "stop_loss": round(stop_loss, 5),
         "take_profit_1": round(tp1, 5),
         "take_profit_2": round(tp2, 5),
-        "rr1": round(risk_reward, 2),
+        "rr": round(risk_reward, 2),
+        "rr1": round(risk_reward, 2),     # backward compat
         "rr2": round(risk_reward * 2.0, 2),
         "scenario": scenario,
 

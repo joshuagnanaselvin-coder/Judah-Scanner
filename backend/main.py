@@ -18,7 +18,7 @@ from backend.signal_store import signal_store
 from backend.performance_tracker import performance_tracker
 from backend.state_store import state_store
 from backend.engines.ltf_engine import ltf_engine
-from backend.ws_hub import broadcast, get_initial_payload
+from backend import ws_hub
 from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE
 
 logging.basicConfig(
@@ -58,7 +58,7 @@ async def ws_fusion(ws: WebSocket):
 
     # Send current state immediately
     try:
-        await ws.send_json(get_initial_payload(state_store))
+        await ws.send_json(ws_hub.get_initial_payload(state_store))
     except Exception:
         pass
 
