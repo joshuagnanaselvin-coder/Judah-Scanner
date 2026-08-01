@@ -50,13 +50,16 @@ class MarketData:
         print(f"[marketdata] HTF-only: {total} requests ({len(TIMEFRAMES_HTF)} TFs x {len(symbols)} pairs)")
 
         # === Batch-wise concurrent bootstrap ===
-        # Binance IP limit: 1200 req/min. We fire bursts of BATCH_SIZE concurrently,
-        # then sleep BATCH_DELAY_SEC between bursts. ~15-20s total instead of 26 min.
-        BATCH_SIZE = 40          # concurrent requests per burst
-        BATCH_DELAY_SEC = 3.0    # 40 reqs per 3s = 800/min — comfortable under 1200/min IP limit
+        # Binance IP limit: ~1200 req/min. Process in sequential BATCHES of CONCURRENT_LIMIT
+        # concurrently. As soon as a batch finishes, the next batch starts. Never floods
+        # Binance with > CONCURRENT_LIMIT simultaneous requests from one IP.
+        # ~1,587 reqs / 15 per batch = 106 batches × ~1.5s = ~2.6 min total.
+        CONCURRENT_LIMIT = 15
 
         errors = 0
-        batches = [hf_pairs[i:i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
+        batches = [hf_pairs[i:i + CONCURRENT_LIMIT]
+                   for i in range(0, total, CONCURRENT_LIMIT)]
+
         for batch_idx, batch in enumerate(batches):
             tasks = [self._fetch_klines_with_retry(sym, tf, BOOTSTRAP_CANDLES)
                      for sym, tf in batch]
@@ -73,12 +76,9 @@ class MarketData:
                 else:
                     errors += 1
 
-            done = min((batch_idx + 1) * BATCH_SIZE, total)
-            print(f"[marketdata] {done}/{total} — {count} OK, {errors} failed")
-
-            # Delay between bursts to stay under Binance IP rate limits
-            if batch_idx < len(batches) - 1:
-                await asyncio.sleep(BATCH_DELAY_SEC)
+            done = count + errors
+            if done % 100 == 0 or batch_idx == len(batches) - 1:
+                print(f"[marketdata] {done}/{total} — {count} OK, {errors} failed")
 
         print(f"[marketdata] Bootstrapped {count}/{total} candle sets ({errors} failed)")
         return count
