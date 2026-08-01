@@ -164,33 +164,6 @@ def _score_liquidity(candles, swings) -> tuple[int, dict | None]:
 
 # ─── HELPER FUNCTIONS ─────────────────────────────────────────────────────────
 
-def _validate_swing(candles, swings, crt):
-    di = crt["displacement"]["candle_index"]
-    dd = crt["displacement"]["direction"]
-    start = max(0, di - 20)
-
-    candidates = []
-    if dd == "BULLISH":
-        candidates = [s for s in swings["swing_lows"] if start <= s["index"] < di]
-    else:
-        candidates = [s for s in swings["swing_highs"] if start <= s["index"] < di]
-
-    best = None
-    for c in candidates:
-        if c["body_quality"] >= VSP_BODY_RATIO_MIN:
-            if best is None or c["index"] > best["index"]:
-                best = c
-
-    if not best:
-        return None
-    return {
-        "type": "SWING_LOW" if dd == "BULLISH" else "SWING_HIGH",
-        "price": best["price"],
-        "index": best["index"],
-        "body_quality": round(best["body_quality"] * 100, 1),
-    }
-
-
 def _count_ob_touches(candles, ob) -> int:
     """Count how many times price has touched the OB zone."""
     touches = 0
