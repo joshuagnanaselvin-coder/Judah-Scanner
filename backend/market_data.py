@@ -49,36 +49,25 @@ class MarketData:
         total = len(hf_pairs)
         print(f"[marketdata] HTF-only: {total} requests ({len(TIMEFRAMES_HTF)} TFs x {len(symbols)} pairs)")
 
-        # === Batch-wise concurrent bootstrap ===
-        # Binance IP limit: ~1200 req/min. Process in sequential BATCHES of CONCURRENT_LIMIT
-        # concurrently. As soon as a batch finishes, the next batch starts. Never floods
-        # Binance with > CONCURRENT_LIMIT simultaneous requests from one IP.
-        # ~1,587 reqs / 15 per batch = 106 batches × ~1.5s = ~2.6 min total.
-        CONCURRENT_LIMIT = 15
-
+        # Sequential bootstrap — 1 req/sec to stay safely under Binance IP rate limits.
+        # With 1,587 pairs this takes ~26 min but is 100% reliable (proven working).
+        # The scanner loop starts immediately after bootstrap — WS fills LTF data live.
+        # DO NOT increase concurrency: Binance IP rate-limits simultaneous requests.
         errors = 0
-        batches = [hf_pairs[i:i + CONCURRENT_LIMIT]
-                   for i in range(0, total, CONCURRENT_LIMIT)]
+        for idx, (symbol, tf) in enumerate(hf_pairs):
+            result = await self._fetch_klines_with_retry(symbol, tf, BOOTSTRAP_CANDLES)
+            if result and len(result) >= 50:
+                key = f"{symbol}_{tf}"
+                self.candles[key] = result
+                count += 1
+            else:
+                errors += 1
 
-        for batch_idx, batch in enumerate(batches):
-            tasks = [self._fetch_klines_with_retry(sym, tf, BOOTSTRAP_CANDLES)
-                     for sym, tf in batch]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            if (idx + 1) % 100 == 0:
+                print(f"[marketdata] {idx + 1}/{total} — {count} OK, {errors} failed")
 
-            for (sym, tf), result in zip(batch, results):
-                if isinstance(result, Exception):
-                    errors += 1
-                    continue
-                if result and len(result) >= 50:
-                    key = f"{sym}_{tf}"
-                    self.candles[key] = result
-                    count += 1
-                else:
-                    errors += 1
-
-            done = count + errors
-            if done % 100 == 0 or batch_idx == len(batches) - 1:
-                print(f"[marketdata] {done}/{total} — {count} OK, {errors} failed")
+            # 1 req/sec = safe for Binance IP limits (1200 req/min)
+            await asyncio.sleep(1.0)
 
         print(f"[marketdata] Bootstrapped {count}/{total} candle sets ({errors} failed)")
         return count

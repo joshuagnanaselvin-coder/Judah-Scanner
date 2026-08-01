@@ -1,4 +1,4 @@
-"""CRT Engine - Candle Range Theory (ICT methodology). Max score: 40.
+"""CRT Engine - Candle Range Theory (ICT methodology). Max score: 25.
 
 CRT has 5 mandatory steps in order:
   1. CONSOLIDATION  - tight range (5-20 bars, compressing)
@@ -7,12 +7,12 @@ CRT has 5 mandatory steps in order:
   4. FILL           - price RETURNS to fill the FVG (retracement back into body)
   5. ENTRY          - trade taken at retest, IN THE DIRECTION of the range candle
 
-CRT scoring breakdown (max 40):
-  Consolidation quality:  0-12
-  Range candle strength:  0-12
-  FVG quality:            0-4
-  Retest quality:         0-6
-  Premium/Discount zone:  0-3
+CRT scoring breakdown (max 25):
+  Consolidation quality:  0-8
+  Range candle strength:  0-8
+  FVG quality:            0-3
+  Retest quality:         0-4
+  Premium/Discount zone:  0-2
 """
 import logging
 from typing import Optional
@@ -39,12 +39,12 @@ _RANGE_CANDLE_LOOKAHEAD = 20
 _FILL_RECENCY_MAX = 20
 _FILL_RECENCY_HALF = 12
 
-_W_CONSOLIDATION = 12
-_W_RANGE_CANDLE = 12
-_W_FVG = 4
-_W_RETEST = 6
-_W_ZONE = 3
-_CRT_MAX_SCORE = 40
+_W_CONSOLIDATION = 8
+_W_RANGE_CANDLE = 8
+_W_FVG = 3
+_W_RETEST = 4
+_W_ZONE = 2
+_CRT_MAX_SCORE = 25
 
 
 def run_crt(candles: list) -> Optional[dict]:
