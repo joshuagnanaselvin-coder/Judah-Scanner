@@ -93,9 +93,12 @@ class StateStore:
     # ── D2 Methods ──────────────────────────────────────────────────
 
     async def set_d2_signal(self, coin: str, signal: Any):
-        """Update D2 signal for a coin. Called by D2 engine."""
+        """Update D2 signal for a coin. Pass None to remove."""
         async with self._lock:
-            self.d2_signals[coin] = signal
+            if signal is None:
+                self.d2_signals.pop(coin, None)
+            else:
+                self.d2_signals[coin] = signal
             self.last_d2_scan = datetime.now(timezone.utc).timestamp()
 
     def get_d2_signal(self, coin: str) -> Any | None:

@@ -6,9 +6,6 @@ SIGNAL_TTL_MINUTES = 30
 MAX_SIGNALS = 200
 BOOTSTRAP_CANDLES = 200
 SCAN_CONCURRENCY = 20             # Max parallel CRT+SMC scans per cycle
-D2_SIGNAL_TTL_MINUTES = 30
-D2_MIN_SCORE = 40
-D2_SCAN_INTERVAL_SECONDS = 5     # LTF safety timer
 TIMEFRAMES_HTF = ["1H", "4H", "1D"]
 D1_TTL_SECONDS = 120
 
@@ -65,7 +62,7 @@ SMC_SCORE_FVG = 10
 SMC_SCORE_FVG_PROXIMITY_BONUS = 5
 SMC_SCORE_LIQUIDITY = 5
 
-# === SCORING ARCHITECTURE (hedge fund model) ===
+# === SCORING ARCHITECTURE (institutional 4-layer model) ===
 # Total max = 90 points across 4 independent components.
 # No single component can carry a signal to SNIPER alone.
 # CRT (timing)        0-25   — is the entry timed right?

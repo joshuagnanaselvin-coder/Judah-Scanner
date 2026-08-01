@@ -358,47 +358,70 @@ def analyze_flow(symbol: str, candles: list, swings: dict,
     """
     triggers = []
 
-    # 1. VWAP reclaim
+    # 1. VWAP reclaim (max 7)
     vwap = detect_vwap_reclaim(candles, timeframe)
     if vwap:
         triggers.append(vwap)
 
-    # 2. Multi-bar sweep + reversal
+    # 2. Multi-bar sweep + reversal (max 7)
     sweep = detect_sweep_reversal(candles, swings)
     if sweep:
         triggers.append(sweep)
 
-    # 3. Relative strength vs BTC
+    # 3. Relative strength vs BTC (max 6)
     if btc_candles:
         rs = compute_relative_strength(candles, btc_candles)
         if rs and rs["weight"] > 0:
             triggers.append(rs)
 
-    # 4. Killzone
+    # 4. Killzone (bonus multiplier applied to total, max 5 pts of value)
     kz = killzone_multiplier()
-    if not kz["in_killzone"]:
-        kz = {"zone": "OFF_HOURS", "multiplier": 0.85, "in_killzone": False}  # slight penalty
 
-    # Aggregate: 5 pts per weight unit, capped at 25 total
-    weight_total = sum(t.get("weight", 1) for t in triggers)
-    raw_boost = weight_total * 5
-    adjusted_boost = int(raw_boost * kz["multiplier"])
+    # Fixed per-trigger point values matching spec
+    _TRIGGER_MAX = {
+        "vwap_reclaim_bullish": 7, "vwap_reclaim_bearish": 7,
+        "sweep_reversal_bullish": 7, "sweep_reversal_bearish": 7,
+        "rs_extreme_bullish": 6, "rs_bullish": 6,
+        "rs_extreme_bearish": 6, "rs_bearish": 6,
+    }
+    raw_boost = sum(_TRIGGER_MAX.get(t.get("name", ""), 0) for t in triggers)
+    raw_boost = min(raw_boost, 25)
+
+    # Killzone multiplier applied as percentage adjustment
+    kz_mult = kz["multiplier"]
+    adjusted_boost = int(raw_boost * kz_mult)
     adjusted_boost = min(adjusted_boost, 25)
 
-    # Direction: sweep > vwap > rs
-    direction = None
-    for t in triggers:
-        if "bullish" in t["name"] or t["name"] in ("rs_bullish", "rs_extreme_bullish"):
-            direction = "BULLISH"; break
-        if "bearish" in t["name"] or t["name"] in ("rs_bearish", "rs_extreme_bearish"):
-            direction = "BEARISH"; break
+    # Direction: tally total pts per side, highest total wins
+    _dir_map = {
+        "vwap_reclaim_bullish": "BULLISH", "vwap_reclaim_bearish": "BEARISH",
+        "sweep_reversal_bullish": "BULLISH", "sweep_reversal_bearish": "BEARISH",
+        "rs_extreme_bullish": "BULLISH", "rs_bullish": "BULLISH",
+        "rs_extreme_bearish": "BEARISH", "rs_bearish": "BEARISH",
+    }
+    bull_pts = sum(_TRIGGER_MAX.get(t.get("name", ""), 0)
+                   for t in triggers if _dir_map.get(t.get("name", "")) == "BULLISH")
+    bear_pts = sum(_TRIGGER_MAX.get(t.get("name", ""), 0)
+                   for t in triggers if _dir_map.get(t.get("name", "")) == "BEARISH")
+    if bull_pts >= bear_pts and bull_pts > 0:
+        direction = "BULLISH"
+    elif bear_pts > bull_pts:
+        direction = "BEARISH"
+    else:
+        direction = "NEUTRAL"
+
+    # Buying pressure: ratio of bullish to total flow pts
+    total_pts = bull_pts + bear_pts
+    buy_pct = round((bull_pts / total_pts) * 100, 1) if total_pts > 0 else 50.0
 
     return {
         "boost": adjusted_boost,
         "triggers": triggers,
         "killzone": kz,
-        "is_flowing": len(triggers) >= 1,  # any meaningful trigger = flowing
+        "is_flowing": adjusted_boost >= 6,  # at least one significant trigger
         "direction": direction,
-        "raw_weight": weight_total,
+        "buying_pressure_pct": buy_pct,
+        "bullish_pts": bull_pts,
+        "bearish_pts": bear_pts,
         "flow_pct": round(adjusted_boost / 25 * 100, 1),  # % of max flow score (25)
     }

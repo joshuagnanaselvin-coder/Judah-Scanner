@@ -474,12 +474,12 @@ def build_signal(
 ) -> Optional[dict]:
     """Build final trade signal with all institutional features.
 
-    4-component scoring:
-      CRT (timing)       max 40
+    4-component scoring (capped at 90 total):
+      CRT (timing)       max 25
       SMC (structure)    max 20
-      Flow (conviction)  max 25   — passed in from engine
-      Momentum (ignite)  max 20   — passed in from engine
-    Total max = 105.
+      Flow (conviction)  max 25  — passed in from engine
+      Momentum (ignite)  max 20  — passed in from engine
+    Total max = 90.
 
     Parameters
     ----------
@@ -578,7 +578,7 @@ def build_signal(
     # CRT(40) + SMC(20) + Flow(25) + Momentum(20) = 105 max
     composite_score = crt_score + smc_score + flow_score + momentum_score
 
-    logger.info(f"COMPOSITE: CRT={crt_score} SMC={smc_score} Flow={flow_score} Mom={momentum_score} = {composite_score}/105")
+    logger.info(f"COMPOSITE: CRT={crt_score} SMC={smc_score} Flow={flow_score} Mom={momentum_score} = {composite_score}/90")
 
     # === SIGNAL DICT ===
     signal = {

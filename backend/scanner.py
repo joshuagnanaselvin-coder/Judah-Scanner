@@ -290,47 +290,39 @@ class Scanner:
         if agreeing:
             signal["confluence"] = agreeing
             signal["confluence_boost"] = signal.get("confluence_boost", 0) + 10
-            # Apply confluence boost to composite_score so MTF agreement lifts score above the 60+40 ceiling.
+            # Apply confluence boost to composite_score so MTF agreement lifts score.
             base = signal.get("composite_score", 0)
-            if base < 100:
-                signal["composite_score"] = min(base + 10, 100)
+            # Confluence boost is part of the 90-point ceiling.
+            signal["composite_score"] = min(base + 10, 90)
 
         return signal
 
     def _apply_boosts(self, signal, tf):
+        """Apply post-pipeline micro-boosts.
+
+        Flow and momentum are already scored in the engine pipeline
+        (layers 1 and 4). We only add marginal refinements here that
+        the main pipeline doesn't capture: proximity to FVG and
+        confluence from other timeframes (already handled separately
+        by _apply_confluence).
+        """
         reasons = []
         boost = 0
 
-        if signal.get("fvg") and signal["fvg"]["proximity"] <= 1.0:
+        # FVG proximity at entry — CRT doesn't score this directly
+        if signal.get("fvg") and signal["fvg"].get("proximity", 999) <= 1.0:
             reasons.append("FVG at entry")
             boost += 5
 
+        # Fresh OB — SMC doesn't differentiate 0-touch OB
         ob = signal.get("ob")
         if ob and ob.get("touches", 0) == 0:
             reasons.append("Fresh OB")
             boost += 5
 
-        # Flow boost — if flow_analyzer returned conviction data
-        flow = signal.get("flow", {})
-        if flow:
-            if flow.get("vwap_side") == signal.get("direction"):
-                reasons.append("VWAP aligned")
-                boost += 5
-            if flow.get("sweep"):
-                reasons.append("Liquidity sweep")
-                boost += 3
-            if flow.get("killzone"):
-                reasons.append("Killzone")
-
-        # Momentum boost — if a strong move preceded this signal
-        if signal.get("displacement_pct", 0) > 1.0:
-            reasons.append("Displacement")
-            boost += 5
-
         if reasons:
             base = signal.get("composite_score", 0)
-            # Cap total boost at +20 to keep max score at 90 per scoring architecture
-            signal["composite_score"] = min(base + boost, 100)
+            signal["composite_score"] = min(base + boost, 90)
             signal["boost_reasons"] = reasons
             signal["boost_total"] = boost
 

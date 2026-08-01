@@ -32,13 +32,13 @@ _FALLBACK_REQUIRED_MSB = True
 def _synth_crt_score(direction: str, msb_level, candles: list) -> int:
     """Award synthetic CRT points for confirmed impulse structure.
 
-    Returns up to 40 pts (replaces the 0 from synthesized CRT) so impulse coins
+    Returns up to 25 pts (replaces the 0 from synthesized CRT) so impulse coins
     with strong SMC structure can reach OPPORTUNITY/SNIPER tiers.
 
     Awards:
     - MSB break:           +15
-    - Consecutive impulse: 5+ same-body = +15, 3+ = +10
-    - Volume surge:        last 5 bars above avg = +10
+    - Consecutive impulse: 5+ same-body = +10, 3+ = +5
+    - Volume surge:        last 5 bars above avg = +5
     """
     if not msb_level:
         return 0
@@ -56,18 +56,18 @@ def _synth_crt_score(direction: str, msb_level, candles: list) -> int:
             break
 
     if consecutive >= 5:
-        score += 15
-    elif consecutive >= 3:
         score += 10
+    elif consecutive >= 3:
+        score += 5
 
     # Volume surge on the last 5 bars vs the prior 20
     if len(candles) >= 25:
         recent_avg = sum(c.volume for c in candles[-5:]) / 5
         prior_avg = sum(c.volume for c in candles[-25:-5]) / 20
         if prior_avg > 0 and recent_avg >= prior_avg * 1.5:
-            score += 10
+            score += 5
 
-    return min(score, 40)
+    return min(score, 25)
 
 
 def _build_smc_only_context(candles: list) -> dict | None:
@@ -228,7 +228,7 @@ def scan(symbol: str, timeframe: str) -> dict | None:
         path = "SMC-ONLY"
 
     # Signal builder
-    # 4-component scoring: CRT(40) + SMC(20) + Flow(25) + Momentum(20) = 105 max
+    # 4-component scoring: CRT(25) + SMC(20) + Flow(25) + Momentum(20) = 90 max
     fm = detect_fast_mover(candles, swings)
     flow_score = min(flow["boost"], 25)
     momentum_score = min(fm["score"] if fm["is_fast_mover"] else 0, 20)
@@ -260,7 +260,7 @@ def scan(symbol: str, timeframe: str) -> dict | None:
         signal["killzone"] = flow["killzone"]
         logger.info(f"[engine] SIGNAL {symbol} {timeframe}: {signal['tier']} score={signal['composite_score']} "
                      f"dir={signal['direction']} rr={signal['rr']:.1f} entry={signal['entry']:.5f} "
-                     f"sl={signal['stop_loss']:.5f} tp={signal['take_profit']:.5f} "
+                     f"sl={signal['stop_loss']:.5f} tp1={signal.get('take_profit_1', signal.get('take_profit', 0)):.5f} "
                      f"path={path} crt={signal['crt_score']} smc={signal['smc_score']} "
                      f"flow={flow_score} mom={momentum_score} "
                      f"triggers={[t['name'] for t in flow['triggers']]}")

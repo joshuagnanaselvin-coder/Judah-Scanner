@@ -41,6 +41,7 @@ _FILL_RECENCY_HALF = 12
 
 _W_CONSOLIDATION = 8
 _W_RANGE_CANDLE = 8
+_W_DISPLACEMENT = 3
 _W_FVG = 3
 _W_RETEST = 4
 _W_ZONE = 2
@@ -109,16 +110,16 @@ def run_crt(candles: list) -> Optional[dict]:
 
     s_consolidation = _score_consolidation(consolidation)
     s_range_candle = _score_range_candle_strength(displacement_ratio)
-    s_fvg = _score_fvg_quality(fill)
+    s_displacement = _score_displacement(fill, candles, rc_index, crt_trade_direction)
     s_retest = _score_retest_quality(fill_quality, rc_direction)
     s_zone = _score_zone_alignment(last_price, rng)
 
-    crt_score = s_consolidation + s_range_candle + s_fvg + s_retest + s_zone
+    crt_score = s_consolidation + s_range_candle + s_displacement + s_retest + s_zone
     crt_score = int(crt_score * recency_multiplier)
     crt_score = min(crt_score, _CRT_MAX_SCORE)
 
     logger.debug(f"CRT: PASSED dir={crt_trade_direction} rc_dir={rc_direction} "
-                 f"c={s_consolidation} rc={s_range_candle} f={s_fvg} "
+                 f"c={s_consolidation} rc={s_range_candle} d={s_displacement} "
                  f"rt={s_retest} z={s_zone} mult={recency_multiplier} "
                  f"score={crt_score}/{_CRT_MAX_SCORE}")
 
@@ -370,80 +371,112 @@ def _calc_crt_trade(crt_direction, rc_direction, rc_open, rc_close,
 # --- SCORING COMPONENTS (max 40) ---
 
 def _score_consolidation(consolidation: dict) -> int:
-    """0-12: tighter + more bars = higher score."""
+    """0–8: tighter + more bars = higher score."""
     tight_pct = consolidation.get("tight_pct", 0)
     bar_count = consolidation.get("bar_count", 0)
 
     if tight_pct >= 0.90:
-        score = 12
-    elif tight_pct >= 0.75:
-        score = 10
-    elif tight_pct >= 0.60:
         score = 8
+    elif tight_pct >= 0.75:
+        score = 7
+    elif tight_pct >= 0.60:
+        score = 6
     elif tight_pct >= 0.50:
-        score = 5
+        score = 4
     else:
-        score = 3
+        score = 2
 
     if bar_count >= 12:
-        score = min(score + 2, 12)
+        score = min(score + 2, 8)
 
     return score
 
 
 def _score_range_candle_strength(ratio: float) -> int:
-    """0-12: stronger displacement = higher score."""
+    """0–8: stronger displacement = higher score."""
     if ratio >= 3.0:
-        return 12
-    if ratio >= 2.5:
-        return 10
-    if ratio >= 2.0:
         return 8
-    if ratio >= 1.8:
+    if ratio >= 2.5:
+        return 7
+    if ratio >= 2.0:
         return 6
+    if ratio >= 1.8:
+        return 5
     if ratio >= 1.5:
         return 4
     return 3
 
 
-def _score_fvg_quality(fill: dict) -> int:
-    """0-4: better fill quality = higher score."""
-    quality = fill.get("quality", 0)
-    touches = fill.get("touch_count", 0)
+def _score_displacement(fill: dict, candles: list, rc_index: int, direction: str) -> int:
+    """0–3: displacement strength (follow-through after range candle).
 
-    if quality >= 0.8 and touches >= 3:
-        return 4
-    if quality >= 0.6 and touches >= 2:
+    Awards points based on whether price continued in the range candle's
+    direction after the breakout, creating an FVG.
+    """
+    if not fill or not candles:
+        return 0
+
+    post_range = candles[rc_index + 1:]
+    if not post_range:
+        return 0
+
+    rc = candles[rc_index]
+    rc_dir_up = rc.close > rc.open
+
+    # Check if at least 1 candle followed in the range candle's direction
+    followed = False
+    for c in post_range:
+        if rc_dir_up and c.close > c.open:
+            followed = True
+            break
+        if not rc_dir_up and c.close < c.open:
+            followed = True
+            break
+
+    if not followed:
+        return 0
+
+    # Displacement quality: how many consecutive same-direction bodies?
+    consec = 0
+    for c in post_range:
+        if rc_dir_up and c.close > c.open:
+            consec += 1
+        elif not rc_dir_up and c.close < c.open:
+            consec += 1
+        else:
+            break
+
+    if consec >= 2:
         return 3
-    if touches >= 1:
+    if consec >= 1:
         return 2
     return 1
 
 
 def _score_retest_quality(fill_quality: float, rc_direction: str) -> int:
-    """0-6: deeper retracement into body = higher score."""
+    """0–4: deeper retracement into body = higher score."""
     if fill_quality >= 0.8:
-        return 6
-    if fill_quality >= 0.6:
-        return 5
-    if fill_quality >= 0.4:
         return 4
-    if fill_quality >= 0.2:
+    if fill_quality >= 0.6:
+        return 3
+    if fill_quality >= 0.4:
         return 2
+    if fill_quality >= 0.2:
+        return 1
     return 1
 
 
 def _score_zone_alignment(price: float, rng: dict) -> int:
-    """0-3: price in premium/discount zone = bonus."""
+    """0–2: price in premium/discount zone = bonus."""
     if not rng or rng.get("range_size", 0) <= 0:
         return 1
 
     pct = ((price - rng["low"]) / rng["range_size"]) * 100
 
     if pct <= 20 or pct >= 80:
-        return 3
-    if pct <= 35 or pct >= 65:
-        return 3
-    if pct <= 45 or pct >= 55:
         return 2
+    if pct <= 35 or pct >= 65:
+        return 2
+    if pct <= 45 or pct >= 55:
+        return 1
     return 1

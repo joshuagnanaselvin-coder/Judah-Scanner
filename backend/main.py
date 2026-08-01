@@ -2,8 +2,8 @@
 
 3 Dimensions:
   D1 (HTF) → backend/scanner.py — WebSocket /ws for D1 signals
-  D2 (LTF) → backend/engines/ltf_engine.py — runs in background
-  D3 (Fusion) → backend/engines/signal_fusion.py — WebSocket /ws-fusion for frontend
+  D2 (LTF) → backend/engines/ltf_engine.py — runs in background, 15M
+  D3 (Fusion) → backend/engines/signal_fusion.py — watches D1+D2, pushes to /ws-fusion
 """
 import asyncio
 import logging
@@ -18,6 +18,7 @@ from backend.signal_store import signal_store
 from backend.performance_tracker import performance_tracker
 from backend.state_store import state_store
 from backend.engines.ltf_engine import ltf_engine
+from backend.engines.signal_fusion import fusion_engine
 from backend import ws_hub
 from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE
 
@@ -47,14 +48,11 @@ if os.path.exists(frontend_dir):
 
 # ---- D3 FUSION WEBSOCKET (Frontend) ----
 
-_fusion_clients: list = []
-
 @app.websocket("/ws-fusion")
 async def ws_fusion(ws: WebSocket):
     await ws.accept()
-    _fusion_clients.append(ws)
     ws_hub.add_client(ws)
-    logger.info(f"[ws-fusion] Client connected ({len(_fusion_clients)} total)")
+    logger.info(f"[ws-fusion] Client connected ({len(ws_hub._clients)} total)")
 
     # Send current state immediately
     try:
@@ -68,26 +66,10 @@ async def ws_fusion(ws: WebSocket):
     except WebSocketDisconnect:
         logger.info("[ws-fusion] Client disconnected")
     finally:
-        if ws in _fusion_clients:
-            _fusion_clients.remove(ws)
         ws_hub.remove_client(ws)
 
 
-async def broadcast_to_frontend(message: dict):
-    """Push a message to all connected frontend clients."""
-    if not _fusion_clients:
-        return
-    dead = []
-    for ws in _fusion_clients:
-        try:
-            await ws.send_json(message)
-        except Exception:
-            dead.append(ws)
-    for ws in dead:
-        _fusion_clients.remove(ws)
-
-
-# ---- D1 WEBSOCKET (existing, for backward compat) ----
+# ---- D1 WEBSOCKET (for D1 signal stream) ----
 
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
@@ -225,22 +207,25 @@ async def startup():
     scanner.symbols = pairs
     logger.info(f"[server] Found {len(pairs)} USDT pairs")
 
-    # Hook D1 scanner to trigger D2 on tier changes
-    scanner.on_tier_change = ltf_engine.on_d1_tier_change
-    scanner.on_candle_close = ltf_engine.on_candle_close
-
     # Start D1
     try:
         await scanner.start(pairs)
     except Exception as e:
         logger.error(f"[server] D1 scanner failed to start: {e}")
 
-    # Start D2 engine
+    # Start D2 engine (15M — independent, same 4-layer pipeline)
     try:
-        await ltf_engine.start()
+        await ltf_engine.start(pairs)
         logger.info("[server] D2 LTF engine started")
     except Exception as e:
         logger.error(f"[server] D2 engine failed to start: {e}")
+
+    # Start D3 Fusion Engine (watches D1 + D2, pushes to frontend)
+    try:
+        await fusion_engine.start()
+        logger.info("[server] D3 Fusion Engine started")
+    except Exception as e:
+        logger.error(f"[server] D3 Fusion Engine failed to start: {e}")
 
     logger.info(f" Judah Scanner running at http://{HOST}:{PORT}")
 

@@ -80,7 +80,7 @@ def _score_msb(candles, swings) -> tuple[int, dict]:
 
 
 def _score_ob(candles, crt, swings) -> tuple[int, dict | None]:
-    """Max 5: swing-point OB with 2+ retests = 5, 1 retest = 2, 0 retests = 0."""
+    """Max 5: swing-point OB. 0 touches = 0, 1 touch = 5, 2+ = max(1, 5 - (touches-1))."""
     ob = _detect_ob(candles, crt)
     if not ob:
         return 0, None
@@ -97,11 +97,11 @@ def _score_ob(candles, crt, swings) -> tuple[int, dict | None]:
     else:
         ob["zone"] = "UNKNOWN"
 
-    if retests >= 2:
-        return 5, ob
-    if retests >= 1:
-        return 2, ob
-    return 0, ob
+    if retests == 0:
+        return 0, ob
+    # 1st touch = full 5 pts, each additional touch costs 1 pt, floor at 1
+    score = max(1, 5 - (retests - 1))
+    return score, ob
 
 
 def _score_fvg(candles, crt) -> tuple[int, dict | None]:

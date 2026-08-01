@@ -1,33 +1,33 @@
-"""WebSocket broadcast hub — decoupled from main.py to avoid circular imports.
+"""WebSocket broadcast hub — decoupled from main.py.
 
 Dimensions push messages here. Frontend connects via /ws-fusion in main.py.
 """
 from typing import Any
 
-_fusion_clients: list = []
+_clients: list = []
 
 
 def add_client(ws):
-    _fusion_clients.append(ws)
+    _clients.append(ws)
 
 
 def remove_client(ws):
-    if ws in _fusion_clients:
-        _fusion_clients.remove(ws)
+    if ws in _clients:
+        _clients.remove(ws)
 
 
 async def broadcast(message: dict):
     """Push a message to all connected frontend clients."""
-    if not _fusion_clients:
+    if not _clients:
         return
     dead = []
-    for ws in _fusion_clients:
+    for ws in _clients:
         try:
             await ws.send_json(message)
         except Exception:
             dead.append(ws)
     for ws in dead:
-        _fusion_clients.remove(ws)
+        _clients.remove(ws)
 
 
 def get_initial_payload(store) -> dict:

@@ -103,15 +103,23 @@ class SignalStore:
 
         # Setup still valid — reset to fresh
         # Copy fresh fields from the new scan result
+        # Copy fresh fields from the new scan result.
+        # Signal builder uses take_profit_1/take_profit_2 (plural) since v2;
+        # also support legacy singular take_profit for any older code paths.
         for field in ("composite_score", "base_score", "tier", "rr",
-                      "entry", "stop_loss", "take_profit", "direction",
+                      "entry", "stop_loss", "direction",
                       "crt_score", "smc_score", "session", "scenario",
                       "session_label", "market_structure", "fvg",
                       "institutional_order_flow", "volume_profile",
                       "liquidity_pools", "confluence_bonuses",
-                      "distance_to_entry_pct", "current_price"):
+                      "distance_to_entry_pct", "current_price",
+                      "take_profit_1", "take_profit_2"):
             if field in new_signal:
                 signal[field] = new_signal[field]
+
+        # Backward-compat: set singular take_profit = tp1 if not already present
+        if "take_profit" not in signal and "take_profit_1" in signal:
+            signal["take_profit"] = signal["take_profit_1"]
 
         signal["age_ticks"] = 0
         signal["timestamp"] = int(datetime.now(timezone.utc).timestamp() * 1000)

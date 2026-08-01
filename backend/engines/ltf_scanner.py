@@ -1,49 +1,45 @@
-"""Dimension 2 — LTF Entry Scanner.
+"""Dimension 2 — LTF Signal Scanner (15M timeframe).
 
-Runs the same 4-layer pipeline (CRT → SMC → Flow → Momentum) on 15M candles.
-Outputs persistent LTF signal objects, SNIPER-only (score ≥ 70).
+Exact copy of the D1 pipeline, adapted for 15M:
+  - Same 4-layer engine: scan() runs CRT → SMC → Flow → Momentum
+  - Same scoring: CRT(25) + SMC(20) + Flow(25) + Momentum(20) = 90 max
+  - Same tiers: SNIPER(≥70) / OPPORTUNITY(≥55) / WATCH(≥40) / REJECTED
+  - Same freshness tracking and signal evolution
 
-Reuses the existing engine.py pipeline — no duplication.
+Difference from D1:
+  - 15M timeframe only (not 1H/4H/1D)
+  - Uses 15M candles from market_data
+  - Wraps result in LTFSignal for D2-specific freshness/tracking
+  - NO D1 boost, NO D1 context — completely independent score
 """
-import uuid
 import logging
-from datetime import datetime, timezone
+import uuid
 from collections import deque
-from typing import Any, Optional
+from datetime import datetime, timezone
+from typing import Optional
+
+from backend.engines.engine import scan
 from backend.config import (
-    D2_SIGNAL_TTL_MINUTES,
-    D2_MIN_SCORE,
     TIER_SNIPER_SCORE,
     TIER_OPPORTUNITY_SCORE,
     TIER_WATCH_SCORE,
-    SCAN_INTERVAL_SECONDS,
 )
-from backend.engines.engine import scan
-from backend.market_data import market_data
-from backend.state_store import state_store
 
-logger = logging.getLogger("judah.ltf")
-
-
-# D1 context boost applied to raw D2 score before tier classification
-D1_TIER_BOOST = {
-    "SNIPER": 10,
-    "OPPORTUNITY": 5,
-    "WATCH": 0,
-    "REJECTED": -10,
-    "": 0,           # No D1 data yet — neutral
-}
-MAX_SCORE = 100.0
+logger = logging.getLogger("judah.ltf_scanner")
 
 
 class LTFSignal:
-    """Persistent signal object that evolves across scans."""
+    """Persistent D2 signal — evolves across scans on 15M.
+
+    Mirrors D1's signal dict structure but as a typed object
+    with built-in freshness tracking.
+    """
 
     __slots__ = (
         "signal_id", "coin", "timeframe", "direction",
         "score", "tier", "entry", "sl", "tp1", "tp2",
         "rr1", "rr2", "freshness", "born_at", "last_scan",
-        "score_history", "d1_tier", "bucket",
+        "score_history", "raw_signal",
     )
 
     def __init__(self, coin: str, raw: dict):
@@ -53,7 +49,6 @@ class LTFSignal:
         self.direction = raw.get("direction", "BULLISH")
         self.score = float(raw.get("composite_score", 0))
         self.tier = _tier(self.score)
-        # Canonical field names from signal_builder
         self.entry = float(raw.get("entry", 0))
         self.sl = float(raw.get("stop_loss", 0))
         self.tp1 = float(raw.get("take_profit_1", 0))
@@ -66,12 +61,11 @@ class LTFSignal:
         # Ring buffer: last 20 (timestamp, score) pairs
         self.score_history: deque = deque(maxlen=20)
         self.score_history.append((self.born_at.timestamp(), self.score))
-        # D1 context (set by fusion engine)
-        self.d1_tier: str = ""
-        self.bucket: str = ""
+        # Keep the full raw signal for D3 fusion and display
+        self.raw_signal = raw
 
     def update(self, raw: dict):
-        """Update signal with fresh scan results. Preserves signal_id and born_at."""
+        """Refresh with new scan results. Preserves born_at and signal_id."""
         self.score = float(raw.get("composite_score", 0))
         self.tier = _tier(self.score)
         self.direction = raw.get("direction", self.direction)
@@ -83,12 +77,12 @@ class LTFSignal:
         self.rr2 = float(raw.get("rr2", self.rr2))
         self.last_scan = datetime.now(timezone.utc)
         self.score_history.append((self.last_scan.timestamp(), self.score))
+        self.raw_signal = raw
         self._update_freshness()
 
     def _update_freshness(self):
         """Recalculate freshness based on age and score stability."""
-        age_sec = (datetime.now(timezone.utc) - self.born_at).total_seconds()
-        age_min = age_sec / 60
+        age_min = (datetime.now(timezone.utc) - self.born_at).total_seconds() / 60
 
         # Score trajectory: improving, stable, or degrading
         recent_scores = [s for _, s in self.score_history]
@@ -107,11 +101,12 @@ class LTFSignal:
             self.freshness = "STALE"
 
     def is_expired(self) -> bool:
+        """Signal expired if older than D2 TTL (15 minutes for 15M timeframe)."""
         age_min = (datetime.now(timezone.utc) - self.born_at).total_seconds() / 60
-        return age_min > D2_SIGNAL_TTL_MINUTES
+        return age_min > 15
 
     def to_dict(self) -> dict:
-        """Serialize for frontend/state store."""
+        """Serialize for state store / D3 fusion."""
         return {
             "signal_id": self.signal_id,
             "coin": self.coin,
@@ -129,8 +124,6 @@ class LTFSignal:
             "born_at": self.born_at.isoformat(),
             "last_scan": self.last_scan.isoformat(),
             "score_history": list(self.score_history),
-            "d1_tier": self.d1_tier,
-            "bucket": self.bucket,
         }
 
 
@@ -145,49 +138,34 @@ def _tier(score: float) -> str:
 
 
 def scan_ltf(coin: str) -> Optional[LTFSignal]:
-    """Run D2 scan for a coin on 15M.
+    """Run D2 scan for a coin on 15M timeframe.
 
-    Uses the same 4-layer pipeline as D1 (engine.scan).
-    Returns LTFSignal only if score ≥ D2_MIN_SCORE (SNIPER-only).
-    Returns None if below threshold or scan fails.
+    Runs the same 4-layer pipeline as D1 (engine.scan).
+    Score is PURE LTF score — no D1 boost, no D1 context.
+    Returns LTFSignal if scan succeeds, None otherwise.
+
+    The engine will produce all tiers (SNIPER/OPPORTUNITY/WATCH/REJECTED).
+    D3 decides later whether to filter or bucket the signal.
     """
+    from backend.market_data import market_data
+
     candles = market_data.get_candles(coin, "15M")
     if not candles or len(candles) < 50:
         logger.debug(f"[ltf] SKIP {coin}: no 15M candles")
         return None
 
-    # Run the shared 4-layer pipeline
+    # Run the same 4-layer pipeline on 15M candles
     raw = scan(coin, "15M")
     if not raw:
         logger.debug(f"[ltf] SKIP {coin}: engine returned None")
         return None
 
-    # D1 context boost: read D1 tier and adjust score before gate check
-    d1_tier_str = state_store.get_d1_tier_str(coin)
-    boost = D1_TIER_BOOST.get(d1_tier_str, 0)
-    raw_score = float(raw.get("composite_score", 0))
-    boosted_score = min(MAX_SCORE, raw_score + boost)
-    raw["composite_score"] = boosted_score
+    score = float(raw.get("composite_score", 0))
+    tier = _tier(score)
 
-    # Context-aware logging
-    if boost > 0:
-        logger.debug(f"[ltf] {coin}: raw={raw_score:.1f} D1={d1_tier_str} +{boost} → {boosted_score:.1f}")
-
-    if boosted_score < D2_MIN_SCORE:
-        logger.debug(f"[ltf] SKIP {coin}: boosted score {boosted_score:.1f} < {D2_MIN_SCORE}")
-        return None
-
-    # Check if existing signal exists for this coin — update it
-    existing = state_store.get_d2_signal(coin)
-    if existing and isinstance(existing, LTFSignal):
-        existing.update(raw)
-        logger.info(f"[ltf] UPDATE {coin}: score={boosted_score:.1f} tier={existing.tier} "
-                     f"dir={existing.direction} freshness={existing.freshness}")
-        return existing
-
-    # New signal
+    # Return the signal — D3 will filter/bucket later
     signal = LTFSignal(coin, raw)
-    logger.info(f"[ltf] NEW {coin}: score={boosted_score:.1f} tier={signal.tier} "
-                f"dir={signal.direction} entry={signal.entry} "
-                f"SL={signal.sl} TP1={signal.tp1} RR={signal.rr1:.1f}")
+    logger.info(f"[ltf] {coin}: score={score:.1f} tier={tier} "
+                f"dir={signal.direction} entry={signal.entry:.5f} "
+                f"SL={signal.sl:.5f} TP1={signal.tp1:.5f} RR={signal.rr1:.1f}")
     return signal

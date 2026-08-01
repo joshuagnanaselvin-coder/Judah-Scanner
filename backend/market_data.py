@@ -49,22 +49,30 @@ class MarketData:
         total = len(hf_pairs)
         print(f"[marketdata] HTF-only: {total} requests ({len(TIMEFRAMES_HTF)} TFs x {len(symbols)} pairs)")
 
-        # === Batch-wise concurrent bootstrap ===
-        # Binance IP limit: 1200 req/min. We fire bursts of BATCH_SIZE concurrently,
-        # then sleep BATCH_DELAY_SEC between bursts. ~15-20s total instead of 26 min.
-        BATCH_SIZE = 40          # concurrent requests per burst
-        BATCH_DELAY_SEC = 3.0    # 40 reqs per 3s = 800/min — comfortable under 1200/min IP limit
+        # === Adaptive batch-wise concurrent bootstrap ===
+        # Binance IP limit: 1200 req/min (weight=1 for klines).
+        # Start at 20 concurrent / 1.5s delay (~667/min). Back off on 429s.
+        BATCH_SIZE = 20
+        BASE_DELAY = 1.5
+        MAX_DELAY = 10.0
+        DELAY_STEP = 1.5
 
+        batch_delay = BASE_DELAY
         errors = 0
+
         batches = [hf_pairs[i:i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
+        total_batches = len(batches)
+
         for batch_idx, batch in enumerate(batches):
             tasks = [self._fetch_klines_with_retry(sym, tf, BOOTSTRAP_CANDLES)
                      for sym, tf in batch]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
+            batch_fails = 0
             for (sym, tf), result in zip(batch, results):
                 if isinstance(result, Exception):
                     errors += 1
+                    batch_fails += 1
                     continue
                 if result and len(result) >= 50:
                     key = f"{sym}_{tf}"
@@ -72,13 +80,26 @@ class MarketData:
                     count += 1
                 else:
                     errors += 1
+                    batch_fails += 1
 
             done = min((batch_idx + 1) * BATCH_SIZE, total)
-            print(f"[marketdata] {done}/{total} — {count} OK, {errors} failed")
+            pct = done / total * 100
+            print(f"[marketdata] {done}/{total} ({pct:.0f}%) — {count} OK, {errors} failed | "
+                  f"delay={batch_delay:.1f}s", flush=True)
 
-            # Delay between bursts to stay under Binance IP rate limits
-            if batch_idx < len(batches) - 1:
-                await asyncio.sleep(BATCH_DELAY_SEC)
+            # Adaptive: if >50% of batch failed, we're being rate-limited
+            if batch_fails > len(batch) * 0.5:
+                batch_delay = min(batch_delay + DELAY_STEP, MAX_DELAY)
+            elif batch_fails == 0 and batch_delay > BASE_DELAY:
+                # Recover: ease back toward normal delay
+                batch_delay = max(batch_delay - DELAY_STEP * 0.5, BASE_DELAY)
+
+            if batch_idx < total_batches - 1:
+                await asyncio.sleep(batch_delay)
+
+        print(f"[marketdata] Bootstrapped {count}/{total} candle sets ({errors} failed) "
+              f"| delay={batch_delay:.1f}s", flush=True)
+        return count
 
     async def _fetch_klines(self, symbol, interval, limit):
         """Single-shot fetch (no retry). Used by LTF refresh."""
@@ -89,6 +110,9 @@ class MarketData:
                 url, timeout=aiohttp.ClientTimeout(total=15)
             ) as resp:
                 text = await resp.text()
+                if resp.status == 429:
+                    logger.warning(f"Rate limited (429) for {symbol} {binance_tf} — backing off")
+                    return "RATE_LIMITED"
                 if resp.status != 200:
                     logger.debug(f"HTTP {resp.status} for {symbol} {binance_tf}: {text[:100]}")
                     return []
@@ -102,14 +126,24 @@ class MarketData:
             logger.debug(f"Fetch error {symbol} {binance_tf}: {e}")
             return []
 
-    async def _fetch_klines_with_retry(self, symbol, interval, limit, max_retries=3):
-        """Fetch with retry on rate-limit (429) and server errors (5xx)."""
+    async def _fetch_klines_with_retry(self, symbol, interval, limit, max_retries=4):
+        """Fetch with retry on rate-limit (429) and server errors (5xx).
+
+        Adds jitter to backoff to avoid thundering herd when many requests
+        fail simultaneously (e.g., burst of 40 concurrent requests).
+        """
+        import random
         for attempt in range(max_retries):
             result = await self._fetch_klines(symbol, interval, limit)
-            if result:
+            if result and result != "RATE_LIMITED":
                 return result
             if attempt < max_retries - 1:
-                wait = (2 ** attempt) * 0.5   # 0.5s, 1s, 2s backoff
+                # 429 gets a longer backoff; other errors get shorter
+                if result == "RATE_LIMITED":
+                    wait = (2 ** attempt) * 2.0 + random.uniform(0, 1.0)  # 2s, 4s, 8s
+                else:
+                    wait = (2 ** attempt) * 0.5 + random.uniform(0, 0.5)  # 0.5s, 1s, 2s
+                logger.debug(f"Retry {attempt+1}/{max_retries} for {symbol} {interval} in {wait:.1f}s")
                 await asyncio.sleep(wait)
         return []
 
