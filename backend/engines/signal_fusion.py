@@ -54,13 +54,14 @@ def resolve_d2_threshold() -> int:
 
 
 def d2_tier(score: float, threshold: int = None) -> str:
-    """Classify a D2 score into SNIPER/OPPORTUNITY using the current threshold."""
-    if threshold is None:
-        threshold = resolve_d2_threshold()
-    if score >= threshold:
+    """Classify a D2 score into SNIPER/OPPORTUNITY using the SAME fixed
+    thresholds as D1. Sensitivity mode is for frontend display only."""
+    if score >= TIER_SNIPER_SCORE:
         return "SNIPER"
-    if score >= max(TIER_WATCH_SCORE, threshold - 15):
+    if score >= TIER_OPPORTUNITY_SCORE:
         return "OPPORTUNITY"
+    if score >= TIER_WATCH_SCORE:
+        return "WATCH"
     return "REJECTED"
 
 
@@ -69,10 +70,9 @@ def d2_tier(score: float, threshold: int = None) -> str:
 def bucket(d1_tier: str, d2_score: float) -> str:
     """6-bucket grid: D1 tier × D2 tier → bucket.
 
-    D2 tier is resolved dynamically from D2_SENSITIVITY_MODE.
+    Both D1 and D2 use the same fixed tier thresholds.
     """
-    threshold = resolve_d2_threshold()
-    d2 = d2_tier(d2_score, threshold)
+    d2 = d2_tier(d2_score)
 
     if d2 == "REJECTED":
         return "FILTERED"
