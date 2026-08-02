@@ -215,7 +215,8 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
             htf_bonus += 5
 
         # Bonus 4: Entry direction matches HTF direction = +5
-        if d1_dir and signal.get("direction", "") == d1_dir:
+        d2_dir = crt["displacement"]["crt_trade_direction"]
+        if d1_dir and d2_dir == d1_dir:
             htf_bonus += 5
 
     htf_bonus = min(htf_bonus, 20)
