@@ -153,7 +153,7 @@ class Scanner:
                 coin_tf_map[coin] = {}
             coin_tf_map[coin][sig['engine']] = {
                 "tier": sig.get('tier', 'WATCH'),
-                "score": sig.get('composite_score', 0),
+                "score": sig.get('base_score', sig.get('composite_score', 0)),
             }
 
         for coin, tfs in coin_tf_map.items():

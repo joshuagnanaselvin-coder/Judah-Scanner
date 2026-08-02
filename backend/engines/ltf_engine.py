@@ -22,7 +22,7 @@ import time as _time_module
 from datetime import datetime, timezone
 from typing import Optional
 from backend.market_data import market_data
-from backend.engines.ltf_scanner import scan_ltf, LTFSignal
+from backend.engines.ltf_scanner import scan_entry, LTFSignal
 from backend.candidate_selector import should_select
 from backend.state_store import state_store
 from backend.config import (
@@ -75,19 +75,34 @@ class LTFEngine:
         refreshed = []
         revalidated = []
 
-        # Get the same coin list D3 uses for fusion — ensures D1/D2 overlap
+        # Get D1-approved coins (SNIPER/OPPORTUNITY only)
         scan_targets = state_store.get_active_coins()
         if not scan_targets:
-            # D1 hasn't written tiers yet — skip this cycle
             logger.debug("[ltf] No active D1 coins yet, skipping cycle")
             return
 
-        logger.debug(f"[ltf] Scanning {len(scan_targets)} active D1 coins")
+        d1_approved = []
+        for coin in scan_targets:
+            d1 = state_store.get_d1_tier(coin)
+            if d1 and d1.get("tier") in ("SNIPER", "OPPORTUNITY", "WATCH"):
+                d1_approved.append((coin, d1.get("tier", ""), d1.get("score", 0)))
+
+        if not d1_approved:
+            logger.debug("[ltf] No D1 SNIPER/OPPORTUNITY coins to scan")
+            return
+
+        logger.debug(f"[ltf] D1 approved {len(d1_approved)} coins for 15M entry scan")
+
+        # DEBUG: show all D1 tiers received
+        for coin in scan_targets:
+            d1 = state_store.get_d1_tier(coin)
+            if d1:
+                logger.debug(f"[ltf] D1→D2: {coin} tier={d1.get('tier')} score={d1.get('score',0):.0f}")
 
         # === PASS 1: Revalidate + refresh existing D2 signals ===
         # Only revalidate coins that D1 still has active data for
         existing = {c: s for c, s in state_store.get_all_d2_signals().items()
-                    if c in scan_targets}
+                    if c in [c for c, _, _ in d1_approved]}
         for coin, sig in list(existing.items()):
             candles = market_data.get_candles(coin, "15M")
             if not candles:
@@ -102,7 +117,9 @@ class LTFEngine:
             # Revalidate at checkpoints (same logic as D1)
             if _should_revalidate(sig):
                 logger.info(f"[ltf] [revalidate] {coin} at {_age_minutes(sig):.0f}min...")
-                raw = scan_ltf(coin)
+                d1_tier = next((t for c, t, _ in d1_approved if c == coin), "")
+                d1_score = next((s for c, _, s in d1_approved if c == coin), 0)
+                raw = scan_entry(coin, d1_tier=d1_tier, d1_score=d1_score)
                 if raw:
                     await state_store.set_d2_signal(coin, raw)
                     revalidated.append(raw)
@@ -114,11 +131,11 @@ class LTFEngine:
             # Light refresh — just update age/price
             refreshed.append(sig)
 
-        # === PASS 2: Batch scan for new signals ===
+        # === PASS 2: Scan D1-approved coins for 15M entry ===
         new_signals = []
         scan_tasks = []
 
-        for coin in scan_targets:
+        for coin, d1_tier, d1_score in d1_approved:
             # Skip if already have a D2 signal
             if state_store.get_d2_signal(coin):
                 continue
@@ -130,26 +147,26 @@ class LTFEngine:
             if not should_select(coin, "15M"):
                 continue
 
-            scan_tasks.append(coin)
+            scan_tasks.append((coin, d1_tier, d1_score))
 
         logger.debug(f"[ltf] Batch: {len(scan_tasks)} candidates to scan")
 
         semaphore = self._scan_semaphore or asyncio.Semaphore(SCAN_CONCURRENCY)
 
-        async def _scan_with_limit(coin):
+        async def _scan_with_limit(coin, d1_tier, d1_score):
             async with semaphore:
                 try:
-                    return scan_ltf(coin)
+                    return scan_entry(coin, d1_tier=d1_tier, d1_score=d1_score)
                 except Exception as e:
                     logger.warning(f"[ltf] Error {coin}: {e}")
                     return None
 
         results = await asyncio.gather(
-            *[_scan_with_limit(c) for c in scan_tasks],
+            *[_scan_with_limit(c, dt, ds) for c, dt, ds in scan_tasks],
             return_exceptions=True
         )
 
-        for coin, result in zip(scan_tasks, results):
+        for (coin, _, _), result in zip(scan_tasks, results):
             if isinstance(result, Exception) or not result:
                 _mark_scanned(coin)
                 continue

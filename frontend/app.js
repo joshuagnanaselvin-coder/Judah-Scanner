@@ -165,7 +165,7 @@ function renderSignals() {
 }
 
 function updateBucketCounts(filtered) {
-  const counts = { READY: 0, EARLY: 0, TRAP: 0, BUILDING: 0, DEVELOPING: 0, IGNORE: 0 };
+  const counts = { READY: 0, EARLY: 0, TRAP: 0, BUILDING: 0, DEVELOPING: 0, IGNORE: 0, WAIT: 0, MONITOR: 0 };
   filtered.forEach(s => { if (counts[s.bucket] !== undefined) counts[s.bucket]++; });
   const updateCount = (id, val) => {
     const el = document.getElementById(id);
@@ -177,6 +177,8 @@ function updateBucketCounts(filtered) {
   updateCount('countBuilding', counts.BUILDING);
   updateCount('countDeveloping', counts.DEVELOPING);
   updateCount('countIgnore', counts.IGNORE);
+  updateCount('countWait', counts.WAIT);
+  updateCount('countMonitor', counts.MONITOR);
 }
 
 function buildCard(s) {
@@ -330,41 +332,31 @@ async function checkHealth() {
   }
 }
 
-// === D2 MODE SELECTOR ===
-async function initD2Mode() {
-  const sel = document.getElementById('d2Mode');
-  const thrEl = document.getElementById('modeThreshold');
-  if (!sel) return;
+// === BUCKET MATRIX TOGGLE ===
+function initMatrix() {
+  const toggle = document.getElementById('matrixToggle');
+  const panel = document.getElementById('matrixPanel');
+  if (!toggle || !panel) return;
 
-  // Load current mode from API
-  try {
-    const resp = await fetch('/api/d2-mode');
-    const data = await resp.json();
-    sel.value = data.mode || 'STRICT';
-    if (thrEl) thrEl.textContent = data.threshold || 70;
-  } catch (e) {
-    // use default
-  }
+  toggle.addEventListener('click', () => {
+    panel.classList.toggle('open');
+  });
 
-  sel.addEventListener('change', async () => {
-    const mode = sel.value;
-    try {
-      const resp = await fetch('/api/d2-mode', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode }),
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        if (thrEl) thrEl.textContent = data.threshold;
-        console.log('[d2-mode] Switched to', data.mode, 'threshold', data.threshold);
+  // Matrix cell clicks filter same as bucket buttons
+  panel.querySelectorAll('[data-filter-bucket]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const bucket = btn.dataset.filterBucket;
+      filters.bucket = bucket;
+      // Update active states across ALL bucket buttons (bar + matrix)
+      document.querySelectorAll('[data-filter-bucket]').forEach(b => b.classList.remove('active'));
+      if (bucket === 'all') {
+        document.querySelector('[data-filter-bucket="all"]')?.classList.add('active');
       } else {
-        alert('Failed: ' + data.error);
-        sel.value = data.mode || 'STRICT';
+        btn.classList.add('active');
       }
-    } catch (e) {
-      alert('Error changing mode: ' + e.message);
-    }
+      renderSignals();
+      panel.classList.remove('open');
+    });
   });
 }
 
@@ -372,7 +364,7 @@ async function initD2Mode() {
 document.addEventListener('DOMContentLoaded', () => {
   connectWS();
   initFilters();
-  initD2Mode();
+  initMatrix();
   setInterval(drawSparklines, 2000);
   setInterval(checkHealth, 10000);
 });

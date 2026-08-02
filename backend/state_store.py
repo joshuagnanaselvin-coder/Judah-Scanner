@@ -81,14 +81,18 @@ class StateStore:
         return entry["score"] if entry else 0.0
 
     def is_all_watch(self, coin: str) -> bool:
-        """Check if ALL D1 timeframes for this coin are WATCH."""
+        """Check if ALL D1 timeframes for this coin are REJECTED (no valid setup).
+
+        WATCH-tier coins flow to D2 for 15M resolution.
+        Only coins where every TF is REJECTED are excluded.
+        """
         entry = self.d1_tiers.get(coin)
         if not entry:
-            return True  # No D1 data = treat as WATCH
+            return True  # No D1 data = treat as REJECTED
         tfs = entry.get("timeframes", {})
         if not tfs:
             return True
-        return all(v.get("tier") == "WATCH" for v in tfs.values())
+        return all(v.get("tier") == "REJECTED" for v in tfs.values())
 
     # ── D2 Methods ──────────────────────────────────────────────────
 

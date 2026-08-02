@@ -235,14 +235,14 @@ def scan(symbol: str, timeframe: str) -> dict | None:
             fallback_score += 5
         if flow.get("boost", 0) > 18:
             fallback_score += 8
-        if fm.get("is_fast_mover") and fm.get("score", 0) > 15:
+        if fast.get("is_fast_mover") and fast.get("score", 0) > 15:
             fallback_score += 8
 
         logger.debug(f"[engine] Fallback confidence: {fallback_score}/{_FALLBACK_MIN_CONFIDENCE} "
                      f"(msb={8 if msb_confirmed else 0} ob={5 if ob and ob.get('strength',0)>=3 else 0} "
                      f"fvg={4 if fvg and fvg.get('proximity',999)<=1.0 else 0} "
                      f"liq={5 if liq_swept else 0} flow={8 if flow.get('boost',0)>18 else 0} "
-                     f"mom={8 if fm.get('is_fast_mover') and fm.get('score',0)>15 else 0})")
+                     f"mom={8 if fast.get('is_fast_mover') and fast.get('score',0)>15 else 0})")
 
         if fallback_score < _FALLBACK_MIN_CONFIDENCE:
             logger.debug(f"[engine] SKIP {symbol} {timeframe}: fallback confidence {fallback_score} < {_FALLBACK_MIN_CONFIDENCE}")
@@ -252,7 +252,7 @@ def scan(symbol: str, timeframe: str) -> dict | None:
         path = "SMC-ONLY"
 
     # Signal builder
-    # D1 (market quality): Flow(15) + CRT(30) + SMC(30) + Momentum(15) + HTF(+10) = 100 max
+    # D1 (market quality): Flow(15) + CRT(30) + SMC(30) + Momentum(15) = 90 max
     fm = detect_fast_mover(candles, swings)
     crt["crt_score"] = min(crt.get("crt_score", 0), 30)
     smc["smc_score"] = min(smc.get("smc_score", 0), 30)

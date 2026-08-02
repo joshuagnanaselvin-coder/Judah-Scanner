@@ -18,7 +18,7 @@ from backend.signal_store import signal_store
 from backend.performance_tracker import performance_tracker
 from backend.state_store import state_store
 from backend.engines.ltf_engine import ltf_engine
-from backend.engines.signal_fusion import fusion_engine, resolve_d2_threshold
+from backend.engines.signal_fusion import fusion_engine
 from backend import ws_hub
 from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE
 
@@ -149,7 +149,6 @@ async def get_logs(limit: int = 100):
 @app.get("/api/debug-fusion")
 async def debug_fusion():
     """Diagnostic: show D1/D2 overlap and why fusion produces few results."""
-    import backend.config as cfg
     d1 = dict(state_store.d1_tiers)
     d2 = state_store.get_all_d2_signals()
     active = state_store.get_active_coins()
@@ -183,11 +182,10 @@ async def debug_fusion():
         if not d1_entry:
             no_overlap_reason[coin] = "no D1 data"
         else:
-            no_overlap_reason[coin] = f"D1={d1_entry.get('tier')} score={d1_entry.get('score')} all_watch={state_store.is_all_watch(coin)}"
+            no_overlap_reason[coin] = f"D1={d1_entry.get('tier')} score={d1_entry.get('score')}"
 
     return {
-        "d2_sensitivity_mode": cfg.D2_SENSITIVITY_MODE,
-        "d2_threshold": resolve_d2_threshold(),
+        "tier_thresholds": {"SNIPER": 70, "OPPORTUNITY": 55, "WATCH": 40},
         "d1_count": len(d1),
         "d2_count": len(d2),
         "active_count": len(active),
@@ -210,23 +208,6 @@ async def get_performance():
         "by_scenario": tracker.get_scenario_report(),
     }
 
-@app.get("/api/d2-mode")
-async def get_d2_mode():
-    """READ ONLY — sensitivity mode is for frontend display only.
-    Scoring and tiers are locked and cannot be changed at runtime."""
-    import backend.config as cfg
-    threshold = resolve_d2_threshold()
-    return {
-        "mode": cfg.D2_SENSITIVITY_MODE,
-        "threshold": threshold,
-        "locked": True,
-        "modes": {
-            "STRICT": cfg.D2_MIN_SCORE_STRICT,
-            "BALANCED": cfg.D2_MIN_SCORE_BALANCED,
-            "EXPLORATION": cfg.D2_MIN_SCORE_EXPLORATION,
-            "DEBUG": cfg.D2_MIN_SCORE_DEBUG,
-        },
-    }
 
 @app.post("/api/restart")
 async def restart_scanner():

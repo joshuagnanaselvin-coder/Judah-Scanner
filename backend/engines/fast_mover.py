@@ -27,7 +27,7 @@ logger = logging.getLogger("judah.fast_mover")
 
 def _trigger_volume_surge(candles: list) -> Optional[dict]:
     """Last 1-3 bars have volume > 2.5× the prior 20-bar average."""
-    if len(candles) < 24:
+    if len(candles) < 25:
         return None
     prior_avg = sum(c.volume for c in candles[-23:-3]) / 20
     if prior_avg <= 0:

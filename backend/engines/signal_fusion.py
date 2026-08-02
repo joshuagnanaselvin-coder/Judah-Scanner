@@ -1,22 +1,18 @@
 """Dimension 3 — Fusion Engine.
 
-Reads D1 tiers + D2 signals from state_store, assigns buckets,
+Reads D1 tiers + D2 scores from state_store, assigns buckets
+via a 3x3 grid (SNIPER/OPPORTUNITY/WATCH × SNIPER/OPPORTUNITY/WATCH),
 packages for frontend, pushes via WebSocket.
 
-D3 is completely decoupled from D1 and D2:
-  - No imports from scanner.py or ltf_engine.py
-  - Own async scan loop — watches state_store timestamps for changes
-  - Fires fusion when D1 or D2 data is updated
-  - Pushes to frontend via ws_hub (itself decoupled from main.py)
+No sensitivity modes — fixed thresholds for both D1 and D2.
+All 9 combos produce a bucket; REJECTED on either dimension → IGNORE.
 
-Buckets:
-  READY       — D1 SNIPER      + D2 SNIPER      | Execute with normal risk
-  EARLY       — D1 OPPORTUNITY + D2 SNIPER      | Execute with reduced risk
-  TRAP        — D1 WATCH       + D2 SNIPER      | High caution / Tight SL
-  BUILDING    — D1 SNIPER      + D2 OPPORTUNITY | Wait patiently
-  DEVELOPING  — D1 OPPORTUNITY + D2 OPPORTUNITY | Observe only
-  IGNORE      — D1 WATCH       + D2 OPPORTUNITY | Do not trade
-  FILTERED    — D2 score below threshold           | Not sent to frontend
+3×3 Bucket Matrix:
+  D1 \ D2      | SNIPER        | OPPORTUNITY    | WATCH
+  -------------|---------------|----------------|--------
+  SNIPER       | 🟢 READY      | 🔵 BUILDING    | ⏳ WAIT
+  OPPORTUNITY  | 🟡 EARLY      | 🟠 DEVELOPING  | 👀 MONITOR
+  WATCH        | 🔴 TRAP       | ⚫ IGNORE      | ⚫ IGNORE
 """
 import asyncio
 import logging
@@ -26,36 +22,45 @@ from backend.config import (
     TIER_OPPORTUNITY_SCORE,
     TIER_WATCH_SCORE,
     D2_SIGNAL_TTL_MINUTES,
-    D2_SENSITIVITY_MODE,
-    D2_MIN_SCORE_STRICT,
-    D2_MIN_SCORE_BALANCED,
-    D2_MIN_SCORE_EXPLORATION,
-    D2_MIN_SCORE_DEBUG,
 )
 from backend.state_store import state_store
 from backend.ws_hub import broadcast, get_initial_payload
 
 logger = logging.getLogger("judah.fusion")
 
+# ── Bucket definitions ──────────────────────────────────────────────
 
-def resolve_d2_threshold() -> int:
-    """Return the D2 minimum score for the current sensitivity mode.
+BUCKETS = [
+    "READY", "BUILDING", "WAIT",
+    "EARLY", "DEVELOPING", "MONITOR",
+    "TRAP", "IGNORE", "IGNORE",
+]
 
-    Reads directly from the config module so runtime mutations
-    (via POST /api/d2-mode) take effect immediately.
-    """
-    import backend.config as cfg
-    return {
-        "STRICT": cfg.D2_MIN_SCORE_STRICT,
-        "BALANCED": cfg.D2_MIN_SCORE_BALANCED,
-        "EXPLORATION": cfg.D2_MIN_SCORE_EXPLORATION,
-        "DEBUG": cfg.D2_MIN_SCORE_DEBUG,
-    }.get(cfg.D2_SENSITIVITY_MODE, cfg.D2_MIN_SCORE_STRICT)
+BUCKET_LABELS = {
+    "READY": "Ready", "BUILDING": "Building", "WAIT": "Wait",
+    "EARLY": "Early", "DEVELOPING": "Developing", "MONITOR": "Monitor",
+    "TRAP": "Trap", "IGNORE": "Ignore",
+}
 
+BUCKET_COLORS = {
+    "READY":    "#22c55e",  # green
+    "EARLY":    "#eab308",  # amber
+    "BUILDING": "#3b82f6",  # blue
+    "DEVELOPING":"#f97316", # orange
+    "WAIT":     "#fbbf24",  # yellow
+    "MONITOR":  "#a855f7",  # purple
+    "TRAP":     "#ef4444",  # red
+    "IGNORE":   "#6b7280",  # dark gray
+}
 
-def d2_tier(score: float, threshold: int = None) -> str:
-    """Classify a D2 score into SNIPER/OPPORTUNITY using the SAME fixed
-    thresholds as D1. Sensitivity mode is for frontend display only."""
+BUCKET_ICONS = {
+    "READY": "🟢", "BUILDING": "🔵", "WAIT": "⏳",
+    "EARLY": "🟡", "DEVELOPING": "🟠", "MONITOR": "👀",
+    "TRAP": "🔴", "IGNORE": "⚫",
+}
+
+def classify_tier(score: float) -> str:
+    """Classify a score into SNIPER / OPPORTUNITY / WATCH / REJECTED."""
     if score >= TIER_SNIPER_SCORE:
         return "SNIPER"
     if score >= TIER_OPPORTUNITY_SCORE:
@@ -65,17 +70,17 @@ def d2_tier(score: float, threshold: int = None) -> str:
     return "REJECTED"
 
 
-# ── Bucket logic (pure function, no side effects) ──────────────────
+def bucket(d1_score: float, d2_score: float) -> str:
+    """3×3 bucket grid from D1 and D2 scores.
 
-def bucket(d1_tier: str, d2_score: float) -> str:
-    """6-bucket grid: D1 tier × D2 tier → bucket.
-
-    Both D1 and D2 use the same fixed tier thresholds.
+    REJECTED on either dimension → IGNORE.
     """
-    d2 = d2_tier(d2_score)
+    d1 = classify_tier(d1_score)
+    d2 = classify_tier(d2_score)
 
-    if d2 == "REJECTED":
-        return "FILTERED"
+    # REJECTED → always IGNORE
+    if d1 == "REJECTED" or d2 == "REJECTED":
+        return "IGNORE"
 
     grid = {
         ("SNIPER",      "SNIPER"):      "READY",
@@ -84,27 +89,14 @@ def bucket(d1_tier: str, d2_score: float) -> str:
         ("SNIPER",      "OPPORTUNITY"): "BUILDING",
         ("OPPORTUNITY", "OPPORTUNITY"): "DEVELOPING",
         ("WATCH",       "OPPORTUNITY"): "IGNORE",
+        ("SNIPER",      "WATCH"):       "WAIT",
+        ("OPPORTUNITY", "WATCH"):       "MONITOR",
+        ("WATCH",       "WATCH"):       "IGNORE",
     }
-    return grid.get((d1_tier, d2), "FILTERED")
+    return grid.get((d1, d2), "IGNORE")
 
 
-def bucket_label(b: str) -> str:
-    return {
-        "READY": "Ready", "EARLY": "Early", "TRAP": "Trap",
-        "BUILDING": "Building", "DEVELOPING": "Developing",
-        "IGNORE": "Ignore", "FILTERED": "Filtered",
-    }.get(b, b)
-
-
-def bucket_color(b: str) -> str:
-    return {
-        "READY": "#22c55e", "EARLY": "#eab308", "TRAP": "#ef4444",
-        "BUILDING": "#3b82f6", "DEVELOPING": "#9ca3af",
-        "IGNORE": "#6b7280", "FILTERED": "#374151",
-    }.get(b, "#6b7280")
-
-
-# ── Fusion Engine ──────────────────────────────────────────────────
+# ── Fusion Engine ───────────────────────────────────────────────────
 
 class FusionEngine:
     """Dimension 3 orchestrator.
@@ -124,7 +116,7 @@ class FusionEngine:
         """Start D3 fusion loop."""
         self.running = True
         self.scan_task = asyncio.create_task(self._scan_loop())
-        logger.info("[fusion] D3 Fusion Engine started")
+        logger.info("[fusion] D3 Fusion Engine started (9-bucket grid, no sensitivity mode)")
 
     async def stop(self):
         self.running = False
@@ -140,7 +132,7 @@ class FusionEngine:
                 break
             except Exception:
                 logger.exception("[fusion] Scan error")
-            await asyncio.sleep(2)  # Check every 2 seconds
+            await asyncio.sleep(2)
 
     async def _check_and_fuse(self):
         """Check if D1 or D2 has new data, fuse if so."""
@@ -148,27 +140,22 @@ class FusionEngine:
         last_d2 = state_store.last_d2_scan
 
         if last_d1 == self._last_d1_scan and last_d2 == self._last_d2_scan:
-            return  # No changes
+            return
 
         self._last_d1_scan = last_d1
         self._last_d2_scan = last_d2
 
-        # Fuse all active coins
         active = state_store.get_active_coins()
         d2_all = state_store.get_all_d2_signals()
         d2_coins = set(d2_all.keys())
         active_set = set(active)
         overlap = d2_coins & active_set
-        only_d2 = d2_coins - active_set
 
-        logger.info(f"[fusion] Active={len(active)} D2={len(d2_all)} "
-                    f"overlap={len(overlap)} D2-only={len(only_d2)} "
-                    f"threshold={resolve_d2_threshold()}")
+        logger.info(f"[fusion] Active={len(active)} D2={len(d2_all)} overlap={len(overlap)}")
 
         results = []
         skip_no_d1 = 0
         skip_no_d2 = 0
-        skip_filtered = 0
         for coin in active:
             d1 = state_store.get_d1_tier(coin)
             d2 = state_store.get_d2_signal(coin)
@@ -181,13 +168,11 @@ class FusionEngine:
             pkg = await self._fuse_coin(coin)
             if pkg:
                 results.append(pkg)
-            else:
-                skip_filtered += 1
 
         if results:
-            logger.info(f"[fusion] Fused {len(results)} signals from {len(active)} active coins")
+            logger.info(f"[fusion] Fused {len(results)} from {len(active)} active coins")
         elif active:
-            logger.info(f"[fusion] 0 fused — {skip_no_d1} no-D1, {skip_no_d2} no-D2, {skip_filtered} filtered")
+            logger.info(f"[fusion] 0 fused — {skip_no_d1} no-D1, {skip_no_d2} no-D2")
 
     async def _fuse_coin(self, coin: str):
         """Fuse D1 + D2 for one coin. Returns package dict or None."""
@@ -200,12 +185,10 @@ class FusionEngine:
         d1_tier = d1.get("tier", "WATCH")
         d1_score = d1.get("score", 0)
         d2_score = float(getattr(d2, 'score', 0))
-        d2_display_tier = d2_tier(d2_score)
+        d2_tier_name = classify_tier(d2_score)
 
         # Bucket assignment
-        b = bucket(d1_tier, d2_score)
-        if b == "FILTERED":
-            return None
+        b = bucket(d1_score, d2_score)
 
         # Package D1 TF breakdown
         tf_breakdown = {}
@@ -215,17 +198,18 @@ class FusionEngine:
                 "score": data.get("score", 0),
             }
 
-        # Build package (pure packaging — no analysis)
+        # Build package
         package = {
             "signal_id": getattr(d2, 'signal_id', ''),
             "coin": coin,
             "timeframe": "15M",
             "direction": getattr(d2, 'direction', 'BULLISH'),
             "bucket": b,
-            "bucket_label": bucket_label(b),
-            "bucket_color": bucket_color(b),
+            "bucket_label": BUCKET_LABELS.get(b, b),
+            "bucket_icon": BUCKET_ICONS.get(b, ""),
+            "bucket_color": BUCKET_COLORS.get(b, "#6b7280"),
             "d2_score": round(d2_score, 1),
-            "d2_tier": d2_display_tier,
+            "d2_tier": d2_tier_name,
             "d1_tier": d1_tier,
             "d1_score": round(d1_score, 1),
             "d1_timeframes": tf_breakdown,
@@ -241,16 +225,12 @@ class FusionEngine:
             "last_scan": getattr(d2, 'last_scan', datetime.now(timezone.utc)).isoformat(),
         }
 
-        # Write to state store
         await state_store.set_d3_fusion(coin, package)
-
-        # Push to frontend
         await broadcast({"type": "signal", "data": package})
 
-        logger.debug(f"[fusion] {coin}: bucket={b} D1={d1_tier}({d1_score:.0f}) "
-                     f"D2={d2_score:.0f} dir={package['direction']}")
+        logger.debug(f"[fusion] {coin}: {b} D1={d1_tier}({d1_score:.0f}) D2={d2_score:.0f} dir={package['direction']}")
         return package
 
 
-# Module-level singleton (matches D1/D2 pattern)
+# Module-level singleton
 fusion_engine = FusionEngine()

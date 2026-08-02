@@ -22,15 +22,29 @@
         <div class="stat-chip" title="D1 coins analyzed">D1: <strong id="d1Count">0</strong></div>
         <div class="stat-chip" title="D2 LTF signals">D2: <strong id="d2Count">0</strong></div>
         <div class="stat-chip" title="D3 fusion signals">Fusion: <strong id="totalSignals">0</strong></div>
-        <div class="mode-group">
-          <label for="d2Mode" title="D2 Sensitivity: controls how strict the LTF score threshold is">Mode:</label>
-          <select id="d2Mode" class="mode-select">
-            <option value="STRICT">🔴 Strict (70)</option>
-            <option value="BALANCED">🟡 Balanced (60)</option>
-            <option value="EXPLORATION">🟢 Exploration (50)</option>
-            <option value="DEBUG">🔵 Debug (40)</option>
-          </select>
-          <span id="modeThreshold" class="mode-threshold">70</span>
+        <div class="bucket-dropdown" id="bucketMatrix">
+          <button class="matrix-toggle" id="matrixToggle">▦ Buckets</button>
+          <div class="matrix-panel" id="matrixPanel">
+            <div class="matrix-grid">
+              <span class="matrix-header"></span>
+              <span class="matrix-header">SNIPER</span>
+              <span class="matrix-header">OPPORTUNITY</span>
+              <span class="matrix-header">WATCH</span>
+              <span class="matrix-row-header">SNIPER</span>
+              <button class="matrix-cell ready" data-filter-bucket="READY" title="Best: High-probability HTF+LTF confluence"><span class="cell-icon">🟢</span>READY</button>
+              <button class="matrix-cell building" data-filter-bucket="BUILDING" title="D1 SNIPER + D2 OPPORTUNITY — wait for LTF confirmation"><span class="cell-icon">🔵</span>BUILDING</button>
+              <button class="matrix-cell wait" data-filter-bucket="WAIT" title="D1 SNIPER + D2 WATCH — low conviction"><span class="cell-icon">⏳</span>WAIT</button>
+              <span class="matrix-row-header">OPPORTUNITY</span>
+              <button class="matrix-cell early" data-filter-bucket="EARLY" title="D1 OPPORTUNITY + D2 SNIPER — reduced risk"><span class="cell-icon">🟡</span>EARLY</button>
+              <button class="matrix-cell developing" data-filter-bucket="DEVELOPING" title="Both D1+D2 partial confirmation"><span class="cell-icon">🟠</span>DEVELOPING</button>
+              <button class="matrix-cell monitor" data-filter-bucket="MONITOR" title="D1 OPPORTUNITY + D2 WATCH — observe"><span class="cell-icon">👀</span>MONITOR</button>
+              <span class="matrix-row-header">WATCH</span>
+              <button class="matrix-cell trap" data-filter-bucket="TRAP" title="D1 WATCH + D2 SNIPER — possible fakeout"><span class="cell-icon">🔴</span>TRAP</button>
+              <button class="matrix-cell ignore" data-filter-bucket="IGNORE"><span class="cell-icon">⚫</span>IGNORE</button>
+              <button class="matrix-cell ignore"><span class="cell-icon">⚫</span>IGNORE</button>
+            </div>
+            <button class="matrix-clear" data-filter-bucket="all">Clear filter</button>
+          </div>
         </div>
         <button class="btn-restart" id="btnRestart" title="Clear &amp; re-bootstrap">
           <span class="restart-icon">&#x21BB;</span>
@@ -46,24 +60,14 @@
       <div class="bucket-group">
         <label>Bucket:</label>
         <button class="filter-btn active" data-filter-bucket="all">All</button>
-        <button class="filter-btn" data-filter-bucket="READY">
-          READY <span class="bucket-count ready" id="countReady">0</span>
-        </button>
-        <button class="filter-btn" data-filter-bucket="EARLY">
-          EARLY <span class="bucket-count early" id="countEarly">0</span>
-        </button>
-        <button class="filter-btn" data-filter-bucket="TRAP">
-          TRAP <span class="bucket-count trap" id="countTrap">0</span>
-        </button>
-        <button class="filter-btn" data-filter-bucket="BUILDING">
-          BUILDING <span class="bucket-count building" id="countBuilding">0</span>
-        </button>
-        <button class="filter-btn" data-filter-bucket="DEVELOPING">
-          DEVELOPING <span class="bucket-count developing" id="countDeveloping">0</span>
-        </button>
-        <button class="filter-btn" data-filter-bucket="IGNORE">
-          IGNORE <span class="bucket-count ignore" id="countIgnore">0</span>
-        </button>
+        <button class="filter-btn ready" data-filter-bucket="READY">🟢 READY <span class="bucket-count ready" id="countReady">0</span></button>
+        <button class="filter-btn building" data-filter-bucket="BUILDING">🔵 BUILDING <span class="bucket-count building" id="countBuilding">0</span></button>
+        <button class="filter-btn early" data-filter-bucket="EARLY">🟡 EARLY <span class="bucket-count early" id="countEarly">0</span></button>
+        <button class="filter-btn developing" data-filter-bucket="DEVELOPING">🟠 DEVELOPING <span class="bucket-count developing" id="countDeveloping">0</span></button>
+        <button class="filter-btn wait" data-filter-bucket="WAIT">⏳ WAIT <span class="bucket-count wait" id="countWait">0</span></button>
+        <button class="filter-btn monitor" data-filter-bucket="MONITOR">👀 MONITOR <span class="bucket-count monitor" id="countMonitor">0</span></button>
+        <button class="filter-btn trap" data-filter-bucket="TRAP">🔴 TRAP <span class="bucket-count trap" id="countTrap">0</span></button>
+        <button class="filter-btn ignore" data-filter-bucket="IGNORE">⚫ IGNORE <span class="bucket-count ignore" id="countIgnore">0</span></button>
       </div>
       <div class="dir-group">
         <div class="bucket-group">

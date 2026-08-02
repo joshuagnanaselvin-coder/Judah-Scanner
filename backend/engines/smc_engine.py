@@ -14,7 +14,7 @@ logger = logging.getLogger("judah.smc")
 
 def run_smc(candles: list, crt: dict) -> Optional[dict]:
     """SMC Engine — strict ICT scoring. Max SMC score: 25."""
-    if not candles or len(candles) < 50 or not crt or not crt.get("displacement"):
+    if not candles or len(candles) < 25 or not crt or not crt.get("displacement"):
         return None
 
     score = 0
