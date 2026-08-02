@@ -26,8 +26,7 @@ import logging
 
 logger = logging.getLogger("judah.ltf_pipeline")
 
-_FALLBACK_MIN_SMC_SCORE = 15
-_FALLBACK_REQUIRED_MSB = True
+_FALLBACK_MIN_CONFIDENCE = 30  # weighted fallback threshold (was binary MSB + SMC≥15)
 
 
 def _synth_crt_score(direction: str, msb_level, candles: list) -> int:
@@ -153,7 +152,7 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
         logger.debug(f"[ltf_pipeline] SMC passed {symbol}: score={smc.get('smc_score',0)}")
         path = "CRT+SMC"
     else:
-        # FALLBACK: SMC-only for impulse coins
+        # FALLBACK: Weighted confidence for impulse coins
         logger.debug(f"[ltf_pipeline] CRT missing for {symbol} — trying SMC-only fallback")
         fallback_crt = _build_smc_only_context(candles)
         if not fallback_crt:
@@ -163,17 +162,42 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
         if not smc:
             logger.debug(f"[ltf_pipeline] SKIP {symbol}: SMC-only fallback returned None")
             return None
-        if _FALLBACK_REQUIRED_MSB and not (smc.get("msb") or {}).get("confirmed"):
-            logger.debug(f"[ltf_pipeline] SKIP {symbol}: SMC-only fallback missing MSB")
+
+        # === WEIGHTED FALLBACK CONFIDENCE (no all-or-nothing gates) ===
+        fallback_score = 0
+        msb_confirmed = (smc.get("msb") or {}).get("confirmed", False)
+        ob = smc.get("ob")
+        fvg = smc.get("fvg")
+        liq_swept = (smc.get("liquidity") or {}).get("swept", False)
+
+        if msb_confirmed:
+            fallback_score += 8
+        if ob and ob.get("strength", 0) >= 3:
+            fallback_score += 5
+        if fvg and fvg.get("proximity", 999) <= 1.0:
+            fallback_score += 4
+        if liq_swept:
+            fallback_score += 5
+        if flow.get("boost", 0) > 18:
+            fallback_score += 8
+        if fast.get("is_fast_mover") and fast.get("score", 0) > 15:
+            fallback_score += 8
+
+        logger.debug(f"[ltf_pipeline] Fallback confidence: {fallback_score}/{_FALLBACK_MIN_CONFIDENCE} "
+                     f"(msb={8 if msb_confirmed else 0} ob={5 if ob and ob.get('strength',0)>=3 else 0} "
+                     f"fvg={4 if fvg and fvg.get('proximity',999)<=1.0 else 0} "
+                     f"liq={5 if liq_swept else 0} flow={8 if flow.get('boost',0)>18 else 0} "
+                     f"mom={8 if fast.get('is_fast_mover') and fast.get('score',0)>15 else 0})")
+
+        if fallback_score < _FALLBACK_MIN_CONFIDENCE:
+            logger.debug(f"[ltf_pipeline] SKIP {symbol}: fallback confidence {fallback_score} < {_FALLBACK_MIN_CONFIDENCE}")
             return None
-        if smc.get("smc_score", 0) < _FALLBACK_MIN_SMC_SCORE:
-            logger.debug(f"[ltf_pipeline] SKIP {symbol}: SMC score too low")
-            return None
+
         crt = fallback_crt
         path = "SMC-ONLY"
 
     # SIGNAL BUILDER
-    # D2 (entry quality): Flow(30) + CRT(25) + SMC(20) + Momentum(25) = 100 max
+    # D2 (entry quality): Flow(30) + CRT(25) + SMC(20) + Momentum(25) + HTF(+20) = 120 max
     fm = detect_fast_mover(candles, swings)
     crt["crt_score"] = min(crt.get("crt_score", 0), 25)
     smc["smc_score"] = min(smc.get("smc_score", 0), 20)
