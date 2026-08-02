@@ -69,14 +69,25 @@ class LTFEngine:
         """Production batch scan for D2:
 
         PASS 1: Revalidate + refresh existing D2 signals
-        PASS 2: Candidate filter → concurrent scan for new signals
+        PASS 2: Scan coins that D1 has active data for (same list D3 fuses on)
         PASS 3: Write D2 tiers to state_store
         """
         refreshed = []
         revalidated = []
 
+        # Get the same coin list D3 uses for fusion — ensures D1/D2 overlap
+        scan_targets = state_store.get_active_coins()
+        if not scan_targets:
+            # D1 hasn't written tiers yet — skip this cycle
+            logger.debug("[ltf] No active D1 coins yet, skipping cycle")
+            return
+
+        logger.debug(f"[ltf] Scanning {len(scan_targets)} active D1 coins")
+
         # === PASS 1: Revalidate + refresh existing D2 signals ===
-        existing = state_store.get_all_d2_signals()
+        # Only revalidate coins that D1 still has active data for
+        existing = {c: s for c, s in state_store.get_all_d2_signals().items()
+                    if c in scan_targets}
         for coin, sig in list(existing.items()):
             candles = market_data.get_candles(coin, "15M")
             if not candles:
@@ -107,7 +118,7 @@ class LTFEngine:
         new_signals = []
         scan_tasks = []
 
-        for coin in self.symbols:
+        for coin in scan_targets:
             # Skip if already have a D2 signal
             if state_store.get_d2_signal(coin):
                 continue
@@ -151,6 +162,10 @@ class LTFEngine:
         d2_tiers_this_cycle = {}
         all_d2 = state_store.get_all_d2_signals()
         for coin, sig in all_d2.items():
+            if coin not in scan_targets:
+                # D1 dropped this coin — clean up stale D2 signal
+                await state_store.set_d2_signal(coin, None)
+                continue
             if isinstance(sig, LTFSignal):
                 d2_tiers_this_cycle[coin] = sig.tier
 
