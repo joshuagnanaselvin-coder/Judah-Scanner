@@ -261,7 +261,7 @@ class Scanner:
             if sig:
                 tfs[tf] = {
                     "tier": sig.get('tier', 'WATCH'),
-                    "score": sig.get('composite_score', 0),
+                    "score": sig.get('base_score', sig.get('composite_score', 0)),
                 }
 
         if not tfs:
