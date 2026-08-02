@@ -165,7 +165,7 @@ function renderSignals() {
 }
 
 function updateBucketCounts(filtered) {
-  const counts = { READY: 0, EARLY: 0, TRAP: 0 };
+  const counts = { READY: 0, EARLY: 0, TRAP: 0, BUILDING: 0, DEVELOPING: 0, IGNORE: 0 };
   filtered.forEach(s => { if (counts[s.bucket] !== undefined) counts[s.bucket]++; });
   const updateCount = (id, val) => {
     const el = document.getElementById(id);
@@ -319,10 +319,49 @@ async function checkHealth() {
   }
 }
 
+// === D2 MODE SELECTOR ===
+async function initD2Mode() {
+  const sel = document.getElementById('d2Mode');
+  const thrEl = document.getElementById('modeThreshold');
+  if (!sel) return;
+
+  // Load current mode from API
+  try {
+    const resp = await fetch('/api/d2-mode');
+    const data = await resp.json();
+    sel.value = data.mode || 'STRICT';
+    if (thrEl) thrEl.textContent = data.threshold || 70;
+  } catch (e) {
+    // use default
+  }
+
+  sel.addEventListener('change', async () => {
+    const mode = sel.value;
+    try {
+      const resp = await fetch('/api/d2-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode }),
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        if (thrEl) thrEl.textContent = data.threshold;
+        console.log('[d2-mode] Switched to', data.mode, 'threshold', data.threshold);
+      } else {
+        alert('Failed: ' + data.error);
+        sel.value = data.mode || 'STRICT';
+      }
+    } catch (e) {
+      alert('Error changing mode: ' + e.message);
+    }
+  });
+}
+
 // === INIT ===
 document.addEventListener('DOMContentLoaded', () => {
   connectWS();
   initFilters();
+  initD2Mode();
   setInterval(drawSparklines, 2000);
   setInterval(checkHealth, 10000);
 });

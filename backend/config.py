@@ -111,9 +111,18 @@ STALE_SCORE_FACTOR = 0.75
 # === DIMENSION 2 (LTF Scanner) ===
 D2_TIMEFRAME = "15M"
 D2_SIGNAL_TTL_MINUTES = 15          # LTF signals decay faster
-D2_MIN_SCORE = 70                   # SNIPER-only output
 D2_SKIP_ALL_WATCH = True            # Skip coins where ALL D1 TFs = WATCH
 D2_SCAN_INTERVAL_SECONDS = 5        # Hybrid: 5s safety timer + WS events
+
+# === D2 SENSITIVITY MODE ===
+# Controls the minimum D2 score required to pass the D3 fusion gate.
+D2_SENSITIVITY_MODE = "STRICT"      # STRICT | BALANCED | EXPLORATION | DEBUG
+D2_MIN_SCORE_STRICT = 70
+D2_MIN_SCORE_BALANCED = 60
+D2_MIN_SCORE_EXPLORATION = 50
+D2_MIN_SCORE_DEBUG = 40
+# Runtime-resolved threshold (set by main.py at startup, updatable via API)
+D2_MIN_SCORE = 70
 
 # === TIMEFRAMES ===
 TIMEFRAMES_HTF = ["1H", "4H", "1D"]  # Dimension 1

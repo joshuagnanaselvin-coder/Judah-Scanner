@@ -128,9 +128,20 @@ class LTFSignal:
 
 
 def _tier(score: float) -> str:
-    if score >= TIER_SNIPER_SCORE:
+    """D2 tier using the current sensitivity mode threshold."""
+    from backend.config import (TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE,
+                                 TIER_WATCH_SCORE, D2_SENSITIVITY_MODE,
+                                 D2_MIN_SCORE_STRICT, D2_MIN_SCORE_BALANCED,
+                                 D2_MIN_SCORE_EXPLORATION, D2_MIN_SCORE_DEBUG)
+    threshold = {
+        "STRICT": D2_MIN_SCORE_STRICT,
+        "BALANCED": D2_MIN_SCORE_BALANCED,
+        "EXPLORATION": D2_MIN_SCORE_EXPLORATION,
+        "DEBUG": D2_MIN_SCORE_DEBUG,
+    }.get(D2_SENSITIVITY_MODE, D2_MIN_SCORE_STRICT)
+    if score >= threshold:
         return "SNIPER"
-    if score >= TIER_OPPORTUNITY_SCORE:
+    if score >= max(TIER_WATCH_SCORE, threshold - 15):
         return "OPPORTUNITY"
     if score >= TIER_WATCH_SCORE:
         return "WATCH"

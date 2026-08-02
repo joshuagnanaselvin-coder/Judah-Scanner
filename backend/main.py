@@ -9,7 +9,7 @@ import asyncio
 import logging
 import json
 from datetime import datetime, timezone
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from backend.market_data import market_data
@@ -18,7 +18,7 @@ from backend.signal_store import signal_store
 from backend.performance_tracker import performance_tracker
 from backend.state_store import state_store
 from backend.engines.ltf_engine import ltf_engine
-from backend.engines.signal_fusion import fusion_engine
+from backend.engines.signal_fusion import fusion_engine, resolve_d2_threshold
 from backend import ws_hub
 from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE
 
@@ -155,6 +155,33 @@ async def get_performance():
         "summary": tracker.get_summary(),
         "by_scenario": tracker.get_scenario_report(),
     }
+
+@app.get("/api/d2-mode")
+async def get_d2_mode():
+    from backend.config import D2_SENSITIVITY_MODE, D2_MIN_SCORE_STRICT, D2_MIN_SCORE_BALANCED, D2_MIN_SCORE_EXPLORATION, D2_MIN_SCORE_DEBUG
+    threshold = resolve_d2_threshold()
+    return {
+        "mode": D2_SENSITIVITY_MODE,
+        "threshold": threshold,
+        "modes": {
+            "STRICT": D2_MIN_SCORE_STRICT,
+            "BALANCED": D2_MIN_SCORE_BALANCED,
+            "EXPLORATION": D2_MIN_SCORE_EXPLORATION,
+            "DEBUG": D2_MIN_SCORE_DEBUG,
+        },
+    }
+
+@app.post("/api/d2-mode")
+async def set_d2_mode(request: Request):
+    body = await request.json()
+    mode = body.get("mode", "").upper()
+    from backend.config import D2_SENSITIVITY_MODE, D2_MIN_SCORE_STRICT, D2_MIN_SCORE_BALANCED, D2_MIN_SCORE_EXPLORATION, D2_MIN_SCORE_DEBUG
+    valid = {"STRICT", "BALANCED", "EXPLORATION", "DEBUG"}
+    if mode not in valid:
+        return {"ok": False, "error": f"Invalid mode '{mode}'. Use: {', '.join(sorted(valid))}"}
+    import backend.config as cfg
+    cfg.D2_SENSITIVITY_MODE = mode
+    return {"ok": True, "mode": mode, "threshold": resolve_d2_threshold()}
 
 @app.post("/api/restart")
 async def restart_scanner():

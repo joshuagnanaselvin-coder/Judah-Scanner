@@ -55,6 +55,25 @@ body {
 }
 .stat-chip strong { color: var(--text-primary); }
 
+/* === D2 MODE SELECTOR === */
+.mode-group {
+  display: flex; align-items: center; gap: 6px;
+}
+.mode-group label {
+  font-size: 11px; color: var(--text-muted); font-weight: 600;
+  text-transform: uppercase; margin-right: 2px;
+}
+.mode-select {
+  font-size: 11px; padding: 3px 8px; background: var(--bg-card);
+  border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-primary); cursor: pointer;
+  font-family: inherit;
+}
+.mode-select:hover { border-color: var(--accent); }
+.mode-threshold {
+  font-size: 10px; color: var(--text-muted); min-width: 16px;
+}
+
 /* === BUCKET FILTER BAR === */
 .bucket-bar {
   display: flex; flex-wrap: wrap; gap: 10px; align-items: center;

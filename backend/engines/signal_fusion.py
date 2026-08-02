@@ -10,10 +10,13 @@ D3 is completely decoupled from D1 and D2:
   - Pushes to frontend via ws_hub (itself decoupled from main.py)
 
 Buckets:
-  READY  — D1 SNIPER  + D2 score >= 70
-  EARLY  — D1 OPPORTUNITY + D2 score >= 70
-  TRAP   — D1 WATCH  + D2 score >= 70
-  FILTERED — everything else (not sent to frontend)
+  READY       — D1 SNIPER      + D2 SNIPER      | Execute with normal risk
+  EARLY       — D1 OPPORTUNITY + D2 SNIPER      | Execute with reduced risk
+  TRAP        — D1 WATCH       + D2 SNIPER      | High caution / Tight SL
+  BUILDING    — D1 SNIPER      + D2 OPPORTUNITY | Wait patiently
+  DEVELOPING  — D1 OPPORTUNITY + D2 OPPORTUNITY | Observe only
+  IGNORE      — D1 WATCH       + D2 OPPORTUNITY | Do not trade
+  FILTERED    — D2 score below threshold           | Not sent to frontend
 """
 import asyncio
 import logging
@@ -23,6 +26,11 @@ from backend.config import (
     TIER_OPPORTUNITY_SCORE,
     TIER_WATCH_SCORE,
     D2_SIGNAL_TTL_MINUTES,
+    D2_SENSITIVITY_MODE,
+    D2_MIN_SCORE_STRICT,
+    D2_MIN_SCORE_BALANCED,
+    D2_MIN_SCORE_EXPLORATION,
+    D2_MIN_SCORE_DEBUG,
 )
 from backend.state_store import state_store
 from backend.ws_hub import broadcast, get_initial_payload
@@ -30,31 +38,65 @@ from backend.ws_hub import broadcast, get_initial_payload
 logger = logging.getLogger("judah.fusion")
 
 
+def resolve_d2_threshold() -> int:
+    """Return the D2 minimum score for the current sensitivity mode."""
+    return {
+        "STRICT": D2_MIN_SCORE_STRICT,
+        "BALANCED": D2_MIN_SCORE_BALANCED,
+        "EXPLORATION": D2_MIN_SCORE_EXPLORATION,
+        "DEBUG": D2_MIN_SCORE_DEBUG,
+    }.get(D2_SENSITIVITY_MODE, D2_MIN_SCORE_STRICT)
+
+
+def d2_tier(score: float, threshold: int = None) -> str:
+    """Classify a D2 score into SNIPER/OPPORTUNITY using the current threshold."""
+    if threshold is None:
+        threshold = resolve_d2_threshold()
+    if score >= threshold:
+        return "SNIPER"
+    if score >= max(TIER_WATCH_SCORE, threshold - 15):
+        return "OPPORTUNITY"
+    return "REJECTED"
+
+
 # ── Bucket logic (pure function, no side effects) ──────────────────
 
 def bucket(d1_tier: str, d2_score: float) -> str:
-    """Assign bucket based on D1 tier + D2 score."""
-    if d2_score < TIER_SNIPER_SCORE:
+    """6-bucket grid: D1 tier × D2 tier → bucket.
+
+    D2 tier is resolved dynamically from D2_SENSITIVITY_MODE.
+    """
+    threshold = resolve_d2_threshold()
+    d2 = d2_tier(d2_score, threshold)
+
+    if d2 == "REJECTED":
         return "FILTERED"
-    if d1_tier == "SNIPER":
-        return "READY"
-    if d1_tier == "OPPORTUNITY":
-        return "EARLY"
-    if d1_tier == "WATCH":
-        return "TRAP"
-    if d1_tier == "REJECTED":
-        return "FILTERED"
-    return "FILTERED"
+
+    grid = {
+        ("SNIPER",      "SNIPER"):      "READY",
+        ("OPPORTUNITY", "SNIPER"):      "EARLY",
+        ("WATCH",       "SNIPER"):      "TRAP",
+        ("SNIPER",      "OPPORTUNITY"): "BUILDING",
+        ("OPPORTUNITY", "OPPORTUNITY"): "DEVELOPING",
+        ("WATCH",       "OPPORTUNITY"): "IGNORE",
+    }
+    return grid.get((d1_tier, d2), "FILTERED")
 
 
 def bucket_label(b: str) -> str:
-    return {"READY": "Ready", "EARLY": "Early", "TRAP": "Trap",
-            "FILTERED": "Filtered"}.get(b, b)
+    return {
+        "READY": "Ready", "EARLY": "Early", "TRAP": "Trap",
+        "BUILDING": "Building", "DEVELOPING": "Developing",
+        "IGNORE": "Ignore", "FILTERED": "Filtered",
+    }.get(b, b)
 
 
 def bucket_color(b: str) -> str:
-    return {"READY": "#22c55e", "EARLY": "#f59e0b",
-            "TRAP": "#ef4444", "FILTERED": "#6b7280"}.get(b, "#6b7280")
+    return {
+        "READY": "#22c55e", "EARLY": "#eab308", "TRAP": "#ef4444",
+        "BUILDING": "#3b82f6", "DEVELOPING": "#9ca3af",
+        "IGNORE": "#6b7280", "FILTERED": "#374151",
+    }.get(b, "#6b7280")
 
 
 # ── Fusion Engine ──────────────────────────────────────────────────
@@ -128,6 +170,7 @@ class FusionEngine:
         d1_tier = d1.get("tier", "WATCH")
         d1_score = d1.get("score", 0)
         d2_score = float(getattr(d2, 'score', 0))
+        d2_display_tier = d2_tier(d2_score)
 
         # Bucket assignment
         b = bucket(d1_tier, d2_score)
@@ -152,7 +195,7 @@ class FusionEngine:
             "bucket_label": bucket_label(b),
             "bucket_color": bucket_color(b),
             "d2_score": round(d2_score, 1),
-            "d2_tier": getattr(d2, 'tier', 'WATCH'),
+            "d2_tier": d2_display_tier,
             "d1_tier": d1_tier,
             "d1_score": round(d1_score, 1),
             "d1_timeframes": tf_breakdown,

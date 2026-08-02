@@ -22,6 +22,16 @@
         <div class="stat-chip" title="D1 coins analyzed">D1: <strong id="d1Count">0</strong></div>
         <div class="stat-chip" title="D2 LTF signals">D2: <strong id="d2Count">0</strong></div>
         <div class="stat-chip" title="D3 fusion signals">Fusion: <strong id="totalSignals">0</strong></div>
+        <div class="mode-group">
+          <label for="d2Mode" title="D2 Sensitivity: controls how strict the LTF score threshold is">Mode:</label>
+          <select id="d2Mode" class="mode-select">
+            <option value="STRICT">🔴 Strict (70)</option>
+            <option value="BALANCED">🟡 Balanced (60)</option>
+            <option value="EXPLORATION">🟢 Exploration (50)</option>
+            <option value="DEBUG">🔵 Debug (40)</option>
+          </select>
+          <span id="modeThreshold" class="mode-threshold">70</span>
+        </div>
         <button class="btn-restart" id="btnRestart" title="Clear &amp; re-bootstrap">
           <span class="restart-icon">&#x21BB;</span>
           <span class="restart-label">Restart</span>
