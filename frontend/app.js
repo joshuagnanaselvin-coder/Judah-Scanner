@@ -209,8 +209,16 @@ function buildCard(s) {
         <span class="freshness">${freshnessIcon(s.freshness)} ${s.freshness || 'HOT'}</span>
       </div>
       <div class="header-right">
-        <span class="score-big">${s.d2_score}</span>
-        <span class="tier-label">${s.d2_tier || 'SNIPER'}</span>
+        <span class="score-block d1-block">
+          <span class="score-label">D1</span>
+          <span class="score-big d1-score">${s.d1_score ?? '--'}</span>
+          <span class="tier-label d1-tier">${s.d1_tier || '--'}</span>
+        </span>
+        <span class="score-block d2-block">
+          <span class="score-label">D2</span>
+          <span class="score-big d2-score">${s.d2_score}</span>
+          <span class="tier-label d2-tier">${s.d2_tier || 'SNIPER'}</span>
+        </span>
         <span class="tf-label">${s.timeframe}</span>
       </div>
     </div>
