@@ -32,18 +32,18 @@ _FALLBACK_REQUIRED_MSB = True
 def _synth_crt_score(direction: str, msb_level, candles: list) -> int:
     """Award synthetic CRT points for confirmed impulse structure.
 
-    Returns up to 25 pts (replaces the 0 from synthesized CRT) so impulse coins
-    with strong SMC structure can reach OPPORTUNITY/SNIPER tiers.
+    Returns up to 40 pts for impulse coins so they can reach
+    OPPORTUNITY/SNIPER tiers when SMC confirms MSB + OB + FVG.
 
     Awards:
-    - MSB break:           +15
-    - Consecutive impulse: 5+ same-body = +10, 3+ = +5
-    - Volume surge:        last 5 bars above avg = +5
+    - MSB break:            +25 (baseline — structural confirmation)
+    - Consecutive impulse:  5+ same-body = +10, 3+ = +5
+    - Volume surge:         last 5 bars above avg = +5
     """
     if not msb_level:
         return 0
 
-    score = 15  # MSB break is the baseline for the impulse setup
+    score = 25  # MSB break is the baseline for the impulse setup
 
     # Consecutive same-direction candles in the last 8 = momentum confirmation
     consecutive = 0
@@ -67,7 +67,7 @@ def _synth_crt_score(direction: str, msb_level, candles: list) -> int:
         if prior_avg > 0 and recent_avg >= prior_avg * 1.5:
             score += 5
 
-    return min(score, 25)
+    return min(score, 40)
 
 
 def _build_smc_only_context(candles: list) -> dict | None:

@@ -77,7 +77,7 @@ class MarketData:
                     errors += 1
                     batch_fails += 1
                     continue
-                if result and len(result) >= 50:
+                if result and len(result) >= 25:
                     key = f"{sym}_{tf}"
                     self.candles[key] = result
                     count += 1

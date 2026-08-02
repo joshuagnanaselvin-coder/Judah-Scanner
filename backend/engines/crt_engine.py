@@ -38,6 +38,7 @@ _RANGE_CANDLE_BODY_MULT = 1.8
 _RANGE_CANDLE_LOOKAHEAD = 20
 _FILL_RECENCY_MAX = 20
 _FILL_RECENCY_HALF = 12
+_MIN_CANDLES_REQUIRED = 25  # 20 consol + 20 lookahead = 25 minimum (dealing range only needs 5-20 candles)
 
 _W_CONSOLIDATION = 8
 _W_RANGE_CANDLE = 8
@@ -54,7 +55,7 @@ def run_crt(candles: list) -> Optional[dict]:
     Returns dict with crt_score (capped at 40), displacement, fill data, entry/SL/TP,
     or None if no valid CRT setup exists.
     """
-    if not candles or len(candles) < 30:
+    if not candles or len(candles) < _MIN_CANDLES_REQUIRED:
         return None
 
     last_price = _get(candles[-1], 'close')
