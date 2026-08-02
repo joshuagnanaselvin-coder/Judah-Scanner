@@ -146,6 +146,60 @@ async def get_logs(limit: int = 100):
     from backend.signal_logger import get_recent_logs
     return get_recent_logs(limit)
 
+@app.get("/api/debug-fusion")
+async def debug_fusion():
+    """Diagnostic: show D1/D2 overlap and why fusion produces few results."""
+    import backend.config as cfg
+    d1 = dict(state_store.d1_tiers)
+    d2 = state_store.get_all_d2_signals()
+    active = state_store.get_active_coins()
+
+    d2_coins = set(d2.keys())
+    active_set = set(active)
+    overlap = d2_coins & active_set
+    only_d2 = d2_coins - active_set
+
+    # Sample D1 tiers
+    d1_sample = {}
+    for coin in list(d1.keys())[:10]:
+        entry = d1[coin]
+        d1_sample[coin] = {"tier": entry.get("tier"), "score": entry.get("score"), "age_sec": round(__import__('time').time() - entry.get("updated_at", 0), 1)}
+
+    # Sample D2 signals
+    d2_sample = {}
+    for coin, sig in list(d2.items())[:10]:
+        d2_sample[coin] = {"score": getattr(sig, 'score', 0), "tier": getattr(sig, 'tier', '?'), "dir": getattr(sig, 'direction', '?')}
+
+    # D1 tiers for overlapped coins
+    overlap_detail = {}
+    for coin in list(overlap)[:10]:
+        d1_entry = d1.get(coin, {})
+        overlap_detail[coin] = {"d1_tier": d1_entry.get("tier"), "d1_score": d1_entry.get("score"), "d2_score": getattr(d2.get(coin), 'score', 0)}
+
+    # Why no overlap?
+    no_overlap_reason = {}
+    for coin in list(only_d2)[:5]:
+        d1_entry = d1.get(coin)
+        if not d1_entry:
+            no_overlap_reason[coin] = "no D1 data"
+        else:
+            no_overlap_reason[coin] = f"D1={d1_entry.get('tier')} score={d1_entry.get('score')} all_watch={state_store.is_all_watch(coin)}"
+
+    return {
+        "d2_sensitivity_mode": cfg.D2_SENSITIVITY_MODE,
+        "d2_threshold": resolve_d2_threshold(),
+        "d1_count": len(d1),
+        "d2_count": len(d2),
+        "active_count": len(active),
+        "d3_fusion_count": len(state_store.d3_fusion),
+        "overlap_count": len(overlap),
+        "only_d2_count": len(only_d2),
+        "d1_sample": d1_sample,
+        "d2_sample": d2_sample,
+        "overlap_detail": overlap_detail,
+        "no_overlap_reason": no_overlap_reason,
+    }
+
 @app.get("/api/performance")
 async def get_performance():
     from backend.performance_tracker import PerformanceTrackerCSV

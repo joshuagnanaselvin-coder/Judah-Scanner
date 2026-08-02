@@ -155,14 +155,39 @@ class FusionEngine:
 
         # Fuse all active coins
         active = state_store.get_active_coins()
+        d2_all = state_store.get_all_d2_signals()
+        d2_coins = set(d2_all.keys())
+        active_set = set(active)
+        overlap = d2_coins & active_set
+        only_d2 = d2_coins - active_set
+
+        logger.info(f"[fusion] Active={len(active)} D2={len(d2_all)} "
+                    f"overlap={len(overlap)} D2-only={len(only_d2)} "
+                    f"threshold={resolve_d2_threshold()}")
+
         results = []
+        skip_no_d1 = 0
+        skip_no_d2 = 0
+        skip_filtered = 0
         for coin in active:
+            d1 = state_store.get_d1_tier(coin)
+            d2 = state_store.get_d2_signal(coin)
+            if not d1:
+                skip_no_d1 += 1
+                continue
+            if not d2:
+                skip_no_d2 += 1
+                continue
             pkg = await self._fuse_coin(coin)
             if pkg:
                 results.append(pkg)
+            else:
+                skip_filtered += 1
 
         if results:
             logger.info(f"[fusion] Fused {len(results)} signals from {len(active)} active coins")
+        elif active:
+            logger.info(f"[fusion] 0 fused — {skip_no_d1} no-D1, {skip_no_d2} no-D2, {skip_filtered} filtered")
 
     async def _fuse_coin(self, coin: str):
         """Fuse D1 + D2 for one coin. Returns package dict or None."""
