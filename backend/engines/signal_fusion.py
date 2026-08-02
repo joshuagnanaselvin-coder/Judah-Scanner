@@ -39,13 +39,18 @@ logger = logging.getLogger("judah.fusion")
 
 
 def resolve_d2_threshold() -> int:
-    """Return the D2 minimum score for the current sensitivity mode."""
+    """Return the D2 minimum score for the current sensitivity mode.
+
+    Reads directly from the config module so runtime mutations
+    (via POST /api/d2-mode) take effect immediately.
+    """
+    import backend.config as cfg
     return {
-        "STRICT": D2_MIN_SCORE_STRICT,
-        "BALANCED": D2_MIN_SCORE_BALANCED,
-        "EXPLORATION": D2_MIN_SCORE_EXPLORATION,
-        "DEBUG": D2_MIN_SCORE_DEBUG,
-    }.get(D2_SENSITIVITY_MODE, D2_MIN_SCORE_STRICT)
+        "STRICT": cfg.D2_MIN_SCORE_STRICT,
+        "BALANCED": cfg.D2_MIN_SCORE_BALANCED,
+        "EXPLORATION": cfg.D2_MIN_SCORE_EXPLORATION,
+        "DEBUG": cfg.D2_MIN_SCORE_DEBUG,
+    }.get(cfg.D2_SENSITIVITY_MODE, cfg.D2_MIN_SCORE_STRICT)
 
 
 def d2_tier(score: float, threshold: int = None) -> str:

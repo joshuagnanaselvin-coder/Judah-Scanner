@@ -158,16 +158,16 @@ async def get_performance():
 
 @app.get("/api/d2-mode")
 async def get_d2_mode():
-    from backend.config import D2_SENSITIVITY_MODE, D2_MIN_SCORE_STRICT, D2_MIN_SCORE_BALANCED, D2_MIN_SCORE_EXPLORATION, D2_MIN_SCORE_DEBUG
+    import backend.config as cfg
     threshold = resolve_d2_threshold()
     return {
-        "mode": D2_SENSITIVITY_MODE,
+        "mode": cfg.D2_SENSITIVITY_MODE,
         "threshold": threshold,
         "modes": {
-            "STRICT": D2_MIN_SCORE_STRICT,
-            "BALANCED": D2_MIN_SCORE_BALANCED,
-            "EXPLORATION": D2_MIN_SCORE_EXPLORATION,
-            "DEBUG": D2_MIN_SCORE_DEBUG,
+            "STRICT": cfg.D2_MIN_SCORE_STRICT,
+            "BALANCED": cfg.D2_MIN_SCORE_BALANCED,
+            "EXPLORATION": cfg.D2_MIN_SCORE_EXPLORATION,
+            "DEBUG": cfg.D2_MIN_SCORE_DEBUG,
         },
     }
 
@@ -175,11 +175,10 @@ async def get_d2_mode():
 async def set_d2_mode(request: Request):
     body = await request.json()
     mode = body.get("mode", "").upper()
-    from backend.config import D2_SENSITIVITY_MODE, D2_MIN_SCORE_STRICT, D2_MIN_SCORE_BALANCED, D2_MIN_SCORE_EXPLORATION, D2_MIN_SCORE_DEBUG
+    import backend.config as cfg
     valid = {"STRICT", "BALANCED", "EXPLORATION", "DEBUG"}
     if mode not in valid:
         return {"ok": False, "error": f"Invalid mode '{mode}'. Use: {', '.join(sorted(valid))}"}
-    import backend.config as cfg
     cfg.D2_SENSITIVITY_MODE = mode
     return {"ok": True, "mode": mode, "threshold": resolve_d2_threshold()}
 

@@ -128,22 +128,23 @@ class LTFSignal:
 
 
 def _tier(score: float) -> str:
-    """D2 tier using the current sensitivity mode threshold."""
-    from backend.config import (TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE,
-                                 TIER_WATCH_SCORE, D2_SENSITIVITY_MODE,
-                                 D2_MIN_SCORE_STRICT, D2_MIN_SCORE_BALANCED,
-                                 D2_MIN_SCORE_EXPLORATION, D2_MIN_SCORE_DEBUG)
+    """D2 tier using the current sensitivity mode threshold.
+
+    Reads directly from the config module so runtime mutations
+    (via POST /api/d2-mode) take effect immediately.
+    """
+    import backend.config as cfg
     threshold = {
-        "STRICT": D2_MIN_SCORE_STRICT,
-        "BALANCED": D2_MIN_SCORE_BALANCED,
-        "EXPLORATION": D2_MIN_SCORE_EXPLORATION,
-        "DEBUG": D2_MIN_SCORE_DEBUG,
-    }.get(D2_SENSITIVITY_MODE, D2_MIN_SCORE_STRICT)
+        "STRICT": cfg.D2_MIN_SCORE_STRICT,
+        "BALANCED": cfg.D2_MIN_SCORE_BALANCED,
+        "EXPLORATION": cfg.D2_MIN_SCORE_EXPLORATION,
+        "DEBUG": cfg.D2_MIN_SCORE_DEBUG,
+    }.get(cfg.D2_SENSITIVITY_MODE, cfg.D2_MIN_SCORE_STRICT)
     if score >= threshold:
         return "SNIPER"
-    if score >= max(TIER_WATCH_SCORE, threshold - 15):
+    if score >= max(cfg.TIER_WATCH_SCORE, threshold - 15):
         return "OPPORTUNITY"
-    if score >= TIER_WATCH_SCORE:
+    if score >= cfg.TIER_WATCH_SCORE:
         return "WATCH"
     return "REJECTED"
 
