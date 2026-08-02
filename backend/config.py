@@ -6,8 +6,7 @@ SIGNAL_TTL_MINUTES = 30
 MAX_SIGNALS = 200
 BOOTSTRAP_CANDLES = 200
 SCAN_CONCURRENCY = 20             # Max parallel CRT+SMC scans per cycle
-TIMEFRAMES_HTF = ["1H", "4H", "1D"]
-D1_TTL_SECONDS = 120
+D1_TTL_SECONDS = 120              # D1 signal expiry in state_store
 
 # === LOGGING (Excel/CSV) ===
 # Set to False to disable signal logging (production mode)

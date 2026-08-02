@@ -1,25 +1,40 @@
-// Frontend logic — WebSocket client, bucket filters, signal rendering.
-// Displays ONLY D3 fusion (D2 SNIPER signals with buckets).
+// ═══════════════════════════════════════════════════════════════════════
+// Judah Scanner — Frontend
+// D3 Fusion: HTF (1H/4H/1D) + 15M LTF → Bucket Signals
+// ═══════════════════════════════════════════════════════════════════════
 
-// === STATE ===
+// ── State ──────────────────────────────────────────────────────────
 let allSignals = [];
 let ws = null;
 let filters = { bucket: 'all', direction: 'all' };
 const expandedCards = new Set();
+let scanStatus = { d1: 'idle', d2: 'idle', d3: 'idle' };
+let stats = { d1_coins: 0, d2_signals: 0, d3_fusion: 0 };
+let wsReconnectTimer = null;
 
-// === WEBSOCKET CLIENT (D3 Fusion) ===
+// ── Time helpers ────────────────────────────────────────────────────
+function timeAgo(ts) {
+  if (!ts) return '—';
+  const diff = Date.now() / 1000 - ts;
+  if (diff < 5) return 'just now';
+  if (diff < 60) return Math.floor(diff) + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  return Math.floor(diff / 3600) + 'h ago';
+}
+
+function fmtTime(ts) {
+  if (!ts) return '--:--';
+  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+// ── WebSocket (D3 Fusion) ──────────────────────────────────────────
 function connectWS() {
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   ws = new WebSocket(proto + '//' + window.location.host + '/ws-fusion');
 
   ws.onopen = () => {
-    const dot = document.getElementById('wsDot');
-    if (dot) {
-      dot.classList.add('connected');
-      dot.classList.remove('disconnected');
-    }
-    const label = document.getElementById('wsLabel');
-    if (label) label.textContent = 'Live';
+    clearTimeout(wsReconnectTimer);
+    setWsStatus('live');
     console.log('[ws-fusion] Connected');
   };
 
@@ -29,11 +44,14 @@ function connectWS() {
       if (data.type === 'INITIAL') {
         allSignals = data.signals || [];
         allSignals.sort((a, b) => (b.d2_score || 0) - (a.d2_score || 0));
+        if (data.stats) {
+          stats = data.stats;
+          updateStatsUI();
+          updateScanActivity();
+        }
         renderSignals();
-        updateStats(data.stats);
       } else if (data.type === 'signal') {
         const sig = data.data;
-        // Update existing or add new
         const idx = allSignals.findIndex(s => s.signal_id === sig.signal_id);
         if (idx >= 0) {
           allSignals[idx] = sig;
@@ -44,6 +62,13 @@ function connectWS() {
         if (allSignals.length > 100) allSignals = allSignals.slice(0, 100);
         renderSignals();
         if (idx < 0) flashNew(sig.signal_id);
+      } else if (data.type === 'scan_status') {
+        // Real-time scan status from backend
+        scanStatus = data.data || scanStatus;
+        updateScanActivity();
+      } else if (data.type === 'stats') {
+        stats = data.data || stats;
+        updateStatsUI();
       }
     } catch (e) {
       console.error('[ws-fusion] Parse error:', e);
@@ -51,82 +76,130 @@ function connectWS() {
   };
 
   ws.onclose = () => {
-    const dot = document.getElementById('wsDot');
-    if (dot) {
-      dot.classList.remove('connected');
-      dot.classList.add('disconnected');
-    }
-    const label = document.getElementById('wsLabel');
-    if (label) label.textContent = 'Reconnecting...';
-    setTimeout(connectWS, 3000);
+    setWsStatus('reconnecting');
+    wsReconnectTimer = setTimeout(connectWS, 3000);
   };
 
-  ws.onerror = (err) => {
-    console.error('[ws-fusion] Error:', err);
+  ws.onerror = () => {
+    console.error('[ws-fusion] Connection error');
   };
 }
 
-// === RESTART ===
+function setWsStatus(status) {
+  const dot = document.getElementById('wsDot');
+  const label = document.getElementById('wsLabel');
+  if (!dot || !label) return;
+
+  dot.classList.remove('pulse-on', 'pulse-off', 'pulse-reconnect');
+  if (status === 'live') {
+    dot.classList.add('pulse-on');
+    label.textContent = 'Live';
+  } else if (status === 'reconnecting') {
+    dot.classList.add('pulse-reconnect');
+    label.textContent = 'Reconnecting...';
+  } else {
+    dot.classList.add('pulse-off');
+    label.textContent = 'Offline';
+  }
+}
+
+// ── Scan Activity Bar ──────────────────────────────────────────────
+function updateScanActivity() {
+  updateScanItem('actD1', 'actD1Status', 'actD1Time', scanStatus.d1, stats.last_d1_scan, 'D1');
+  updateScanItem('actD2', 'actD2Status', 'actD2Time', scanStatus.d2, stats.last_d2_scan, 'D2');
+  updateScanItem('actD3', 'actD3Status', 'actD3Time', scanStatus.d3, stats.last_d3_fusion, 'D3');
+}
+
+function updateScanItem(itemId, statusId, timeId, status, lastTs, label) {
+  const item = document.getElementById(itemId);
+  const statusEl = document.getElementById(statusId);
+  const timeEl = document.getElementById(timeId);
+  if (!item || !statusEl) return;
+
+  // Remove all state classes
+  item.classList.remove('scanning', 'done', 'error', 'idle');
+  statusEl.classList.remove('scanning', 'done', 'error');
+
+  const statusMap = {
+    'scanning': { text: 'Scanning...', cls: 'scanning', itemCls: 'scanning' },
+    'done':     { text: 'Done', cls: 'done', itemCls: 'done' },
+    'error':    { text: 'Error', cls: 'error', itemCls: 'error' },
+    'idle':     { text: 'Idle', cls: '', itemCls: 'idle' },
+  };
+
+  const s = statusMap[status] || statusMap['idle'];
+  statusEl.textContent = s.text;
+  statusEl.classList.add(s.cls);
+  item.classList.add(s.itemCls);
+
+  if (timeEl) {
+    if (status === 'scanning') {
+      timeEl.textContent = '';
+      // Animate during scan
+      if (!item._animInterval) {
+        let dots = 0;
+        item._animInterval = setInterval(() => {
+          if (scanStatus[label.toLowerCase()] !== 'scanning') {
+            clearInterval(item._animInterval);
+            item._animInterval = null;
+            return;
+          }
+          dots = (dots + 1) % 4;
+          statusEl.textContent = 'Scanning' + '.'.repeat(dots);
+        }, 400);
+      }
+    } else {
+      if (item._animInterval) {
+        clearInterval(item._animInterval);
+        item._animInterval = null;
+      }
+      timeEl.textContent = timeAgo(lastTs);
+    }
+  }
+}
+
+// ── Stats ──────────────────────────────────────────────────────────
+function updateStatsUI() {
+  const el = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val || 0; };
+  el('totalSignals', stats.d3_fusion);
+  el('d1Count', stats.d1_coins);
+  el('d2Count', stats.d2_signals);
+}
+
+// ── Restart ────────────────────────────────────────────────────────
 async function restartScanner() {
   const btn = document.getElementById('btnRestart');
-  if (!btn || btn.classList.contains('spinning')) return;
+  if (!btn || btn.disabled) return;
 
-  if (!confirm('Restart scanner?\n\nThis will:\n• Clear all current signals\n• Re-download fresh candle history\n• Reconnect the WebSocket')) return;
-
-  btn.classList.add('spinning');
   btn.disabled = true;
+  btn.classList.add('spinning');
 
   try {
     const resp = await fetch('/api/restart', { method: 'POST' });
     const data = await resp.json();
     console.log('[restart]', data);
-    btn.classList.remove('spinning');
-    btn.disabled = false;
   } catch (e) {
     console.error('[restart] Failed:', e);
-    btn.classList.remove('spinning');
-    btn.disabled = false;
   }
+
+  setTimeout(() => {
+    btn.disabled = false;
+    btn.classList.remove('spinning');
+  }, 5000);
 }
 
-// === FILTERS ===
-function initFilters() {
-  // Bucket filter
-  document.querySelectorAll('[data-filter-bucket]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      filters.bucket = btn.dataset.filterBucket;
-      document.querySelectorAll('[data-filter-bucket]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      renderSignals();
-    });
-  });
-
-  // Direction filter
-  document.querySelectorAll('[data-filter-dir]').forEach(btn => {
-    btn.addEventListener('click', () => {
-      filters.direction = btn.dataset.filterDir;
-      document.querySelectorAll('[data-filter-dir]').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      renderSignals();
-    });
-  });
-
-  // Restart button
-  const btn = document.getElementById('btnRestart');
-  if (btn) btn.addEventListener('click', restartScanner);
-}
-
-// === RENDER ===
+// ── Formatting ─────────────────────────────────────────────────────
 function fmtPrice(p) {
   if (p == null || isNaN(p)) return '---';
   if (p >= 1000) return '$' + p.toFixed(2);
   if (p >= 1) return '$' + p.toFixed(3);
-  return '$' + p.toFixed(5);
+  if (p >= 0.01) return '$' + p.toFixed(4);
+  return '$' + p.toFixed(6);
 }
 
 function fmtRR(rr) {
   if (!rr) return '---';
-  return rr.toFixed(1) + ':1';
+  return rr.toFixed(1) + 'R';
 }
 
 function freshnessIcon(f) {
@@ -134,53 +207,26 @@ function freshnessIcon(f) {
   return icons[f] || '';
 }
 
-function renderSignals() {
-  const container = document.getElementById('signalsContainer');
-  const empty = document.getElementById('emptyState');
-  const countEl = document.getElementById('signalCount');
-  const updateEl = document.getElementById('lastUpdate');
-
-  if (!container) return;
-
-  // Filter
-  const filtered = allSignals.filter(s => {
-    if (filters.bucket !== 'all' && s.bucket !== filters.bucket) return false;
-    if (filters.direction !== 'all' && s.direction !== filters.direction) return false;
-    return true;
-  });
-
-  if (countEl) countEl.textContent = filtered.length + ' setups';
-  if (updateEl) updateEl.textContent = 'Updated: ' + new Date().toLocaleTimeString();
-
-  // Bucket counts
-  updateBucketCounts(filtered);
-
-  if (filtered.length === 0) {
-    container.innerHTML = '';
-    if (empty) container.appendChild(empty);
-    return;
-  }
-
-  container.innerHTML = filtered.map(s => buildCard(s)).join('');
+// ── SMC Tag Builder ────────────────────────────────────────────────
+function smcTag(label, value, opts = {}) {
+  if (!value || value === '—' || value === 0) return '';
+  const cls = opts.className || '';
+  const extra = opts.extra ? ' ' + opts.extra : '';
+  const labelStr = label ? `<span class="smc-label">${label}</span>` : '';
+  return `<span class="smc-tag ${cls}">${labelStr}<strong>${value}</strong>${extra}</span>`;
 }
 
-function updateBucketCounts(filtered) {
-  const counts = { READY: 0, EARLY: 0, TRAP: 0, BUILDING: 0, DEVELOPING: 0, IGNORE: 0, WAIT: 0, MONITOR: 0 };
-  filtered.forEach(s => { if (counts[s.bucket] !== undefined) counts[s.bucket]++; });
-  const updateCount = (id, val) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = val;
+function zoneBadge(tag) {
+  if (!tag || tag === 'UNKNOWN') return '';
+  const map = {
+    'PREMIUM': '#ef4444', 'DISCOUNT': '#22c55e',
+    'EQUILIBRIUM': '#f59e0b', 'UNKNOWN': '#6b7280'
   };
-  updateCount('countReady', counts.READY);
-  updateCount('countEarly', counts.EARLY);
-  updateCount('countTrap', counts.TRAP);
-  updateCount('countBuilding', counts.BUILDING);
-  updateCount('countDeveloping', counts.DEVELOPING);
-  updateCount('countIgnore', counts.IGNORE);
-  updateCount('countWait', counts.WAIT);
-  updateCount('countMonitor', counts.MONITOR);
+  const c = map[tag] || '#6b7280';
+  return `<span class="zone-badge" style="color:${c};border-color:${c}30;background:${c}10">${tag}</span>`;
 }
 
+// ── Build Card ─────────────────────────────────────────────────────
 function buildCard(s) {
   const dirIcon = s.direction === 'BULLISH' ? '🟢' : '🔴';
   const dirLabel = s.direction === 'BULLISH' ? 'Long' : 'Short';
@@ -188,82 +234,151 @@ function buildCard(s) {
   const isExpanded = expandedCards.has(s.signal_id);
   const isNew = Date.now() - new Date(s.born_at || 0).getTime() < 5000;
 
-  // D1 timeframe breakdown
-  const tfBreakdown = s.d1_timeframes || {};
-  const tfRows = Object.entries(tfBreakdown).map(([tf, d]) => {
-    const tierClass = d.tier.toLowerCase();
-    return `<span class="tf-tag ${tierClass}">${tf}: ${d.tier} ${d.score}</span>`;
-  }).join(' ');
+  // TradingView
+  const base = s.coin.replace(/USDT$/i, '');
+  const tvUrl = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent('BINANCE:' + base + 'USDT');
 
-  // Score history (sparkline data)
-  const hist = (s.score_history || []).slice(-10);
-  const sparklineData = hist.map(h => h[1] || h.score || 0).join(',');
+  // D1/D2 structure
+  const d1s = s.d1_structure || {};
+  const d2s = s.d2_structure || {};
+  const tfs = s.d1_timeframes || {};
 
+  // Score sparkline
+  const hist = (s.score_history || []).slice(-12);
+  const sparkData = hist.map(h => h[1] || h.score || 0).join(',');
+
+  // ── D1 SMC Tags ──────────────────────────────────────────────────
+  const d1Tags = [
+    smcTag('MSB', d1s.msb_type ? d1s.msb_type.toUpperCase() : '', { className: 'msb-' + (d1s.msb_type || '').toLowerCase() }),
+    smcTag('OB', d1s.ob_type ? d1s.ob_type.replace(/_OB$/, '') : '', { extra: zoneBadge(d1s.ob_zone) }),
+    smcTag('FVG', d1s.fvg_type ? (d1s.fvg_type[0] + (d1s.fvg_size_atr || 0).toFixed(1) + 'x') : '', { className: 'fvg-' + (d1s.fvg_type || '').toLowerCase() }),
+    d1s.liq_swept ? smcTag('LIQ', 'SWEPT ' + fmtPrice(d1s.liq_level), { className: 'liq-swept' }) : '',
+    d1s.ob_low ? `<span class="level-tag ssl">SSL ${fmtPrice(d1s.ob_low)}</span>` : '',
+    d1s.ob_high ? `<span class="level-tag bsl">BSL ${fmtPrice(d1s.ob_high)}</span>` : '',
+    d1s.poc ? smcTag('POC', fmtPrice(d1s.poc)) : '',
+    (d1s.va_low && d1s.va_high) ? `<span class="level-tag va">VA ${fmtPrice(d1s.va_low)}–${fmtPrice(d1s.va_high)}</span>` : '',
+    smcTag('PD', d1s.premium_discount, { className: 'pd-' + (d1s.premium_discount || '').toLowerCase() }),
+    smcTag('SESS', d1s.session || '', { className: 'session' }),
+  ].filter(Boolean).join('') || '<span class="no-data">No HTF data</span>';
+
+  // ── D2 SMC Tags ──────────────────────────────────────────────────
+  const d2Tags = [
+    d2s.scenario ? `<span class="scenario-tag">${d2s.scenario.replace(/_/g, ' ')}</span>` : '',
+    smcTag('MSB', d2s.msb_type ? d2s.msb_type.toUpperCase() : '', { className: 'msb-' + (d2s.msb_type || '').toLowerCase() }),
+    smcTag('OB', d2s.ob_type ? d2s.ob_type.replace(/_OB$/, '') : '', { extra: zoneBadge(d2s.ob_zone) }),
+    smcTag('FVG', d2s.fvg_type ? (d2s.fvg_type[0] + (d2s.fvg_size_atr || 0).toFixed(1) + 'x') : '', { className: 'fvg-' + (d2s.fvg_type || '').toLowerCase() }),
+    d2s.liq_swept ? smcTag('LIQ', 'SWEPT ' + fmtPrice(d2s.liq_level), { className: 'liq-swept' }) : '',
+    (d2s.ssl && d2s.ssl.level) ? `<span class="level-tag ssl">SSL ${fmtPrice(d2s.ssl.level)}</span>` : '',
+    (d2s.bsl && d2s.bsl.level) ? `<span class="level-tag bsl">BSL ${fmtPrice(d2s.bsl.level)}</span>` : '',
+    d2s.sl_method ? smcTag('SL', d2s.sl_method.toUpperCase(), { className: 'sl-method' }) : '',
+    d2s.entry_type ? smcTag('ENTRY', d2s.entry_type.replace(/_/g, ' '), { className: 'entry-type' }) : '',
+    smcTag('PD', d2s.premium_discount, { className: 'pd-' + (d2s.premium_discount || '').toLowerCase() }),
+    smcTag('SESS', d2s.session_label || '', { className: 'session' }),
+  ].filter(Boolean).join('') || '<span class="no-data">No LTF data</span>';
+
+  // ── TF Breakdown ─────────────────────────────────────────────────
+  const tfHtml = Object.entries(tfs).map(([tf, d]) => {
+    const cls = (d.tier || '').toLowerCase();
+    return `<span class="tf-chip ${cls}">${tf} <strong>${d.score ?? 0}</strong></span>`;
+  }).join('') || '<span class="tf-chip">—</span>';
+
+  // ── Card HTML ────────────────────────────────────────────────────
   return `
-  <div class="signal-card ${isNew ? 'flash' : ''} ${isExpanded ? 'expanded' : ''}"
-       data-card-id="${s.signal_id}" data-bucket="${s.bucket}">
+  <div class="signal-card ${isNew ? 'is-new' : ''} ${isExpanded ? 'is-expanded' : ''}"
+       data-id="${s.signal_id}" data-bucket="${s.bucket}">
     <div class="card-header" onclick="toggleExpand('${s.signal_id}')">
-      <div class="header-left">
-        <span class="bucket-dot" style="background:${bucketColor}"></span>
-        <span class="coin-name">${s.coin.replace('USDT', '')}</span>
-        <span class="bucket-badge" style="background:${bucketColor}20;color:${bucketColor};border-color:${bucketColor}40">${s.bucket_label || s.bucket}</span>
-        <span class="dir-badge ${s.direction.toLowerCase()}">${dirIcon} ${dirLabel}</span>
-        <span class="freshness">${freshnessIcon(s.freshness)} ${s.freshness || 'HOT'}</span>
+      <div class="card-header-left">
+        <span class="bucket-pip" style="background:${bucketColor}"></span>
+        <a class="coin-link" href="${tvUrl}" target="_blank" rel="noopener"
+           title="View ${base} on TradingView" onclick="event.stopPropagation()">
+          ${base}
+          <svg class="tv-svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+        </a>
+        <span class="bucket-pill" style="background:${bucketColor}18;color:${bucketColor};border-color:${bucketColor}30">
+          ${s.bucket_icon || ''} ${s.bucket_label || s.bucket}
+        </span>
+        <span class="dir-pill ${s.direction.toLowerCase()}">${dirIcon} ${dirLabel}</span>
+        <span class="freshness-pill">${freshnessIcon(s.freshness)} ${s.freshness || 'HOT'}</span>
       </div>
-      <div class="header-right">
-        <span class="score-block d1-block">
-          <span class="score-label">D1</span>
-          <span class="score-big d1-score">${s.d1_score ?? '--'}</span>
-          <span class="tier-label d1-tier">${s.d1_tier || '--'}</span>
-        </span>
-        <span class="score-block d2-block">
-          <span class="score-label">D2</span>
-          <span class="score-big d2-score">${s.d2_score}</span>
-          <span class="tier-label d2-tier">${s.d2_tier || 'SNIPER'}</span>
-        </span>
-        <span class="tf-label">${s.timeframe}</span>
+      <div class="card-header-right">
+        <div class="score-pair">
+          <div class="score-block d1">
+            <span class="score-lbl">D1</span>
+            <span class="score-val">${s.d1_score ?? '--'}</span>
+            <span class="tier-lbl ${(s.d1_tier || '').toLowerCase()}">${s.d1_tier || '—'}</span>
+          </div>
+          <div class="score-divider"></div>
+          <div class="score-block d2">
+            <span class="score-lbl">D2</span>
+            <span class="score-val">${s.d2_score ?? '--'}</span>
+            <span class="tier-lbl ${(s.d2_tier || '').toLowerCase()}">${s.d2_tier || '—'}</span>
+          </div>
+        </div>
+        <span class="tf-badge">15M</span>
       </div>
     </div>
 
-    <div class="card-body ${isExpanded ? 'show' : ''}" id="detail-${s.signal_id}">
-      <div class="trade-levels">
-        <div class="level entry">
-          <span class="level-label">Entry</span>
-          <span class="level-val">${fmtPrice(s.entry)}</span>
+    <div class="card-body ${isExpanded ? 'open' : ''}" id="detail-${s.signal_id}">
+
+      <!-- SMC Structure: D1 HTF | D2 15M -->
+      <div class="smc-row">
+        <div class="smc-panel d1-panel">
+          <div class="smc-header">
+            <span class="smc-title">📊 D1 HTF</span>
+            <span class="smc-tier ${(d1s.tier || '').toLowerCase()}">${d1s.tier || '—'}</span>
+          </div>
+          <div class="smc-tags">${d1Tags}</div>
         </div>
-        <div class="level sl">
-          <span class="level-label">SL</span>
-          <span class="level-val">${fmtPrice(s.sl)}</span>
-        </div>
-        <div class="level tp">
-          <span class="level-label">TP1</span>
-          <span class="level-val">${fmtPrice(s.tp1)}</span>
-        </div>
-        <div class="level tp2">
-          <span class="level-label">TP2</span>
-          <span class="level-val">${fmtPrice(s.tp2)}</span>
-        </div>
-        <div class="level rr">
-          <span class="level-label">RR</span>
-          <span class="level-val rr1">${fmtRR(s.rr1)}</span>
-          <span class="level-val rr2">${fmtRR(s.rr2)}</span>
+        <div class="smc-panel d2-panel">
+          <div class="smc-header">
+            <span class="smc-title">🎯 D2 15M</span>
+            <span class="smc-tier ${(s.d2_tier || '').toLowerCase()}">${s.d2_tier || '—'}</span>
+          </div>
+          <div class="smc-tags">${d2Tags}</div>
         </div>
       </div>
 
-      <div class="d1-breakdown">
-        <span class="breakdown-label">D1 Context:</span>
-        ${tfBreakdown && Object.keys(tfBreakdown).length > 0 ? tfRows : '<span class="tf-tag watch">No D1 data</span>'}
+      <!-- Trade Levels -->
+      <div class="levels-row">
+        <div class="level-cell entry">
+          <span class="lvl-lbl">Entry</span>
+          <span class="lvl-val">${fmtPrice(s.entry)}</span>
+        </div>
+        <div class="level-cell sl">
+          <span class="lvl-lbl">SL</span>
+          <span class="lvl-val">${fmtPrice(s.sl)}</span>
+        </div>
+        <div class="level-cell tp">
+          <span class="lvl-lbl">TP1</span>
+          <span class="lvl-val">${fmtPrice(s.tp1)}</span>
+        </div>
+        <div class="level-cell tp2">
+          <span class="lvl-lbl">TP2</span>
+          <span class="lvl-val">${fmtPrice(s.tp2)}</span>
+        </div>
+        <div class="level-cell rr">
+          <span class="lvl-lbl">RR</span>
+          <span class="lvl-val">${fmtRR(s.rr1)}</span>
+          <span class="lvl-val rr2">${fmtRR(s.rr2)}</span>
+        </div>
       </div>
 
-      <div class="score-trajectory">
-        <span class="trajectory-label">Score:</span>
-        <canvas class="sparkline" data-values="${sparklineData}" width="100" height="24"></canvas>
-        <span class="born">Born ${new Date(s.born_at).toLocaleTimeString()}</span>
+      <!-- D1 TF Breakdown + Score -->
+      <div class="meta-row">
+        <div class="tf-row">
+          <span class="meta-label">D1 TFs</span>
+          ${tfHtml}
+        </div>
+        <div class="spark-row">
+          <canvas class="sparkline" data-values="${sparkData}" width="80" height="22"></canvas>
+          <span class="born-time">${new Date(s.born_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+        </div>
       </div>
     </div>
   </div>`;
 }
 
+// ── Toggle Expand ──────────────────────────────────────────────────
 function toggleExpand(id) {
   if (expandedCards.has(id)) {
     expandedCards.delete(id);
@@ -271,7 +386,6 @@ function toggleExpand(id) {
     expandedCards.add(id);
   }
   renderSignals();
-  // Draw sparklines for visible cards
   requestAnimationFrame(drawSparklines);
 }
 
@@ -281,36 +395,145 @@ function flashNew(id) {
   setTimeout(() => {
     expandedCards.delete(id);
     renderSignals();
-  }, 3000);
+  }, 4000);
 }
 
-function updateStats(stats) {
-  if (!stats) return;
-  const el = document.getElementById('totalSignals');
-  if (el) el.textContent = stats.d3_fusion || 0;
-  const d1El = document.getElementById('d1Count');
-  if (d1El) d1El.textContent = stats.d1_coins || 0;
-  const d2El = document.getElementById('d2Count');
-  if (d2El) d2El.textContent = stats.d2_signals || 0;
+// ── Render ────────────────────────────────────────────────────────
+function renderSignals() {
+  const container = document.getElementById('signalsContainer');
+  const empty = document.getElementById('emptyState');
+  if (!container) return;
+
+  const filtered = allSignals.filter(s => {
+    if (filters.bucket !== 'all' && s.bucket !== filters.bucket) return false;
+    if (filters.direction !== 'all' && s.direction !== filters.direction) return false;
+    return true;
+  });
+
+  updateBucketCounts(filtered);
+
+  if (filtered.length === 0 && allSignals.length === 0) {
+    container.innerHTML = '';
+    if (empty) {
+      updateEmptyState('idle');
+      container.appendChild(empty);
+    }
+    return;
+  }
+
+  if (filtered.length === 0) {
+    container.innerHTML = `<div class="no-results">
+      <span class="no-results-icon">🔍</span>
+      <span>No signals match this filter</span>
+      <button class="clear-filter-btn" onclick="clearFilters()">Clear Filters</button>
+    </div>`;
+    return;
+  }
+
+  if (empty && empty.parentNode) empty.parentNode.removeChild(empty);
+  container.innerHTML = filtered.map(s => buildCard(s)).join('');
+  requestAnimationFrame(drawSparklines);
 }
 
-// === SPARKLINE ===
+function updateEmptyState(state) {
+  const title = document.getElementById('emptyTitle');
+  const msg = document.getElementById('emptyMsg');
+  const spinner = document.getElementById('emptySpinner');
+  const progress = document.getElementById('progressBar');
+
+  if (!title) return;
+
+  if (state === 'scanning') {
+    title.textContent = 'Scanning Markets...';
+    msg.textContent = `${stats.d1_coins || 0} coins analyzed · HTF + 15M LTF`;
+    if (spinner) spinner.style.display = 'block';
+    if (progress) progress.style.width = Math.min(100, (stats.d1_coins / 529) * 100) + '%';
+  } else if (state === 'idle') {
+    title.textContent = 'Initializing Scanner...';
+    msg.textContent = 'Fetching 529 coins · HTF + 15M LTF analysis';
+    if (spinner) spinner.style.display = 'block';
+    if (progress) progress.style.width = '0%';
+  } else {
+    title.textContent = 'Waiting for signals...';
+    msg.textContent = 'Scanning 529 coins across 1H / 4H / 1D + 15M';
+    if (spinner) spinner.style.display = 'none';
+    if (progress) progress.style.width = '100%';
+  }
+}
+
+function clearFilters() {
+  filters = { bucket: 'all', direction: 'all' };
+  document.querySelectorAll('.filter-chip, .dir-chip').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-filter-bucket="all"]')?.classList.add('active');
+  document.querySelector('[data-filter-dir="all"]')?.classList.add('active');
+  renderSignals();
+}
+
+function clearFilters() {
+  filters = { bucket: 'all', direction: 'all' };
+  document.querySelectorAll('.filter-chip, .dir-chip').forEach(b => b.classList.remove('active'));
+  document.querySelector('[data-filter-bucket="all"]')?.classList.add('active');
+  document.querySelector('[data-filter-dir="all"]')?.classList.add('active');
+  renderSignals();
+}
+
+// ── Bucket Counts ──────────────────────────────────────────────────
+function updateBucketCounts(filtered) {
+  const counts = {};
+  filtered.forEach(s => { counts[s.bucket] = (counts[s.bucket] || 0) + 1; });
+
+  const set = (id, bucket) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = counts[bucket] || 0;
+  };
+  set('countReady', 'READY');
+  set('countBuilding', 'BUILDING');
+  set('countEarly', 'EARLY');
+  set('countDeveloping', 'DEVELOPING');
+  set('countWait', 'WAIT');
+  set('countMonitor', 'MONITOR');
+  set('countTrap', 'TRAP');
+  set('countIgnore', 'IGNORE');
+}
+
+// ── Sparklines ─────────────────────────────────────────────────────
 function drawSparklines() {
   document.querySelectorAll('canvas.sparkline').forEach(canvas => {
     const vals = (canvas.dataset.values || '').split(',').map(Number).filter(v => !isNaN(v));
     if (vals.length < 2) return;
     const ctx = canvas.getContext('2d');
-    const w = canvas.width;
-    const h = canvas.height;
+    const w = canvas.width, h = canvas.height;
     ctx.clearRect(0, 0, w, h);
 
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
+    const min = Math.min(...vals), max = Math.max(...vals);
     const range = max - min || 1;
 
+    // Gradient fill
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, 'rgba(59,130,246,0.15)');
+    grad.addColorStop(1, 'rgba(59,130,246,0)');
+
+    ctx.beginPath();
+    vals.forEach((v, i) => {
+      const x = (i / (vals.length - 1)) * w;
+      const y = h - ((v - min) / range) * (h - 4) - 2;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+
+    // Fill
+    const lastX = w, lastY = h - ((vals[vals.length-1] - min) / range) * (h - 4) - 2;
+    ctx.lineTo(lastX, h);
+    ctx.lineTo(0, h);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // Line
     ctx.beginPath();
     ctx.strokeStyle = '#3b82f6';
     ctx.lineWidth = 1.5;
+    ctx.lineJoin = 'round';
     vals.forEach((v, i) => {
       const x = (i / (vals.length - 1)) * w;
       const y = h - ((v - min) / range) * (h - 4) - 2;
@@ -318,53 +541,71 @@ function drawSparklines() {
       else ctx.lineTo(x, y);
     });
     ctx.stroke();
+
+    // End dot
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 2, 0, Math.PI * 2);
+    ctx.fillStyle = '#3b82f6';
+    ctx.fill();
   });
 }
 
-// === PERIODIC HEALTH CHECK ===
+// ── Health Poll (fallback for scan timestamps) ─────────────────────
 async function checkHealth() {
   try {
     const resp = await fetch('/api/health');
     const data = await resp.json();
-    updateStats(data.stats);
+    if (data.stats) {
+      stats = data.stats;
+      updateStatsUI();
+      updateScanActivity();
+
+      // Update empty state if no signals
+      if (allSignals.length === 0) {
+        const empty = document.getElementById('emptyState');
+        if (empty && empty.parentNode) {
+          updateEmptyState(data.ready ? 'scanning' : 'idle');
+        }
+      }
+    }
   } catch (e) {
-    // silently fail
+    // silent
   }
 }
 
-// === BUCKET MATRIX TOGGLE ===
-function initMatrix() {
-  const toggle = document.getElementById('matrixToggle');
-  const panel = document.getElementById('matrixPanel');
-  if (!toggle || !panel) return;
-
-  toggle.addEventListener('click', () => {
-    panel.classList.toggle('open');
-  });
-
-  // Matrix cell clicks filter same as bucket buttons
-  panel.querySelectorAll('[data-filter-bucket]').forEach(btn => {
+// ── Filters ────────────────────────────────────────────────────────
+function initFilters() {
+  document.querySelectorAll('.filter-chip').forEach(btn => {
     btn.addEventListener('click', () => {
-      const bucket = btn.dataset.filterBucket;
-      filters.bucket = bucket;
-      // Update active states across ALL bucket buttons (bar + matrix)
-      document.querySelectorAll('[data-filter-bucket]').forEach(b => b.classList.remove('active'));
-      if (bucket === 'all') {
-        document.querySelector('[data-filter-bucket="all"]')?.classList.add('active');
-      } else {
-        btn.classList.add('active');
-      }
+      filters.bucket = btn.dataset.filterBucket;
+      document.querySelectorAll('.filter-chip').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
       renderSignals();
-      panel.classList.remove('open');
     });
   });
+
+  document.querySelectorAll('.dir-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      filters.direction = btn.dataset.filterDir;
+      document.querySelectorAll('.dir-chip').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderSignals();
+    });
+  });
+
+  const btn = document.getElementById('btnRestart');
+  if (btn) btn.addEventListener('click', restartScanner);
 }
 
-// === INIT ===
+// ── Init ───────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   connectWS();
   initFilters();
-  initMatrix();
-  setInterval(drawSparklines, 2000);
-  setInterval(checkHealth, 10000);
+
+  // Health poll every 3s (faster than before for live status feel)
+  setInterval(checkHealth, 3000);
+
+  // Initial empty state
+  const empty = document.getElementById('emptyState');
+  if (empty) updateEmptyState('idle');
 });

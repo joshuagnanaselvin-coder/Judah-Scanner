@@ -106,7 +106,7 @@ async def ws_endpoint(ws: WebSocket):
 @app.get("/")
 async def dashboard():
     try:
-        with open(os.path.join(frontend_dir, "index.html")) as f:
+        with open(os.path.join(frontend_dir, "index.html"), encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
     except FileNotFoundError:
         return HTMLResponse(content="<h1>Judah Scanner</h1><p>Frontend not found.</p>")

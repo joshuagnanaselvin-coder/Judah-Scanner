@@ -198,7 +198,102 @@ class FusionEngine:
                 "score": data.get("score", 0),
             }
 
-        # Build package
+        # ── D1 HTF Structure (from signal_store) ─────────────────────────
+        from backend.config import TIMEFRAMES_HTF
+        from backend.signal_store import signal_store as sig_store
+
+        d1_best = None
+        d1_best_score = -1
+        for htf in TIMEFRAMES_HTF:
+            d1_sig = sig_store.get(coin, htf)
+            if d1_sig and d1_sig.get("composite_score", 0) > d1_best_score:
+                d1_best = d1_sig
+                d1_best_score = d1_sig.get("composite_score", 0)
+
+        # D1 structural summary
+        d1_structure = {}
+        if d1_best:
+            d1_ob = d1_best.get("ob", {})
+            d1_liq = d1_best.get("liquidity", {})
+            d1_msb = d1_best.get("msb", {})
+            d1_fvg = d1_best.get("fvg", {})
+            d1_vp = d1_best.get("volume_profile", {})
+
+            d1_structure = {
+                "direction": d1_best.get("direction", ""),
+                "tier": d1_best.get("tier", "WATCH"),
+                "score": d1_best.get("composite_score", 0),
+                # OB
+                "ob_type": d1_ob.get("type", "") if d1_ob else "",
+                "ob_zone": d1_ob.get("zone", "UNKNOWN") if d1_ob else "UNKNOWN",
+                "ob_low": d1_ob.get("low", 0) if d1_ob else 0,
+                "ob_high": d1_ob.get("high", 0) if d1_ob else 0,
+                "ob_strength": d1_ob.get("strength", 0) if d1_ob else 0,
+                # MSB
+                "msb_type": d1_msb.get("type", "") if d1_msb else "",
+                "msb_level": d1_msb.get("level", 0) if d1_msb else 0,
+                "msb_direction": d1_msb.get("direction", "") if d1_msb else "",
+                # FVG
+                "fvg_type": d1_fvg.get("type", "") if d1_fvg else "",
+                "fvg_size_atr": d1_fvg.get("size_atr", 0) if d1_fvg else 0,
+                "fvg_filled_pct": d1_fvg.get("filled_pct", 100) if d1_fvg else 100,
+                # Liquidity
+                "liq_swept": d1_liq.get("swept", False) if d1_liq else False,
+                "liq_level": d1_liq.get("level", 0) if d1_liq else 0,
+                "liq_direction": d1_liq.get("direction", "") if d1_liq else "",
+                # Volume profile
+                "poc": d1_vp.get("poc_price", 0) if d1_vp else 0,
+                "va_high": d1_vp.get("va_high", 0) if d1_vp else 0,
+                "va_low": d1_vp.get("va_low", 0) if d1_vp else 0,
+            }
+
+        # ── D2 15M Structure (from raw_signal) ──────────────────────────
+        raw = getattr(d2, 'raw_signal', {}) or {}
+        d2_structure = {
+            # Scenario
+            "scenario": raw.get("scenario", ""),
+            "entry_type": raw.get("entry_type", ""),
+            "sl_method": raw.get("sl_method", ""),
+            # OB
+            "ob_type": raw.get("ob", {}).get("type", "") if raw.get("ob") else "",
+            "ob_zone": raw.get("ob", {}).get("zone", "UNKNOWN") if raw.get("ob") else "UNKNOWN",
+            "ob_low": raw.get("ob", {}).get("low", 0) if raw.get("ob") else 0,
+            "ob_high": raw.get("ob", {}).get("high", 0) if raw.get("ob") else 0,
+            "ob_strength": raw.get("ob", {}).get("strength", 0) if raw.get("ob") else 0,
+            # MSB
+            "msb_type": raw.get("msb", {}).get("type", "") if raw.get("msb") else "",
+            "msb_level": raw.get("msb", {}).get("level", 0) if raw.get("msb") else 0,
+            "msb_direction": raw.get("msb", {}).get("direction", "") if raw.get("msb") else "",
+            # FVG
+            "fvg_type": raw.get("fvg", {}).get("type", "") if raw.get("fvg") else "",
+            "fvg_size_atr": raw.get("fvg", {}).get("size_atr", 0) if raw.get("fvg") else 0,
+            "fvg_filled_pct": raw.get("fvg", {}).get("filled_pct", 100) if raw.get("fvg") else 100,
+            # Liquidity
+            "liq_swept": raw.get("liquidity", {}).get("swept", False) if raw.get("liquidity") else False,
+            "liq_level": raw.get("liquidity", {}).get("level", 0) if raw.get("liquidity") else 0,
+            "liq_direction": raw.get("liquidity", {}).get("direction", "") if raw.get("liquidity") else "",
+            # Volume profile
+            "poc": raw.get("volume_profile", {}).get("poc_price", 0) if raw.get("volume_profile") else 0,
+            "va_high": raw.get("volume_profile", {}).get("va_high", 0) if raw.get("volume_profile") else 0,
+            "va_low": raw.get("volume_profile", {}).get("va_low", 0) if raw.get("volume_profile") else 0,
+            # Session
+            "session": raw.get("session", ""),
+            "session_label": raw.get("session_label", ""),
+            # CRT
+            "premium_discount": raw.get("premium_discount", "EQUILIBRIUM"),
+            "price_position_pct": raw.get("price_position_pct", 50),
+            # Displacement
+            "displacement_ratio": raw.get("displacement", {}).get("ratio", 0) if raw.get("displacement") else 0,
+        }
+
+        # ── SSL/BSL levels ───────────────────────────────────────────────
+        # SSL = swing low support (bullish SL anchor)
+        # BSL = swing high resistance (bearish SL anchor)
+        liq_pools = raw.get("liquidity_pools", {}) or {}
+        d2_structure["ssl"] = _extract_ssl(liq_pools, getattr(d2, 'direction', 'BULLISH'))
+        d2_structure["bsl"] = _extract_bsl(liq_pools, getattr(d2, 'direction', 'BULLISH'))
+
+        # ── Build package ───────────────────────────────────────────────
         package = {
             "signal_id": getattr(d2, 'signal_id', ''),
             "coin": coin,
@@ -213,6 +308,8 @@ class FusionEngine:
             "d1_tier": d1_tier,
             "d1_score": round(d1_score, 1),
             "d1_timeframes": tf_breakdown,
+            "d1_structure": d1_structure,
+            "d2_structure": d2_structure,
             "entry": getattr(d2, 'entry', 0),
             "sl": getattr(d2, 'sl', 0),
             "tp1": getattr(d2, 'tp1', 0),
@@ -230,6 +327,40 @@ class FusionEngine:
 
         logger.debug(f"[fusion] {coin}: {b} D1={d1_tier}({d1_score:.0f}) D2={d2_score:.0f} dir={package['direction']}")
         return package
+
+
+def _extract_ssl(liq_pools: dict, direction: str) -> dict:
+    """Extract Swing Low Level (SSL) — key support below price for bullish setups."""
+    if not liq_pools or not liq_pools.get("pools"):
+        return {"level": 0, "touches": 0, "swept": False}
+
+    pools = sorted(liq_pools["pools"], key=lambda p: p.get("level", 0))
+    # For bullish: lowest swing low with most touches
+    for pool in pools:
+        if pool.get("level", 0) > 0:
+            return {
+                "level": pool.get("level", 0),
+                "touches": pool.get("touches", 0),
+                "swept": pool.get("swept", False),
+            }
+    return {"level": 0, "touches": 0, "swept": False}
+
+
+def _extract_bsl(liq_pools: dict, direction: str) -> dict:
+    """Extract Buy/Sell Level — key resistance above price for bearish setups."""
+    if not liq_pools or not liq_pools.get("pools"):
+        return {"level": 0, "touches": 0, "swept": False}
+
+    pools = sorted(liq_pools["pools"], key=lambda p: p.get("level", 0), reverse=True)
+    # For bearish: highest swing high with most touches
+    for pool in pools:
+        if pool.get("level", 0) > 0:
+            return {
+                "level": pool.get("level", 0),
+                "touches": pool.get("touches", 0),
+                "swept": pool.get("swept", False),
+            }
+    return {"level": 0, "touches": 0, "swept": False}
 
 
 # Module-level singleton

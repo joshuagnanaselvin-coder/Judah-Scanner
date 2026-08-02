@@ -2,90 +2,143 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Judah Scanner</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Judah Scanner — D3 Fusion</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <div class="app">
     <!-- HEADER -->
     <header class="header">
-      <div class="logo">
-        <h1>Judah Scanner</h1>
-        <span>D3 Fusion — 15M LTF on HTF Context</span>
-      </div>
-      <div class="header-right">
-        <div class="status-item">
-          <span class="status-dot disconnected" id="wsDot"></span>
-          <span id="wsLabel">Connecting...</span>
-        </div>
-        <div class="stat-chip" title="D1 coins analyzed">D1: <strong id="d1Count">0</strong></div>
-        <div class="stat-chip" title="D2 LTF signals">D2: <strong id="d2Count">0</strong></div>
-        <div class="stat-chip" title="D3 fusion signals">Fusion: <strong id="totalSignals">0</strong></div>
-        <div class="bucket-dropdown" id="bucketMatrix">
-          <button class="matrix-toggle" id="matrixToggle">▦ Buckets</button>
-          <div class="matrix-panel" id="matrixPanel">
-            <div class="matrix-grid">
-              <span class="matrix-header"></span>
-              <span class="matrix-header">SNIPER</span>
-              <span class="matrix-header">OPPORTUNITY</span>
-              <span class="matrix-header">WATCH</span>
-              <span class="matrix-row-header">SNIPER</span>
-              <button class="matrix-cell ready" data-filter-bucket="READY" title="Best: High-probability HTF+LTF confluence"><span class="cell-icon">🟢</span>READY</button>
-              <button class="matrix-cell building" data-filter-bucket="BUILDING" title="D1 SNIPER + D2 OPPORTUNITY — wait for LTF confirmation"><span class="cell-icon">🔵</span>BUILDING</button>
-              <button class="matrix-cell wait" data-filter-bucket="WAIT" title="D1 SNIPER + D2 WATCH — low conviction"><span class="cell-icon">⏳</span>WAIT</button>
-              <span class="matrix-row-header">OPPORTUNITY</span>
-              <button class="matrix-cell early" data-filter-bucket="EARLY" title="D1 OPPORTUNITY + D2 SNIPER — reduced risk"><span class="cell-icon">🟡</span>EARLY</button>
-              <button class="matrix-cell developing" data-filter-bucket="DEVELOPING" title="Both D1+D2 partial confirmation"><span class="cell-icon">🟠</span>DEVELOPING</button>
-              <button class="matrix-cell monitor" data-filter-bucket="MONITOR" title="D1 OPPORTUNITY + D2 WATCH — observe"><span class="cell-icon">👀</span>MONITOR</button>
-              <span class="matrix-row-header">WATCH</span>
-              <button class="matrix-cell trap" data-filter-bucket="TRAP" title="D1 WATCH + D2 SNIPER — possible fakeout"><span class="cell-icon">🔴</span>TRAP</button>
-              <button class="matrix-cell ignore" data-filter-bucket="IGNORE"><span class="cell-icon">⚫</span>IGNORE</button>
-              <button class="matrix-cell ignore"><span class="cell-icon">⚫</span>IGNORE</button>
-            </div>
-            <button class="matrix-clear" data-filter-bucket="all">Clear filter</button>
+      <div class="header-left">
+        <div class="logo">
+          <div class="logo-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+          </div>
+          <div class="logo-text">
+            <h1>Judah Scanner</h1>
+            <span>D3 Fusion Engine</span>
           </div>
         </div>
-        <button class="btn-restart" id="btnRestart" title="Clear &amp; re-bootstrap">
-          <span class="restart-icon">&#x21BB;</span>
-          <span class="restart-label">Restart</span>
+      </div>
+
+      <div class="header-right">
+        <!-- Scan Status Indicator -->
+        <div class="scan-status" id="scanStatus">
+          <div class="scan-indicator" id="scanIndicator">
+            <span class="scan-dot" id="scanDot"></span>
+            <span class="scan-text" id="scanText">Connecting...</span>
+          </div>
+          <div class="scan-detail" id="scanDetail"></div>
+        </div>
+
+        <!-- Connection Status -->
+        <div class="status-pill" id="wsStatus">
+          <span class="pulse-dot" id="wsDot"></span>
+          <span id="wsLabel">...</span>
+        </div>
+
+        <!-- Stats -->
+        <div class="stat-group">
+          <div class="stat-chip" title="D1 HTF Signals">
+            <span class="stat-label">D1</span>
+            <span class="stat-value" id="d1Count">0</span>
+          </div>
+          <div class="stat-chip" title="D2 LTF Signals">
+            <span class="stat-label">D2</span>
+            <span class="stat-value" id="d2Count">0</span>
+          </div>
+          <div class="stat-chip stat-accent" title="D3 Fusion Results">
+            <span class="stat-label">Fusion</span>
+            <span class="stat-value" id="totalSignals">0</span>
+          </div>
+        </div>
+
+        <!-- Restart -->
+        <button class="btn-icon" id="btnRestart" title="Restart scanner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
         </button>
-        <div class="status-item" id="signalCount">0 setups</div>
-        <div class="status-item" id="lastUpdate">--</div>
       </div>
     </header>
 
-    <!-- BUCKET FILTER BAR -->
-    <div class="bucket-bar">
-      <div class="bucket-group">
-        <label>Bucket:</label>
-        <button class="filter-btn active" data-filter-bucket="all">All</button>
-        <button class="filter-btn ready" data-filter-bucket="READY">🟢 READY <span class="bucket-count ready" id="countReady">0</span></button>
-        <button class="filter-btn building" data-filter-bucket="BUILDING">🔵 BUILDING <span class="bucket-count building" id="countBuilding">0</span></button>
-        <button class="filter-btn early" data-filter-bucket="EARLY">🟡 EARLY <span class="bucket-count early" id="countEarly">0</span></button>
-        <button class="filter-btn developing" data-filter-bucket="DEVELOPING">🟠 DEVELOPING <span class="bucket-count developing" id="countDeveloping">0</span></button>
-        <button class="filter-btn wait" data-filter-bucket="WAIT">⏳ WAIT <span class="bucket-count wait" id="countWait">0</span></button>
-        <button class="filter-btn monitor" data-filter-bucket="MONITOR">👀 MONITOR <span class="bucket-count monitor" id="countMonitor">0</span></button>
-        <button class="filter-btn trap" data-filter-bucket="TRAP">🔴 TRAP <span class="bucket-count trap" id="countTrap">0</span></button>
-        <button class="filter-btn ignore" data-filter-bucket="IGNORE">⚫ IGNORE <span class="bucket-count ignore" id="countIgnore">0</span></button>
+    <!-- SCAN ACTIVITY BAR -->
+    <div class="activity-bar" id="activityBar">
+      <div class="activity-item" id="actD1">
+        <span class="act-dot"></span>
+        <span class="act-label">D1 Scan</span>
+        <span class="act-status" id="actD1Status">—</span>
+        <span class="act-time" id="actD1Time"></span>
       </div>
-      <div class="dir-group">
-        <div class="bucket-group">
-          <label>Dir:</label>
-          <button class="filter-btn active" data-filter-dir="all">All</button>
-          <button class="filter-btn" data-filter-dir="BULLISH">Long</button>
-          <button class="filter-btn" data-filter-dir="BEARISH">Short</button>
-        </div>
+      <div class="activity-item" id="actD2">
+        <span class="act-dot"></span>
+        <span class="act-label">D2 Scan</span>
+        <span class="act-status" id="actD2Status">—</span>
+        <span class="act-time" id="actD2Time"></span>
+      </div>
+      <div class="activity-item" id="actD3">
+        <span class="act-dot"></span>
+        <span class="act-label">D3 Fusion</span>
+        <span class="act-status" id="actD3Status">—</span>
+        <span class="act-time" id="actD3Time"></span>
       </div>
     </div>
 
-    <!-- SIGNALS -->
+    <!-- BUCKET FILTERS -->
+    <div class="filter-section">
+      <div class="bucket-scroll" id="bucketBar">
+        <button class="filter-chip active" data-filter-bucket="all">
+          <span class="chip-dot" style="background:#3b82f6"></span>All
+        </button>
+        <button class="filter-chip ready" data-filter-bucket="READY">
+          <span class="chip-dot" style="background:#22c55e"></span>Ready <span class="chip-count" id="countReady">0</span>
+        </button>
+        <button class="filter-chip building" data-filter-bucket="BUILDING">
+          <span class="chip-dot" style="background:#3b82f6"></span>Building <span class="chip-count" id="countBuilding">0</span>
+        </button>
+        <button class="filter-chip early" data-filter-bucket="EARLY">
+          <span class="chip-dot" style="background:#eab308"></span>Early <span class="chip-count" id="countEarly">0</span>
+        </button>
+        <button class="filter-chip developing" data-filter-bucket="DEVELOPING">
+          <span class="chip-dot" style="background:#f97316"></span>Dev <span class="chip-count" id="countDeveloping">0</span>
+        </button>
+        <button class="filter-chip wait" data-filter-bucket="WAIT">
+          <span class="chip-dot" style="background:#fbbf24"></span>Wait <span class="chip-count" id="countWait">0</span>
+        </button>
+        <button class="filter-chip monitor" data-filter-bucket="MONITOR">
+          <span class="chip-dot" style="background:#a855f7"></span>Monitor <span class="chip-count" id="countMonitor">0</span>
+        </button>
+        <button class="filter-chip trap" data-filter-bucket="TRAP">
+          <span class="chip-dot" style="background:#ef4444"></span>Trap <span class="chip-count" id="countTrap">0</span>
+        </button>
+        <button class="filter-chip ignore" data-filter-bucket="IGNORE">
+          <span class="chip-dot" style="background:#6b7280"></span>Off <span class="chip-count" id="countIgnore">0</span>
+        </button>
+      </div>
+
+      <div class="dir-filters">
+        <button class="dir-chip active" data-filter-dir="all">All</button>
+        <button class="dir-chip" data-filter-dir="BULLISH">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="18 15 12 9 6 15"/></svg>
+          Long
+        </button>
+        <button class="dir-chip bearish" data-filter-dir="BEARISH">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+          Short
+        </button>
+      </div>
+    </div>
+
+    <!-- SIGNALS GRID -->
     <div class="signals-container" id="signalsContainer">
       <div class="empty-state" id="emptyState">
-        <div class="empty-icon">&#x1F4CA;</div>
-        <h2>Waiting for signals...</h2>
-        <p>Scanning 529 coins across 1H / 4H / 1D (D1) + 15M (D2)</p>
-        <p class="hint">Fusion signals appear here in real-time</p>
+        <div class="empty-spinner" id="emptySpinner">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+        </div>
+        <h2 id="emptyTitle">Initializing Scanner...</h2>
+        <p id="emptyMsg">Fetching 529 coins · HTF + 15M LTF analysis</p>
+        <div class="empty-progress" id="emptyProgress">
+          <div class="progress-bar" id="progressBar"></div>
+        </div>
       </div>
     </div>
   </div>
