@@ -57,7 +57,7 @@ def _synth_crt_score(direction: str, msb_level, candles: list) -> int:
 
 def _build_smc_only_context(candles: list) -> dict | None:
     """Synthesize CRT context for impulse coins (no consolidation/range candle)."""
-    if len(candles) < 30:
+    if len(candles) < 25:
         return None
     swings = detect_swing_points(candles)
     if len(swings["swing_highs"]) + len(swings["swing_lows"]) < 2:
@@ -173,12 +173,53 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
         path = "SMC-ONLY"
 
     # SIGNAL BUILDER
-    # D2 (execution-heavy): CRT(10) + SMC(10) + Flow(35) + Momentum(35) = 90 max
+    # D2 (entry quality): Flow(30) + CRT(25) + SMC(20) + Momentum(25) = 100 max
     fm = detect_fast_mover(candles, swings)
-    crt["crt_score"] = min(crt.get("crt_score", 0), 10)
-    smc["smc_score"] = min(smc.get("smc_score", 0), 10)
-    flow_score = min(flow["boost"], 35)
-    momentum_score = min(fm["score"] if fm["is_fast_mover"] else 0, 35)
+    crt["crt_score"] = min(crt.get("crt_score", 0), 25)
+    smc["smc_score"] = min(smc.get("smc_score", 0), 20)
+    flow_score = min(flow["boost"], 30)
+    momentum_score = min(fm["score"] if fm["is_fast_mover"] else 0, 25)
+
+    # === D2 HTF ENTRY BONUSES (+5 each, max +20) ===
+    # D2 reads D1's HTF context to determine if the 15M entry aligns
+    # with higher-timeframe structure — the "Entry Office" advantage.
+    htf_bonus = 0
+    from backend.config import TIMEFRAMES_HTF
+    from backend.signal_store import signal_store as sig_store
+
+    d1_best = None
+    d1_best_score = -1
+    for htf in TIMEFRAMES_HTF:
+        d1_sig = sig_store.get(symbol, htf)
+        if d1_sig and d1_sig.get("composite_score", 0) > d1_best_score:
+            d1_best = d1_sig
+            d1_best_score = d1_sig.get("composite_score", 0)
+
+    if d1_best:
+        d1_dir = d1_best.get("direction", "")
+        d1_ob = d1_best.get("ob")
+        d1_pd = d1_best.get("premium_discount", "EQUILIBRIUM")
+        d1_liq = d1_best.get("liquidity", {})
+        entry_price = candles[-1].close
+
+        # Bonus 1: Entry inside HTF Order Block = +5
+        if d1_ob and d1_ob.get("low", 0) < entry_price < d1_ob.get("high", 0):
+            htf_bonus += 5
+
+        # Bonus 2: Entry inside HTF Discount/Premium = +5
+        if d1_pd in ("PREMIUM", "DISCOUNT"):
+            htf_bonus += 5
+
+        # Bonus 3: Entry near HTF Liquidity sweep = +5
+        if d1_liq and d1_liq.get("swept"):
+            htf_bonus += 5
+
+        # Bonus 4: Entry direction matches HTF direction = +5
+        if d1_dir and signal.get("direction", "") == d1_dir:
+            htf_bonus += 5
+
+    htf_bonus = min(htf_bonus, 20)
+    logger.debug(f"[ltf_pipeline] HTF bonuses: {htf_bonus} (from {d1_best_score:.0f} D1 score)")
 
     logger.debug(f"[ltf_pipeline] Building {symbol} ({path}) flow={flow_score} momentum={momentum_score}")
     signal = build_signal(symbol, timeframe, crt, smc, candles, flow_score, momentum_score)
@@ -187,6 +228,11 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
         signal["flow_score"] = flow_score
         signal["fast_mover_boost"] = momentum_score
         signal["momentum_score"] = momentum_score
+        signal["htf_bonus"] = htf_bonus
+
+        # Add HTF bonus to composite after build_signal
+        signal["composite_score"] = signal.get("composite_score", 0) + htf_bonus
+
         composite = signal["composite_score"]
         if composite >= TIER_SNIPER_SCORE:
             signal["tier"] = "SNIPER"

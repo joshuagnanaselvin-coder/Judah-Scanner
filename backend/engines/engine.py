@@ -78,7 +78,7 @@ def _build_smc_only_context(candles: list) -> dict | None:
     from the dominant impulse leg so scoring, scenario detection, and entry
     logic all have something to work with.
     """
-    if len(candles) < 30:
+    if len(candles) < 25:
         return None
 
     swings = detect_swing_points(candles)
@@ -156,7 +156,7 @@ def scan(symbol: str, timeframe: str) -> dict | None:
     where the strict 5-step CRT consolidation pattern doesn't exist yet).
     """
     candles = market_data.get_candles(symbol, timeframe)
-    if not candles or len(candles) < 50:
+    if not candles or len(candles) < 25:
         logger.debug(f"[engine] SKIP {symbol} {timeframe}: no candles ({len(candles) if candles else 0})")
         return None
 
@@ -228,11 +228,11 @@ def scan(symbol: str, timeframe: str) -> dict | None:
         path = "SMC-ONLY"
 
     # Signal builder
-    # D1 (structure-heavy): CRT(30) + SMC(25) + Flow(20) + Momentum(15) = 90 max
+    # D1 (market quality): Flow(15) + CRT(30) + SMC(30) + Momentum(15) = 90 max
     fm = detect_fast_mover(candles, swings)
     crt["crt_score"] = min(crt.get("crt_score", 0), 30)
-    smc["smc_score"] = min(smc.get("smc_score", 0), 25)
-    flow_score = min(flow["boost"], 20)
+    smc["smc_score"] = min(smc.get("smc_score", 0), 30)
+    flow_score = min(flow["boost"], 15)
     momentum_score = min(fm["score"] if fm["is_fast_mover"] else 0, 15)
 
     logger.debug(f"[engine] Building signal for {symbol} {timeframe} ({path}) "
