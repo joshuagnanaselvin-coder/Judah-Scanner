@@ -8,9 +8,11 @@ let allSignals = [];
 let ws = null;
 let filters = { bucket: 'all', direction: 'all' };
 const expandedCards = new Set();
-let scanStatus = { d1: 'idle', d2: 'idle', d3: 'idle' };
-let stats = { d1_coins: 0, d2_signals: 0, d3_fusion: 0 };
+let stats = { d1_coins: 0, d2_signals: 0, d3_fusion: 0, last_d1_scan: 0, last_d2_scan: 0, last_d3_fusion: 0 };
 let wsReconnectTimer = null;
+
+// Track previous timestamps to detect active scanning
+let prevTimestamps = { d1: 0, d2: 0, d3: 0 };
 
 // ── Time helpers ────────────────────────────────────────────────────
 function timeAgo(ts) {
@@ -62,13 +64,6 @@ function connectWS() {
         if (allSignals.length > 100) allSignals = allSignals.slice(0, 100);
         renderSignals();
         if (idx < 0) flashNew(sig.signal_id);
-      } else if (data.type === 'scan_status') {
-        // Real-time scan status from backend
-        scanStatus = data.data || scanStatus;
-        updateScanActivity();
-      } else if (data.type === 'stats') {
-        stats = data.data || stats;
-        updateStatsUI();
       }
     } catch (e) {
       console.error('[ws-fusion] Parse error:', e);
@@ -104,58 +99,71 @@ function setWsStatus(status) {
 }
 
 // ── Scan Activity Bar ──────────────────────────────────────────────
+// Derives scanning state from timestamp changes via health polling + WS.
+// When a timestamp moves → "scanning" for ~3s, then "done" with time-ago.
+let scanTimers = { d1: null, d2: null, d3: null };
+
 function updateScanActivity() {
-  updateScanItem('actD1', 'actD1Status', 'actD1Time', scanStatus.d1, stats.last_d1_scan, 'D1');
-  updateScanItem('actD2', 'actD2Status', 'actD2Time', scanStatus.d2, stats.last_d2_scan, 'D2');
-  updateScanItem('actD3', 'actD3Status', 'actD3Time', scanStatus.d3, stats.last_d3_fusion, 'D3');
+  updateScanItem('actD1', 'actD1Status', 'actD1Time', stats.last_d1_scan, 'd1');
+  updateScanItem('actD2', 'actD2Status', 'actD2Time', stats.last_d2_scan, 'd2');
+  updateScanItem('actD3', 'actD3Status', 'actD3Time', stats.last_d3_fusion, 'd3');
 }
 
-function updateScanItem(itemId, statusId, timeId, status, lastTs, label) {
+function updateScanItem(itemId, statusId, timeId, currentTs, key) {
   const item = document.getElementById(itemId);
   const statusEl = document.getElementById(statusId);
   const timeEl = document.getElementById(timeId);
   if (!item || !statusEl) return;
 
-  // Remove all state classes
-  item.classList.remove('scanning', 'done', 'error', 'idle');
-  statusEl.classList.remove('scanning', 'done', 'error');
+  const prev = prevTimestamps[key] || 0;
 
-  const statusMap = {
-    'scanning': { text: 'Scanning...', cls: 'scanning', itemCls: 'scanning' },
-    'done':     { text: 'Done', cls: 'done', itemCls: 'done' },
-    'error':    { text: 'Error', cls: 'error', itemCls: 'error' },
-    'idle':     { text: 'Idle', cls: '', itemCls: 'idle' },
-  };
+  // Timestamp changed → scanning just happened
+  if (currentTs > prev && currentTs > 0) {
+    prevTimestamps[key] = currentTs;
 
-  const s = statusMap[status] || statusMap['idle'];
-  statusEl.textContent = s.text;
-  statusEl.classList.add(s.cls);
-  item.classList.add(s.itemCls);
+    // Show scanning state
+    item.classList.remove('done', 'idle', 'error');
+    item.classList.add('scanning');
+    statusEl.classList.remove('done', 'error');
+    statusEl.classList.add('scanning');
+    statusEl.textContent = 'Scanning';
+    if (timeEl) timeEl.textContent = '';
 
-  if (timeEl) {
-    if (status === 'scanning') {
-      timeEl.textContent = '';
-      // Animate during scan
-      if (!item._animInterval) {
-        let dots = 0;
-        item._animInterval = setInterval(() => {
-          if (scanStatus[label.toLowerCase()] !== 'scanning') {
-            clearInterval(item._animInterval);
-            item._animInterval = null;
-            return;
-          }
-          dots = (dots + 1) % 4;
-          statusEl.textContent = 'Scanning' + '.'.repeat(dots);
-        }, 400);
-      }
-    } else {
-      if (item._animInterval) {
-        clearInterval(item._animInterval);
-        item._animInterval = null;
-      }
-      timeEl.textContent = timeAgo(lastTs);
-    }
+    // Clear previous timer, set new one
+    if (scanTimers[key]) clearTimeout(scanTimers[key]);
+    scanTimers[key] = setTimeout(() => {
+      item.classList.remove('scanning');
+      item.classList.add('done');
+      statusEl.classList.remove('scanning');
+      statusEl.classList.add('done');
+      statusEl.textContent = 'Done';
+      scanTimers[key] = null;
+    }, 3000);
+
+    return;
   }
+
+  // No scan yet — idle
+  if (currentTs === 0 || prev === 0) {
+    item.classList.remove('scanning', 'done', 'error');
+    item.classList.add('idle');
+    statusEl.classList.remove('scanning', 'done', 'error');
+    if (timeEl) timeEl.textContent = '';
+    return;
+  }
+
+  // Otherwise show time-ago (from the most recent scan)
+  const diff = Date.now() / 1000 - currentTs;
+  if (diff < 5) {
+    statusEl.textContent = 'Just now';
+  } else if (diff < 60) {
+    statusEl.textContent = Math.floor(diff) + 's ago';
+  } else if (diff < 3600) {
+    statusEl.textContent = Math.floor(diff / 60) + 'm ago';
+  } else {
+    statusEl.textContent = Math.floor(diff / 3600) + 'h ago';
+  }
+  if (timeEl) timeEl.textContent = '';
 }
 
 // ── Stats ──────────────────────────────────────────────────────────
