@@ -45,9 +45,12 @@ class MarketData:
 
         print(f"[marketdata] Bootstrapping {len(symbols)} coins...")
 
-        hf_pairs = [(s, tf) for s in symbols for tf in TIMEFRAMES_HTF]
-        total = len(hf_pairs)
-        print(f"[marketdata] HTF-only: {total} requests ({len(TIMEFRAMES_HTF)} TFs x {len(symbols)} pairs)")
+        # Download ALL timeframes (including 15M for D2) — WS only provides
+        # live ticks, so historical 15M candles MUST come from REST bootstrap.
+        all_pairs = [(s, tf) for s in symbols for tf in ALL_TIMEFRAMES]
+        total = len(all_pairs)
+        print(f"[marketdata] All-TF bootstrap: {total} requests "
+              f"({len(ALL_TIMEFRAMES)} TFs x {len(symbols)} pairs)")
 
         # === Adaptive batch-wise concurrent bootstrap ===
         # Binance IP limit: 1200 req/min (weight=1 for klines).
@@ -60,7 +63,7 @@ class MarketData:
         batch_delay = BASE_DELAY
         errors = 0
 
-        batches = [hf_pairs[i:i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
+        batches = [all_pairs[i:i + BATCH_SIZE] for i in range(0, total, BATCH_SIZE)]
         total_batches = len(batches)
 
         for batch_idx, batch in enumerate(batches):
