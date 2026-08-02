@@ -13,7 +13,7 @@ logger = logging.getLogger("judah.smc")
 
 
 def run_smc(candles: list, crt: dict) -> Optional[dict]:
-    """SMC Engine — strict ICT scoring. Max SMC score: 20."""
+    """SMC Engine — strict ICT scoring. Max SMC score: 25."""
     if not candles or len(candles) < 50 or not crt or not crt.get("displacement"):
         return None
 
@@ -55,7 +55,10 @@ def run_smc(candles: list, crt: dict) -> Optional[dict]:
 
     smc_score = min(score, 20)
 
-    logger.debug(f"SMC: msb={m} ob={o} fvg={f} liq={l} = {smc_score}/20")
+    # Scale to max 25 (components unchanged, final scale factor)
+    smc_score = int(smc_score * 1.25)
+
+    logger.debug(f"SMC: msb={m} ob={o} fvg={f} liq={l} = {smc_score}/25")
 
     return {
         **result,

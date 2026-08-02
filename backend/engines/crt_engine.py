@@ -46,7 +46,7 @@ _W_DISPLACEMENT = 3
 _W_FVG = 3
 _W_RETEST = 4
 _W_ZONE = 2
-_CRT_MAX_SCORE = 25
+_CRT_MAX_SCORE = 30
 
 
 def run_crt(candles: list) -> Optional[dict]:

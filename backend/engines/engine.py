@@ -228,10 +228,12 @@ def scan(symbol: str, timeframe: str) -> dict | None:
         path = "SMC-ONLY"
 
     # Signal builder
-    # 4-component scoring: CRT(25) + SMC(20) + Flow(25) + Momentum(20) = 90 max
+    # D1 (structure-heavy): CRT(30) + SMC(25) + Flow(20) + Momentum(15) = 90 max
     fm = detect_fast_mover(candles, swings)
-    flow_score = min(flow["boost"], 25)
-    momentum_score = min(fm["score"] if fm["is_fast_mover"] else 0, 20)
+    crt["crt_score"] = min(crt.get("crt_score", 0), 30)
+    smc["smc_score"] = min(smc.get("smc_score", 0), 25)
+    flow_score = min(flow["boost"], 20)
+    momentum_score = min(fm["score"] if fm["is_fast_mover"] else 0, 15)
 
     logger.debug(f"[engine] Building signal for {symbol} {timeframe} ({path}) "
                  f"flow={flow_score} momentum={momentum_score}")
