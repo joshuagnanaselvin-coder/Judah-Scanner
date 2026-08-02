@@ -174,6 +174,9 @@ function updateBucketCounts(filtered) {
   updateCount('countReady', counts.READY);
   updateCount('countEarly', counts.EARLY);
   updateCount('countTrap', counts.TRAP);
+  updateCount('countBuilding', counts.BUILDING);
+  updateCount('countDeveloping', counts.DEVELOPING);
+  updateCount('countIgnore', counts.IGNORE);
 }
 
 function buildCard(s) {

@@ -13,6 +13,9 @@
   --ready: #22c55e;
   --early: #f59e0b;
   --trap: #ef4444;
+  --building: #3b82f6;
+  --developing: #9ca3af;
+  --ignore: #6b7280;
 
   --bullish: #22c55e;
   --bearish: #ef4444;
@@ -101,6 +104,9 @@ body {
 .filter-btn[data-filter-bucket="READY"].active { background: var(--ready); border-color: var(--ready); }
 .filter-btn[data-filter-bucket="EARLY"].active { background: var(--early); border-color: var(--early); }
 .filter-btn[data-filter-bucket="TRAP"].active { background: var(--trap); border-color: var(--trap); }
+.filter-btn[data-filter-bucket="BUILDING"].active { background: var(--building); border-color: var(--building); }
+.filter-btn[data-filter-bucket="DEVELOPING"].active { background: var(--developing); border-color: var(--developing); }
+.filter-btn[data-filter-bucket="IGNORE"].active { background: var(--ignore); border-color: var(--ignore); }
 
 .bucket-count {
   font-size: 10px; font-weight: 700; padding: 1px 6px;
@@ -109,6 +115,9 @@ body {
 .bucket-count.ready { background: rgba(34,197,94,0.15); color: var(--ready); }
 .bucket-count.early { background: rgba(245,158,11,0.15); color: var(--early); }
 .bucket-count.trap { background: rgba(239,68,68,0.15); color: var(--trap); }
+.bucket-count.building { background: rgba(59,130,246,0.15); color: var(--building); }
+.bucket-count.developing { background: rgba(156,163,175,0.15); color: var(--developing); }
+.bucket-count.ignore { background: rgba(107,114,128,0.15); color: var(--ignore); }
 
 /* === SIGNAL GRID === */
 .signals-container {
