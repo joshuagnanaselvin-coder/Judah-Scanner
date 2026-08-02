@@ -212,11 +212,14 @@ async def get_performance():
 
 @app.get("/api/d2-mode")
 async def get_d2_mode():
+    """READ ONLY — sensitivity mode is for frontend display only.
+    Scoring and tiers are locked and cannot be changed at runtime."""
     import backend.config as cfg
     threshold = resolve_d2_threshold()
     return {
         "mode": cfg.D2_SENSITIVITY_MODE,
         "threshold": threshold,
+        "locked": True,
         "modes": {
             "STRICT": cfg.D2_MIN_SCORE_STRICT,
             "BALANCED": cfg.D2_MIN_SCORE_BALANCED,
@@ -224,17 +227,6 @@ async def get_d2_mode():
             "DEBUG": cfg.D2_MIN_SCORE_DEBUG,
         },
     }
-
-@app.post("/api/d2-mode")
-async def set_d2_mode(request: Request):
-    body = await request.json()
-    mode = body.get("mode", "").upper()
-    import backend.config as cfg
-    valid = {"STRICT", "BALANCED", "EXPLORATION", "DEBUG"}
-    if mode not in valid:
-        return {"ok": False, "error": f"Invalid mode '{mode}'. Use: {', '.join(sorted(valid))}"}
-    cfg.D2_SENSITIVITY_MODE = mode
-    return {"ok": True, "mode": mode, "threshold": resolve_d2_threshold()}
 
 @app.post("/api/restart")
 async def restart_scanner():
@@ -264,8 +256,30 @@ def _safe(obj):
 
 # ---- STARTUP ----
 
-@app.on_event("startup")
-async def startup():
+@app.get("/api/health")
+async def health():
+    """Instant health check — always responds, even during startup."""
+    import time
+    ready = state_store.last_d1_scan > 0
+    return {
+        "status": "ok" if ready else "initializing",
+        "ready": ready,
+        "ws_connected": market_data.ws_connected if hasattr(market_data, 'ws_connected') else False,
+        "signal_count": len(signal_store.get_all()),
+        "fusion_count": len(state_store.d3_fusion),
+        "stats": {
+            "d1_coins": len(state_store.d1_tiers),
+            "d2_signals": len(state_store.d2_signals),
+            "d3_fusion": len(state_store.d3_fusion),
+            "last_d1_scan": state_store.last_d1_scan,
+            "last_d2_scan": state_store.last_d2_scan,
+            "last_d3_fusion": state_store.last_d3_fusion,
+        },
+    }
+
+
+async def _bootstrap():
+    """Runs in background — does not block the health endpoint."""
     import aiohttp
     pairs = []
     try:
@@ -307,7 +321,14 @@ async def startup():
     except Exception as e:
         logger.error(f"[server] D3 Fusion Engine failed to start: {e}")
 
-    logger.info(f" Judah Scanner running at http://{HOST}:{PORT}")
+    logger.info(f" Judah Scanner running — {len(pairs)} pairs on {BINANCE_REST_BASE}")
+
+
+@app.on_event("startup")
+async def startup():
+    """Fire-and-forget bootstrap — health endpoint is available immediately."""
+    import asyncio
+    asyncio.create_task(_bootstrap())
 
 if __name__ == "__main__":
     import uvicorn
