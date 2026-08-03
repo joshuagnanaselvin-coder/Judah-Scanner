@@ -242,9 +242,10 @@ function buildCard(s) {
   const isExpanded = expandedCards.has(s.signal_id);
   const isNew = Date.now() - new Date(s.born_at || 0).getTime() < 5000;
 
-  // TradingView
-  const base = s.coin.replace(/USDT$/i, '');
+  // TradingView chart
   const tvUrl = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent('BINANCE:' + base + 'USDT');
+  // Binance Futures trade page
+  const binanceUrl = 'https://www.binance.com/en/futures/' + encodeURIComponent(base + 'USDT');
 
   // D1/D2 structure
   const d1s = s.d1_structure || {};
@@ -301,6 +302,10 @@ function buildCard(s) {
            title="View ${base} on TradingView" onclick="event.stopPropagation()">
           ${base}
           <svg class="tv-svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+        </a>
+        <a class="binance-link" href="${binanceUrl}" target="_blank" rel="noopener"
+           title="Trade ${base} on Binance Futures" onclick="event.stopPropagation()">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
         </a>
         <span class="bucket-pill" style="background:${bucketColor}18;color:${bucketColor};border-color:${bucketColor}30">
           ${s.bucket_icon || ''} ${s.bucket_label || s.bucket}

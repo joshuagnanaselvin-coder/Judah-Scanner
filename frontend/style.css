@@ -612,6 +612,29 @@ body {
 
 .coin-link:hover .tv-svg { opacity: 1; }
 
+/* Binance Futures Link */
+.binance-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  color: #f0b90b;
+  text-decoration: none;
+  flex-shrink: 0;
+  background: rgba(240,185,11,0.1);
+  border: 1px solid rgba(240,185,11,0.2);
+  transition: all var(--transition);
+  opacity: 0.7;
+}
+.binance-link:hover {
+  opacity: 1;
+  background: rgba(240,185,11,0.2);
+  border-color: rgba(240,185,11,0.5);
+  transform: scale(1.1);
+}
+
 /* Badges */
 .bucket-pill {
   padding: 2px 8px;
