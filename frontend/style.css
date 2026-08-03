@@ -575,8 +575,8 @@ body {
   display: flex;
   align-items: center;
   gap: 7px;
-  flex: 1;
-  min-width: 0;
+  flex: 1 1 auto;
+  min-width: 120px;
 }
 
 .bucket-pip {
@@ -597,9 +597,7 @@ body {
   color: var(--text) !important;
   text-decoration: none;
   transition: color var(--transition);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .coin-link:hover { color: var(--accent) !important; }
