@@ -243,7 +243,8 @@ function buildCard(s) {
   const isNew = Date.now() - new Date(s.born_at || 0).getTime() < 5000;
 
   // TradingView chart
-  const base = s.coin.replace(/USDT$/i, '');
+  const rawCoin = s.coin || 'BTCUSDT';
+  const base = rawCoin.replace(/USDT$/i, '').replace(/BINANCE:/i, '');
   const tvUrl = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent('BINANCE:' + base + 'USDT.P');
   // Binance Futures trade page
   const binanceUrl = 'https://www.binance.com/en/futures/' + encodeURIComponent(base + 'USDT');
