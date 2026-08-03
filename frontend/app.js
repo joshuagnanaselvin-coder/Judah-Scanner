@@ -244,7 +244,7 @@ function buildCard(s) {
 
   // TradingView chart
   const base = s.coin.replace(/USDT$/i, '');
-  const tvUrl = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent('BINANCE:' + base + 'USDT');
+  const tvUrl = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent('BINANCE:' + base + 'USDT.P');
   // Binance Futures trade page
   const binanceUrl = 'https://www.binance.com/en/futures/' + encodeURIComponent(base + 'USDT');
 
