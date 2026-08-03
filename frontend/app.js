@@ -243,6 +243,7 @@ function buildCard(s) {
   const isNew = Date.now() - new Date(s.born_at || 0).getTime() < 5000;
 
   // TradingView chart
+  const base = s.coin.replace(/USDT$/i, '');
   const tvUrl = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent('BINANCE:' + base + 'USDT');
   // Binance Futures trade page
   const binanceUrl = 'https://www.binance.com/en/futures/' + encodeURIComponent(base + 'USDT');
@@ -472,14 +473,6 @@ function updateEmptyState(state) {
     if (spinner) spinner.style.display = 'none';
     if (progress) progress.style.width = '100%';
   }
-}
-
-function clearFilters() {
-  filters = { bucket: 'all', direction: 'all' };
-  document.querySelectorAll('.filter-chip, .dir-chip').forEach(b => b.classList.remove('active'));
-  document.querySelector('[data-filter-bucket="all"]')?.classList.add('active');
-  document.querySelector('[data-filter-dir="all"]')?.classList.add('active');
-  renderSignals();
 }
 
 function clearFilters() {
