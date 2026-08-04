@@ -1,25 +1,48 @@
 // ═══════════════════════════════════════════════════════════════════════
-// Judah Scanner — Frontend
-// D3 Fusion: HTF (1H/4H/1D) + 15M LTF → Market Evolution (MEE) signals
+// Judah — Institutional Market Evolution Terminal (V5.2)
+// The frontend CONSUMES the backend's Market Evolution output.
+// It does NOT calculate evolution.
 // ═══════════════════════════════════════════════════════════════════════
 
 // ── State ──────────────────────────────────────────────────────────
 let allSignals = [];
 let ws = null;
-let filters = { spiral: 'all', evolution: 'all', direction: 'all' };
+let filters = { marketType: 'all', evolution: 'all', direction: 'all' };
 const expandedCards = new Set();
 let stats = { d1_coins: 0, d2_signals: 0, d3_fusion: 0, last_d1_scan: 0, last_d2_scan: 0, last_d3_fusion: 0 };
 let wsReconnectTimer = null;
-
-// Track previous timestamps to detect active scanning
 let prevTimestamps = { d1: 0, d2: 0, d3: 0 };
 
-// ── Spiral colors ──────────────────────────────────────────────────
+// ── V5.2 Institutional Categories (top filter) ─────────────────────
+const MARKET_TYPE_COLORS = {
+  TREND:     '#22c55e',  // institutional trend (expansion)
+  RE_ENTRY:  '#f59e0b',  // institutional re-entry (pullback)
+  REVERSAL:  '#ef4444',  // institutional reversal (failure)
+  DORMANT:   '#6b7280',
+};
+
+const MARKET_TYPE_LABELS = {
+  TREND:    '🏛 Institutional Trend',
+  RE_ENTRY: '🏛 Institutional Re-Entry',
+  REVERSAL: '🏛 Institutional Reversal',
+  DORMANT:  '⚪ Dormant',
+};
+
+const TRADING_DECISION_COLORS = {
+  'Trade With Trend':        '#22c55e',
+  'Wait For Confirmation':   '#3b82f6',
+  'Prepare Pullback Entry':  '#f59e0b',
+  'Prepare Reversal':        '#ef4444',
+  'Avoid':                   '#dc2626',
+  'No Edge':                 '#6b7280',
+};
+
+// Spiral still used for accent coloring (kept for visual continuity)
 const SPIRAL_COLORS = {
   Expansion: '#22c55e',
-  Correction: '#f97316',
+  Correction: '#f59e0b',
   Failure: '#ef4444',
-  Neutral: '#6b7280'
+  Neutral: '#6b7280',
 };
 
 // ── Time helpers ────────────────────────────────────────────────────
@@ -53,7 +76,7 @@ function connectWS() {
       const data = JSON.parse(event.data);
       if (data.type === 'INITIAL') {
         allSignals = data.signals || [];
-        allSignals.sort((a, b) => (b.d2_score || 0) - (a.d2_score || 0));
+        sortSignals();
         if (data.stats) {
           stats = data.stats;
           updateStatsUI();
@@ -68,7 +91,7 @@ function connectWS() {
         } else {
           allSignals.unshift(sig);
         }
-        allSignals.sort((a, b) => (b.d2_score || 0) - (a.d2_score || 0));
+        sortSignals();
         if (allSignals.length > 100) allSignals = allSignals.slice(0, 100);
         renderSignals();
         if (idx < 0) flashNew(sig.signal_id);
@@ -86,6 +109,17 @@ function connectWS() {
   ws.onerror = () => {
     console.error('[ws-fusion] Connection error');
   };
+}
+
+function sortSignals() {
+  allSignals.sort((a, b) => {
+    const aMee = getMEE(a);
+    const bMee = getMEE(b);
+    const aConf = aMee.evolutionConfidence || 0;
+    const bConf = bMee.evolutionConfidence || 0;
+    if (bConf !== aConf) return bConf - aConf;
+    return (b.d2_score || 0) - (a.d2_score || 0);
+  });
 }
 
 function setWsStatus(status) {
@@ -125,7 +159,6 @@ function updateScanItem(itemId, statusId, timeId, currentTs, key) {
 
   if (currentTs > prev && currentTs > 0) {
     prevTimestamps[key] = currentTs;
-
     item.classList.remove('done', 'idle', 'error');
     item.classList.add('scanning');
     statusEl.classList.remove('done', 'error');
@@ -142,7 +175,6 @@ function updateScanItem(itemId, statusId, timeId, currentTs, key) {
       statusEl.textContent = 'Done';
       scanTimers[key] = null;
     }, 3000);
-
     return;
   }
 
@@ -216,46 +248,37 @@ function freshnessIcon(f) {
   return icons[f] || '';
 }
 
-// ── Market Evolution helpers ───────────────────────────────────────
+// ── Market Evolution helpers (V5.2) ────────────────────────────────
 function getMEE(s) {
   return s.marketEvolution || s.mee || {};
+}
+
+function categoryColor(cat) {
+  return MARKET_TYPE_COLORS[cat] || MARKET_TYPE_COLORS.DORMANT;
+}
+
+function categoryLabel(cat) {
+  return MARKET_TYPE_LABELS[cat] || MARKET_TYPE_LABELS.DORMANT;
+}
+
+function decisionColor(decision) {
+  return TRADING_DECISION_COLORS[decision] || TRADING_DECISION_COLORS['No Edge'];
+}
+
+function evolutionVelocityArrow(vel) {
+  if (vel === 'improving') return { glyph: '↑', cls: 'evo-up' };
+  if (vel === 'degrading') return { glyph: '↓', cls: 'evo-down' };
+  return { glyph: '→', cls: 'evo-stable' };
 }
 
 function spiralColor(spiral) {
   return SPIRAL_COLORS[spiral] || SPIRAL_COLORS.Neutral;
 }
 
-function evolutionArrow(evo) {
-  // Returns { glyph, cls } based on momentum velocity direction/magnitude
-  const v = Number(evo);
-  if (Number.isNaN(v)) {
-    return { glyph: '→', cls: 'evo-stable', signed: '0' };
-  }
-  const av = Math.abs(v);
-  if (av < 1.5) return { glyph: '→', cls: 'evo-stable', signed: '0' };
-  if (v > 6)   return { glyph: '↑↑', cls: 'evo-strong-up', signed: '+' + v.toFixed(1) };
-  if (v > 0)   return { glyph: '↑', cls: 'evo-up', signed: '+' + v.toFixed(1) };
-  if (v < -6)  return { glyph: '↓↓', cls: 'evo-strong-down', signed: v.toFixed(1) };
-  return { glyph: '↓', cls: 'evo-down', signed: v.toFixed(1) };
-}
-
-function momentumVelocityText(s) {
-  const mee = getMEE(s);
-  const v = Number(mee.momentumVelocity);
-  if (Number.isNaN(v)) return '—';
-  return (v >= 0 ? '+' : '') + v.toFixed(1);
-}
-
-function spiralClass(spiral) {
-  const k = (spiral || '').toLowerCase();
-  return 'spiral-' + k;
-}
-
 function evolutionClass(evo) {
   const k = (evo || '').toLowerCase();
   if (k === 'improving') return 'evo-improving';
   if (k === 'degrading') return 'evo-degrading';
-  if (k === 'stable')    return 'evo-stable';
   return 'evo-stable';
 }
 
@@ -267,16 +290,7 @@ function confidenceClass(c) {
   return 'conf-low';
 }
 
-function riskClass(r) {
-  const k = (r || '').toLowerCase();
-  if (k.includes('very low')) return 'risk-very-low';
-  if (k.includes('low'))      return 'risk-low';
-  if (k.includes('medium'))   return 'risk-medium';
-  if (k.includes('high'))     return 'risk-high';
-  return 'risk-unknown';
-}
-
-// ── SMC Tag Builder ────────────────────────────────────────────────
+// ── SMC Tag Builder (preserved from V5.1) ─────────────────────────
 function smcTag(label, value, opts = {}) {
   if (!value || value === '—' || value === 0) return '';
   const cls = opts.className || '';
@@ -295,53 +309,71 @@ function zoneBadge(tag) {
   return `<span class="zone-badge" style="color:${c};border-color:${c}30;background:${c}10">${tag}</span>`;
 }
 
-// ── Transition History ─────────────────────────────────────────────
-function buildTransitionTrail(s) {
+// ── V5.2: Build Evolution Journey Strip ───────────────────────────
+function buildEvolutionJourney(s) {
   const mee = getMEE(s);
-  const history = Array.isArray(mee.transitionHistory) ? mee.transitionHistory : [];
-  if (history.length === 0) {
-    return `<span class="no-data">No transition history yet</span>`;
-  }
-  const last6 = history.slice(-6);
-  return last6.map((h, i) => {
-    const isLast = i === last6.length - 1;
-    const cls = isLast ? 'transition-pill current' : 'transition-pill';
-    const spColor = spiralColor(h.spiral);
-    return `<span class="${cls}" style="color:${spColor};border-color:${spColor}40;background:${spColor}10">
-      ${h.state || '—'}
-    </span>${isLast ? '' : '<span class="transition-arrow">→</span>'}`;
-  }).join('');
+  const prev = mee.previousState || '—';
+  const curr = mee.state || '—';
+  const next = mee.nextProbableState || '—';
+  const vel = mee.evolutionVelocity || 'stable';
+  const cat = mee.institutionalCategory || 'DORMANT';
+  const arrow = evolutionVelocityArrow(vel);
+  const catColor = categoryColor(cat);
+
+  return `
+    <div class="evo-journey" data-cat="${cat}">
+      <div class="evo-node evo-prev">
+        <div class="evo-node-label">Previous</div>
+        <div class="evo-node-name">${prev}</div>
+      </div>
+      <div class="evo-arrow-down" aria-hidden="true">↓</div>
+      <div class="evo-node evo-curr" style="--accent:${catColor}">
+        <div class="evo-node-label">Current</div>
+        <div class="evo-node-name">${curr}</div>
+      </div>
+      <div class="evo-arrow-down" aria-hidden="true">↓</div>
+      <div class="evo-node evo-next">
+        <div class="evo-node-label">Expected</div>
+        <div class="evo-node-name">${next}</div>
+      </div>
+      <div class="evo-status-row">
+        <span class="evo-status ${arrow.cls}">${arrow.glyph} ${vel.charAt(0).toUpperCase() + vel.slice(1)}</span>
+      </div>
+    </div>
+  `;
 }
 
-// ── Build Card ─────────────────────────────────────────────────────
+// ── Build Card (V5.2 institutional layout) ──────────────────────────
 function buildCard(s) {
+  const mee = getMEE(s);
   const dirIcon = s.direction === 'BULLISH' ? '🟢' : '🔴';
   const dirLabel = s.direction === 'BULLISH' ? 'Long' : 'Short';
-  const mee = getMEE(s);
-  const spiral = mee.spiral || 'Neutral';
-  const spColor = spiralColor(spiral);
+
+  // V5.2 fields
+  const cat = mee.institutionalCategory || 'DORMANT';
+  const decision = mee.tradingDecision || 'No Edge';
+  const catColor = categoryColor(cat);
+  const decisionColorVal = decisionColor(decision);
+  const confidence = mee.evolutionConfidence ?? mee.confidence ?? 0;
+
   const isExpanded = expandedCards.has(s.signal_id);
   const isNew = Date.now() - new Date(s.born_at || 0).getTime() < 5000;
 
-  // TradingView chart
+  // TradingView / Binance links
   const rawCoin = s.coin || 'BTCUSDT';
   const base = rawCoin.replace(/USDT$/i, '').replace(/BINANCE:/i, '');
   const tvUrl = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent('BINANCE:' + base + 'USDT.P');
-  // Binance Futures trade page
   const binanceUrl = 'https://www.binance.com/en/futures/' + encodeURIComponent(base + 'USDT');
 
   // D1/D2 structure
   const d1s = s.d1_structure || {};
   const d2s = s.d2_structure || {};
   const tfs = s.d1_timeframes || {};
+  const alignment = s.alignment || {};
 
   // Score sparkline
   const hist = (s.score_history || []).slice(-12);
   const sparkData = hist.map(h => h[1] || h.score || 0).join(',');
-
-  // Evolution arrow from momentumVelocity
-  const arrow = evolutionArrow(mee.momentumVelocity);
-  const momentumText = momentumVelocityText(s);
 
   // ── D1 SMC Tags ──────────────────────────────────────────────────
   const d1Tags = [
@@ -378,13 +410,33 @@ function buildCard(s) {
     return `<span class="tf-chip ${cls}">${tf} <strong>${d.score ?? 0}</strong></span>`;
   }).join('') || '<span class="tf-chip">—</span>';
 
+  // ── Alignment strip (V5.2) ────────────────────────────────────────
+  const alignScore = alignment.alignment_score || 0;
+  const alignCls = alignScore >= 15 ? 'align-high' : alignScore >= 10 ? 'align-med' : alignScore >= 5 ? 'align-low' : 'align-none';
+  const alignChecks = (alignment.components || {});
+  const alignChips = [
+    alignChecks.direction_agreement ? '<span class="align-chip ok">Dir ✓</span>' : '<span class="align-chip">Dir ✗</span>',
+    alignChecks.htf_ob_alignment ? '<span class="align-chip ok">HTF OB ✓</span>' : '<span class="align-chip">HTF OB ✗</span>',
+    alignChecks.htf_zone_alignment ? '<span class="align-chip ok">Zone ✓</span>' : '<span class="align-chip">Zone ✗</span>',
+    alignChecks.htf_liquidity_proximity ? '<span class="align-chip ok">LiQ ✓</span>' : '<span class="align-chip">LiQ ✗</span>',
+  ].join('');
+
+  // ── Volume Profile + Liquidity aggregate (preserved) ──────────────
+  const vpHtml = `
+    <div class="vp-row">
+      ${d1s.poc ? `<span class="vp-cell"><span class="vp-lbl">POC</span><span class="vp-val">${fmtPrice(d1s.poc)}</span></span>` : ''}
+      ${(d1s.va_low && d1s.va_high) ? `<span class="vp-cell"><span class="vp-lbl">VA</span><span class="vp-val">${fmtPrice(d1s.va_low)}–${fmtPrice(d1s.va_high)}</span></span>` : ''}
+      ${d1s.liq_swept ? `<span class="vp-cell"><span class="vp-lbl">Liq</span><span class="vp-val swept">SWPT ${fmtPrice(d1s.liq_level)}</span></span>` : ''}
+    </div>
+  `;
+
   // ── Card HTML ────────────────────────────────────────────────────
   return `
-  <div class="signal-card ${isNew ? 'is-new' : ''} ${isExpanded ? 'is-expanded' : ''}"
-       data-id="${s.signal_id}" data-spiral="${spiral}">
+  <div class="signal-card v52 ${isNew ? 'is-new' : ''} ${isExpanded ? 'is-expanded' : ''}"
+       data-id="${s.signal_id}" data-cat="${cat}" data-vel="${mee.evolutionVelocity || 'stable'}">
     <div class="card-header" onclick="toggleExpand('${s.signal_id}')">
       <div class="card-header-left">
-        <span class="bucket-pip" style="background:${spColor}"></span>
+        <span class="cat-pip" style="background:${catColor}"></span>
         <a class="coin-link" href="${tvUrl}" target="_blank" rel="noopener"
            title="View ${base} on TradingView" onclick="event.stopPropagation()">
           ${base}
@@ -394,10 +446,9 @@ function buildCard(s) {
            title="Trade ${base} on Binance Futures" onclick="event.stopPropagation()">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
         </a>
-        <span class="spiral-pill ${spiralClass(spiral)}" style="color:${spColor};border-color:${spColor}40;background:${spColor}10">
-          ${spiral}
+        <span class="cat-pill" style="color:${catColor};border-color:${catColor}40;background:${catColor}10">
+          ${categoryLabel(cat)}
         </span>
-        <span class="evo-arrow ${arrow.cls}">${arrow.glyph}</span>
         <span class="dir-pill ${s.direction.toLowerCase()}">${dirIcon} ${dirLabel}</span>
         <span class="freshness-pill">${freshnessIcon(s.freshness)} ${s.freshness || 'HOT'}</span>
       </div>
@@ -415,86 +466,32 @@ function buildCard(s) {
             <span class="tier-lbl ${(s.d2_tier || '').toLowerCase()}">${s.d2_tier || '—'}</span>
           </div>
         </div>
-        <span class="tf-badge">15M</span>
+        <span class="tf-badge">${s.timeframe || '15M'}</span>
       </div>
     </div>
 
+    <!-- V5.2: Institutional Interpretation Strip -->
+    <div class="institutional-strip" style="--cat-color:${catColor}">
+      <div class="inst-pill inst-interpretation">
+        <span class="inst-label">Interpretation</span>
+        <span class="inst-value">${categoryLabel(cat)}</span>
+      </div>
+      <div class="inst-pill inst-decision" style="--decision-color:${decisionColorVal}">
+        <span class="inst-label">Trading Decision</span>
+        <span class="inst-value" style="color:${decisionColorVal}">${decision}</span>
+      </div>
+      <div class="inst-pill inst-confidence">
+        <span class="inst-label">Evolution Confidence</span>
+        <span class="inst-value ${confidenceClass(confidence)}">${confidence}%</span>
+      </div>
+    </div>
+
+    <!-- V5.2: Evolution Journey -->
+    ${buildEvolutionJourney(s)}
+
     <div class="card-body ${isExpanded ? 'open' : ''}" id="detail-${s.signal_id}">
 
-      <!-- Market Evolution Block -->
-      <div class="mee-block" style="--spiral-color:${spColor}">
-        <div class="mee-top">
-          <div class="mee-state">
-            <div class="mee-state-name" style="color:${spColor}">${mee.state || 'Unknown'}</div>
-            <div class="mee-state-desc">${mee.description || ''}</div>
-          </div>
-          <div class="mee-indicators">
-            <div class="mee-indicator spiral-indicator">
-              <span class="mee-ind-label">Spiral</span>
-              <span class="mee-ind-val" style="color:${spColor}">${spiral}</span>
-            </div>
-            <div class="mee-indicator">
-              <span class="mee-ind-label">Evolution</span>
-              <span class="mee-ind-val ${evolutionClass(mee.evolution)}">
-                <span class="evo-arrow ${arrow.cls}">${arrow.glyph}</span>
-                ${arrow.signed}
-              </span>
-            </div>
-            <div class="mee-indicator">
-              <span class="mee-ind-label">Momentum</span>
-              <span class="mee-ind-val ${arrow.cls}">${momentumText}</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="mee-meta-row">
-          <div class="mee-meta">
-            <span class="mee-meta-lbl">Trade Style</span>
-            <span class="mee-meta-val">${mee.tradeStyle || '—'}</span>
-          </div>
-          <div class="mee-meta">
-            <span class="mee-meta-lbl">Action</span>
-            <span class="mee-meta-val mee-action">${mee.action || '—'}</span>
-          </div>
-          <div class="mee-meta">
-            <span class="mee-meta-lbl">Confidence</span>
-            <span class="mee-meta-val ${confidenceClass(mee.confidence)}">${mee.confidence ?? '—'}${mee.confidence != null ? '%' : ''}</span>
-          </div>
-          <div class="mee-meta">
-            <span class="mee-meta-lbl">Risk</span>
-            <span class="mee-meta-val ${riskClass(mee.risk)}">${mee.risk || '—'}</span>
-          </div>
-        </div>
-
-        <div class="mee-transition-row">
-          <div class="mee-transition prev">
-            <span class="mee-meta-lbl">Previous</span>
-            <span class="mee-meta-val">${mee.previousState || '—'}</span>
-          </div>
-          <div class="mee-arrow-sep">→</div>
-          <div class="mee-transition current">
-            <span class="mee-meta-lbl">Current</span>
-            <span class="mee-meta-val" style="color:${spColor}">${mee.state || '—'}</span>
-          </div>
-          <div class="mee-arrow-sep">→</div>
-          <div class="mee-transition next">
-            <span class="mee-meta-lbl">Next Most Probable</span>
-            <span class="mee-meta-val">${mee.nextProbableState || '—'}</span>
-          </div>
-        </div>
-
-        <div class="mee-trail-wrap">
-          <button class="mee-trail-toggle" onclick="event.stopPropagation(); toggleTrail('${s.signal_id}')">
-            <svg class="trail-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-            Transition Trail
-          </button>
-          <div class="mee-trail ${isExpanded ? 'open' : ''}" id="trail-${s.signal_id}">
-            ${buildTransitionTrail(s)}
-          </div>
-        </div>
-      </div>
-
-      <!-- SMC Structure: D1 HTF | D2 15M -->
+      <!-- Technical Context: D1 + D2 + Alignment + VP -->
       <div class="smc-row">
         <div class="smc-panel d1-panel">
           <div class="smc-header">
@@ -505,12 +502,24 @@ function buildCard(s) {
         </div>
         <div class="smc-panel d2-panel">
           <div class="smc-header">
-            <span class="smc-title">🎯 D2 15M</span>
+            <span class="smc-title">🎯 D2 ${s.timeframe || '15M'}</span>
             <span class="smc-tier ${(s.d2_tier || '').toLowerCase()}">${s.d2_tier || '—'}</span>
           </div>
           <div class="smc-tags">${d2Tags}</div>
         </div>
       </div>
+
+      <!-- Alignment (V5.2) -->
+      <div class="alignment-row ${alignCls}">
+        <div class="alignment-label">
+          <span>🔗 HTF/LTF Alignment</span>
+          <span class="alignment-score">${alignScore}/20</span>
+        </div>
+        <div class="alignment-chips">${alignChips}</div>
+      </div>
+
+      <!-- Volume Profile / Liquidity (preserved) -->
+      ${vpHtml}
 
       <!-- Trade Levels -->
       <div class="levels-row">
@@ -580,13 +589,21 @@ function renderSignals() {
 
   const filtered = allSignals.filter(s => {
     const mee = getMEE(s);
-    if (filters.spiral !== 'all' && mee.spiral !== filters.spiral) return false;
-    if (filters.evolution !== 'all' && mee.evolution !== filters.evolution) return false;
+    // Market Type filter
+    if (filters.marketType !== 'all') {
+      const sigCat = mee.institutionalCategory || 'DORMANT';
+      if (sigCat !== filters.marketType) return false;
+    }
+    // Evolution velocity filter
+    if (filters.evolution !== 'all') {
+      if ((mee.evolutionVelocity || 'stable') !== filters.evolution) return false;
+    }
+    // Direction filter
     if (filters.direction !== 'all' && s.direction !== filters.direction) return false;
     return true;
   });
 
-  updateSpiralCounts(filtered);
+  updateMarketTypeCounts();
 
   if (filtered.length === 0 && allSignals.length === 0) {
     container.innerHTML = '';
@@ -621,47 +638,43 @@ function updateEmptyState(state) {
 
   if (state === 'scanning') {
     title.textContent = 'Scanning Markets...';
-    msg.textContent = `${stats.d1_coins || 0} coins analyzed · HTF + 15M LTF`;
+    msg.textContent = `${stats.d1_coins || 0} coins analyzed · HTF + 15M LTF · 16-State Matrix`;
     if (spinner) spinner.style.display = 'block';
     if (progress) progress.style.width = Math.min(100, (stats.d1_coins / 529) * 100) + '%';
   } else if (state === 'idle') {
-    title.textContent = 'Initializing Scanner...';
-    msg.textContent = 'Fetching 529 coins · HTF + 15M LTF analysis';
+    title.textContent = 'Initializing Market Evolution Engine...';
+    msg.textContent = 'Scanning 529 coins · HTF + 15M LTF · 16-State Matrix';
     if (spinner) spinner.style.display = 'block';
     if (progress) progress.style.width = '0%';
   } else {
     title.textContent = 'Waiting for signals...';
-    msg.textContent = 'Scanning 529 coins across 1H / 4H / 1D + 15M';
+    msg.textContent = '529 coins across 1H / 4H / 1D + 15M · 16-State Matrix';
     if (spinner) spinner.style.display = 'none';
     if (progress) progress.style.width = '100%';
   }
 }
 
 function clearFilters() {
-  filters = { spiral: 'all', evolution: 'all', direction: 'all' };
+  filters = { marketType: 'all', evolution: 'all', direction: 'all' };
   document.querySelectorAll('.filter-chip, .dir-chip').forEach(b => b.classList.remove('active'));
-  document.querySelector('[data-filter-spiral="all"]')?.classList.add('active');
+  document.querySelector('[data-filter-mt="all"]')?.classList.add('active');
   document.querySelector('[data-filter-evo="all"]')?.classList.add('active');
   document.querySelector('[data-filter-dir="all"]')?.classList.add('active');
   renderSignals();
 }
 
-// ── Spiral Counts ──────────────────────────────────────────────────
-function updateSpiralCounts(filtered) {
-  const counts = { Expansion: 0, Correction: 0, Failure: 0, Neutral: 0 };
-  filtered.forEach(s => {
-    const sp = getMEE(s).spiral;
-    if (counts[sp] != null) counts[sp]++;
+// ── V5.2 Market Type Counts ───────────────────────────────────────
+function updateMarketTypeCounts() {
+  const counts = { TREND: 0, RE_ENTRY: 0, REVERSAL: 0, DORMANT: 0 };
+  allSignals.forEach(s => {
+    const cat = getMEE(s).institutionalCategory || 'DORMANT';
+    if (counts[cat] != null) counts[cat]++;
   });
-
-  const set = (id, v) => {
-    const el = document.getElementById(id);
-    if (el) el.textContent = v;
-  };
-  set('countExpansion', counts.Expansion);
-  set('countCorrection', counts.Correction);
-  set('countFailure', counts.Failure);
-  set('countNeutral', counts.Neutral);
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  set('countTrend', counts.TREND);
+  set('countReentry', counts.RE_ENTRY);
+  set('countReversal', counts.REVERSAL);
+  set('countDormant', counts.DORMANT);
 }
 
 // ── Sparklines ─────────────────────────────────────────────────────
@@ -687,7 +700,6 @@ function drawSparklines() {
       if (i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
     });
-
     const lastX = w, lastY = h - ((vals[vals.length-1] - min) / range) * (h - 4) - 2;
     ctx.lineTo(lastX, h);
     ctx.lineTo(0, h);
@@ -714,15 +726,6 @@ function drawSparklines() {
   });
 }
 
-// ── Transition Trail Toggle ────────────────────────────────────────
-function toggleTrail(id) {
-  const trail = document.getElementById('trail-' + id);
-  if (!trail) return;
-  trail.classList.toggle('open');
-  const btn = trail.previousElementSibling;
-  if (btn) btn.classList.toggle('expanded');
-}
-
 // ── Health Poll (fallback for scan timestamps) ─────────────────────
 async function checkHealth() {
   try {
@@ -745,12 +748,12 @@ async function checkHealth() {
   }
 }
 
-// ── Filters ────────────────────────────────────────────────────────
+// ── Filters (V5.2: market type + evolution velocity + direction) ──
 function initFilters() {
-  document.querySelectorAll('.spiral-chip').forEach(btn => {
+  document.querySelectorAll('.mt-chip').forEach(btn => {
     btn.addEventListener('click', () => {
-      filters.spiral = btn.dataset.filterSpiral;
-      document.querySelectorAll('.spiral-chip').forEach(b => b.classList.remove('active'));
+      filters.marketType = btn.dataset.filterMt;
+      document.querySelectorAll('.mt-chip').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       renderSignals();
     });

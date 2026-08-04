@@ -81,7 +81,7 @@ class LTFEngine:
         # Get D1-approved coins (SNIPER/OPPORTUNITY only)
         scan_targets = state_store.get_active_coins()
         if not scan_targets:
-            logger.debug("[ltf] No active D1 coins yet, skipping cycle")
+            logger.info("[ltf] No active D1 coins yet, skipping cycle")
             return
 
         d1_approved = []
@@ -91,10 +91,10 @@ class LTFEngine:
                 d1_approved.append((coin, d1.get("tier", ""), d1.get("score", 0)))
 
         if not d1_approved:
-            logger.debug("[ltf] No D1 SNIPER/OPPORTUNITY coins to scan")
+            logger.info("[ltf] No D1 SNIPER/OPPORTUNITY/WATCH coins to scan (got %d active)", len(scan_targets))
             return
 
-        logger.debug(f"[ltf] D1 approved {len(d1_approved)} coins for 15M entry scan")
+        logger.info(f"[ltf] D1 approved {len(d1_approved)} coins for 15M entry scan")
 
         # DEBUG: show all D1 tiers received
         for coin in scan_targets:
