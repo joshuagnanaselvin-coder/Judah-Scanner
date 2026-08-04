@@ -1,34 +1,30 @@
-"""Dimension 2 — LTF Scanner Orchestrator (15M timeframe).
+"""Dimension 2 — LTF Scanner Orchestrator (15M timeframe by default).
 
-Exact copy of D1's scanner.py pattern, adapted for 15M:
+V5.1: delegates analysis to the shared scanner_engine.
+The analyzer itself (Flow → CRT → SMC → Momentum → Score → Tier) lives in
+backend.engines.scanner_engine. This module orchestrates the scan loop:
 
   PASS 1: Revalidate + refresh existing D2 signals
   PASS 2: Candidate filter → concurrent scan for new signals
   PASS 3: Write D2 tiers to state_store
 
 Key differences from D1:
-  - 15M timeframe only (not 1H/4H/1D)
+  - LTF timeframes (15M/5M, configurable)
   - Uses LTFSignal objects (not plain dicts)
   - Stores to state_store.d2_signals (not signal_store)
   - Writes state_store timestamp — D3 watches for changes
-  - NO D1 influence on score — completely independent 4-layer scoring
+  - Scoped to D1-approved coins only
 
 Input: all D1 coins (SNIPER, OPPORTUNITY, WATCH — REJECTED are skipped).
 Dimensions work independently during the process.
 """
-import asyncio
-import logging
-import time as _time_module
-from datetime import datetime, timezone
-from typing import Optional
-from backend.market_data import market_data
-from backend.engines.ltf_scanner import scan_entry, LTFSignal
-from backend.candidate_selector import should_select
-from backend.state_store import state_store
 from backend.config import (
     D2_SCAN_INTERVAL_SECONDS, D2_SIGNAL_TTL_MINUTES,
+    TIMEFRAMES_LTF,
     SCAN_CONCURRENCY,
 )
+import logging
+from backend.engines.ltf_scanner import LTFSignal
 
 logger = logging.getLogger("judah.ltf_engine")
 
