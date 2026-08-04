@@ -25,6 +25,8 @@ from backend.config import (
 )
 from backend.state_store import state_store
 from backend.ws_hub import broadcast, get_initial_payload
+from backend.market_evolution import evaluate as me_evaluate, get_dashboard_stats
+from backend.market_evolution.history import history_store
 
 logger = logging.getLogger("judah.fusion")
 
@@ -321,6 +323,17 @@ class FusionEngine:
             "born_at": getattr(d2, 'born_at', datetime.now(timezone.utc)).isoformat(),
             "last_scan": getattr(d2, 'last_scan', datetime.now(timezone.utc)).isoformat(),
         }
+
+        # ── Market Evolution Engine (16-state matrix) ─────────────────
+        # The new primary object. Replaces D3 buckets as the
+        # single source of truth the frontend consumes.
+        me_state = me_evaluate(
+            coin,
+            d1_tier, d1_score,
+            d2_tier_name, d2_score,
+            direction=package["direction"],
+        )
+        package["marketEvolution"] = me_state.to_dict()
 
         await state_store.set_d3_fusion(coin, package)
         await broadcast({"type": "signal", "data": package})

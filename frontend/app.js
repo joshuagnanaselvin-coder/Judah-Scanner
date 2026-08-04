@@ -1,18 +1,26 @@
 // ═══════════════════════════════════════════════════════════════════════
 // Judah Scanner — Frontend
-// D3 Fusion: HTF (1H/4H/1D) + 15M LTF → Bucket Signals
+// D3 Fusion: HTF (1H/4H/1D) + 15M LTF → Market Evolution (MEE) signals
 // ═══════════════════════════════════════════════════════════════════════
 
 // ── State ──────────────────────────────────────────────────────────
 let allSignals = [];
 let ws = null;
-let filters = { bucket: 'all', direction: 'all' };
+let filters = { spiral: 'all', evolution: 'all', direction: 'all' };
 const expandedCards = new Set();
 let stats = { d1_coins: 0, d2_signals: 0, d3_fusion: 0, last_d1_scan: 0, last_d2_scan: 0, last_d3_fusion: 0 };
 let wsReconnectTimer = null;
 
 // Track previous timestamps to detect active scanning
 let prevTimestamps = { d1: 0, d2: 0, d3: 0 };
+
+// ── Spiral colors ──────────────────────────────────────────────────
+const SPIRAL_COLORS = {
+  Expansion: '#22c55e',
+  Correction: '#f97316',
+  Failure: '#ef4444',
+  Neutral: '#6b7280'
+};
 
 // ── Time helpers ────────────────────────────────────────────────────
 function timeAgo(ts) {
@@ -99,8 +107,6 @@ function setWsStatus(status) {
 }
 
 // ── Scan Activity Bar ──────────────────────────────────────────────
-// Derives scanning state from timestamp changes via health polling + WS.
-// When a timestamp moves → "scanning" for ~3s, then "done" with time-ago.
 let scanTimers = { d1: null, d2: null, d3: null };
 
 function updateScanActivity() {
@@ -117,11 +123,9 @@ function updateScanItem(itemId, statusId, timeId, currentTs, key) {
 
   const prev = prevTimestamps[key] || 0;
 
-  // Timestamp changed → scanning just happened
   if (currentTs > prev && currentTs > 0) {
     prevTimestamps[key] = currentTs;
 
-    // Show scanning state
     item.classList.remove('done', 'idle', 'error');
     item.classList.add('scanning');
     statusEl.classList.remove('done', 'error');
@@ -129,7 +133,6 @@ function updateScanItem(itemId, statusId, timeId, currentTs, key) {
     statusEl.textContent = 'Scanning';
     if (timeEl) timeEl.textContent = '';
 
-    // Clear previous timer, set new one
     if (scanTimers[key]) clearTimeout(scanTimers[key]);
     scanTimers[key] = setTimeout(() => {
       item.classList.remove('scanning');
@@ -143,7 +146,6 @@ function updateScanItem(itemId, statusId, timeId, currentTs, key) {
     return;
   }
 
-  // No scan yet — idle
   if (currentTs === 0 || prev === 0) {
     item.classList.remove('scanning', 'done', 'error');
     item.classList.add('idle');
@@ -152,7 +154,6 @@ function updateScanItem(itemId, statusId, timeId, currentTs, key) {
     return;
   }
 
-  // Otherwise show time-ago (from the most recent scan)
   const diff = Date.now() / 1000 - currentTs;
   if (diff < 5) {
     statusEl.textContent = 'Just now';
@@ -215,6 +216,66 @@ function freshnessIcon(f) {
   return icons[f] || '';
 }
 
+// ── Market Evolution helpers ───────────────────────────────────────
+function getMEE(s) {
+  return s.marketEvolution || s.mee || {};
+}
+
+function spiralColor(spiral) {
+  return SPIRAL_COLORS[spiral] || SPIRAL_COLORS.Neutral;
+}
+
+function evolutionArrow(evo) {
+  // Returns { glyph, cls } based on momentum velocity direction/magnitude
+  const v = Number(evo);
+  if (Number.isNaN(v)) {
+    return { glyph: '→', cls: 'evo-stable', signed: '0' };
+  }
+  const av = Math.abs(v);
+  if (av < 1.5) return { glyph: '→', cls: 'evo-stable', signed: '0' };
+  if (v > 6)   return { glyph: '↑↑', cls: 'evo-strong-up', signed: '+' + v.toFixed(1) };
+  if (v > 0)   return { glyph: '↑', cls: 'evo-up', signed: '+' + v.toFixed(1) };
+  if (v < -6)  return { glyph: '↓↓', cls: 'evo-strong-down', signed: v.toFixed(1) };
+  return { glyph: '↓', cls: 'evo-down', signed: v.toFixed(1) };
+}
+
+function momentumVelocityText(s) {
+  const mee = getMEE(s);
+  const v = Number(mee.momentumVelocity);
+  if (Number.isNaN(v)) return '—';
+  return (v >= 0 ? '+' : '') + v.toFixed(1);
+}
+
+function spiralClass(spiral) {
+  const k = (spiral || '').toLowerCase();
+  return 'spiral-' + k;
+}
+
+function evolutionClass(evo) {
+  const k = (evo || '').toLowerCase();
+  if (k === 'improving') return 'evo-improving';
+  if (k === 'degrading') return 'evo-degrading';
+  if (k === 'stable')    return 'evo-stable';
+  return 'evo-stable';
+}
+
+function confidenceClass(c) {
+  const n = Number(c) || 0;
+  if (n >= 85) return 'conf-very-high';
+  if (n >= 70) return 'conf-high';
+  if (n >= 50) return 'conf-medium';
+  return 'conf-low';
+}
+
+function riskClass(r) {
+  const k = (r || '').toLowerCase();
+  if (k.includes('very low')) return 'risk-very-low';
+  if (k.includes('low'))      return 'risk-low';
+  if (k.includes('medium'))   return 'risk-medium';
+  if (k.includes('high'))     return 'risk-high';
+  return 'risk-unknown';
+}
+
 // ── SMC Tag Builder ────────────────────────────────────────────────
 function smcTag(label, value, opts = {}) {
   if (!value || value === '—' || value === 0) return '';
@@ -234,11 +295,31 @@ function zoneBadge(tag) {
   return `<span class="zone-badge" style="color:${c};border-color:${c}30;background:${c}10">${tag}</span>`;
 }
 
+// ── Transition History ─────────────────────────────────────────────
+function buildTransitionTrail(s) {
+  const mee = getMEE(s);
+  const history = Array.isArray(mee.transitionHistory) ? mee.transitionHistory : [];
+  if (history.length === 0) {
+    return `<span class="no-data">No transition history yet</span>`;
+  }
+  const last6 = history.slice(-6);
+  return last6.map((h, i) => {
+    const isLast = i === last6.length - 1;
+    const cls = isLast ? 'transition-pill current' : 'transition-pill';
+    const spColor = spiralColor(h.spiral);
+    return `<span class="${cls}" style="color:${spColor};border-color:${spColor}40;background:${spColor}10">
+      ${h.state || '—'}
+    </span>${isLast ? '' : '<span class="transition-arrow">→</span>'}`;
+  }).join('');
+}
+
 // ── Build Card ─────────────────────────────────────────────────────
 function buildCard(s) {
   const dirIcon = s.direction === 'BULLISH' ? '🟢' : '🔴';
   const dirLabel = s.direction === 'BULLISH' ? 'Long' : 'Short';
-  const bucketColor = s.bucket_color || '#6b7280';
+  const mee = getMEE(s);
+  const spiral = mee.spiral || 'Neutral';
+  const spColor = spiralColor(spiral);
   const isExpanded = expandedCards.has(s.signal_id);
   const isNew = Date.now() - new Date(s.born_at || 0).getTime() < 5000;
 
@@ -257,6 +338,10 @@ function buildCard(s) {
   // Score sparkline
   const hist = (s.score_history || []).slice(-12);
   const sparkData = hist.map(h => h[1] || h.score || 0).join(',');
+
+  // Evolution arrow from momentumVelocity
+  const arrow = evolutionArrow(mee.momentumVelocity);
+  const momentumText = momentumVelocityText(s);
 
   // ── D1 SMC Tags ──────────────────────────────────────────────────
   const d1Tags = [
@@ -296,10 +381,10 @@ function buildCard(s) {
   // ── Card HTML ────────────────────────────────────────────────────
   return `
   <div class="signal-card ${isNew ? 'is-new' : ''} ${isExpanded ? 'is-expanded' : ''}"
-       data-id="${s.signal_id}" data-bucket="${s.bucket}">
+       data-id="${s.signal_id}" data-spiral="${spiral}">
     <div class="card-header" onclick="toggleExpand('${s.signal_id}')">
       <div class="card-header-left">
-        <span class="bucket-pip" style="background:${bucketColor}"></span>
+        <span class="bucket-pip" style="background:${spColor}"></span>
         <a class="coin-link" href="${tvUrl}" target="_blank" rel="noopener"
            title="View ${base} on TradingView" onclick="event.stopPropagation()">
           ${base}
@@ -309,9 +394,10 @@ function buildCard(s) {
            title="Trade ${base} on Binance Futures" onclick="event.stopPropagation()">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
         </a>
-        <span class="bucket-pill" style="background:${bucketColor}18;color:${bucketColor};border-color:${bucketColor}30">
-          ${s.bucket_icon || ''} ${s.bucket_label || s.bucket}
+        <span class="spiral-pill ${spiralClass(spiral)}" style="color:${spColor};border-color:${spColor}40;background:${spColor}10">
+          ${spiral}
         </span>
+        <span class="evo-arrow ${arrow.cls}">${arrow.glyph}</span>
         <span class="dir-pill ${s.direction.toLowerCase()}">${dirIcon} ${dirLabel}</span>
         <span class="freshness-pill">${freshnessIcon(s.freshness)} ${s.freshness || 'HOT'}</span>
       </div>
@@ -334,6 +420,79 @@ function buildCard(s) {
     </div>
 
     <div class="card-body ${isExpanded ? 'open' : ''}" id="detail-${s.signal_id}">
+
+      <!-- Market Evolution Block -->
+      <div class="mee-block" style="--spiral-color:${spColor}">
+        <div class="mee-top">
+          <div class="mee-state">
+            <div class="mee-state-name" style="color:${spColor}">${mee.state || 'Unknown'}</div>
+            <div class="mee-state-desc">${mee.description || ''}</div>
+          </div>
+          <div class="mee-indicators">
+            <div class="mee-indicator spiral-indicator">
+              <span class="mee-ind-label">Spiral</span>
+              <span class="mee-ind-val" style="color:${spColor}">${spiral}</span>
+            </div>
+            <div class="mee-indicator">
+              <span class="mee-ind-label">Evolution</span>
+              <span class="mee-ind-val ${evolutionClass(mee.evolution)}">
+                <span class="evo-arrow ${arrow.cls}">${arrow.glyph}</span>
+                ${arrow.signed}
+              </span>
+            </div>
+            <div class="mee-indicator">
+              <span class="mee-ind-label">Momentum</span>
+              <span class="mee-ind-val ${arrow.cls}">${momentumText}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="mee-meta-row">
+          <div class="mee-meta">
+            <span class="mee-meta-lbl">Trade Style</span>
+            <span class="mee-meta-val">${mee.tradeStyle || '—'}</span>
+          </div>
+          <div class="mee-meta">
+            <span class="mee-meta-lbl">Action</span>
+            <span class="mee-meta-val mee-action">${mee.action || '—'}</span>
+          </div>
+          <div class="mee-meta">
+            <span class="mee-meta-lbl">Confidence</span>
+            <span class="mee-meta-val ${confidenceClass(mee.confidence)}">${mee.confidence ?? '—'}${mee.confidence != null ? '%' : ''}</span>
+          </div>
+          <div class="mee-meta">
+            <span class="mee-meta-lbl">Risk</span>
+            <span class="mee-meta-val ${riskClass(mee.risk)}">${mee.risk || '—'}</span>
+          </div>
+        </div>
+
+        <div class="mee-transition-row">
+          <div class="mee-transition prev">
+            <span class="mee-meta-lbl">Previous</span>
+            <span class="mee-meta-val">${mee.previousState || '—'}</span>
+          </div>
+          <div class="mee-arrow-sep">→</div>
+          <div class="mee-transition current">
+            <span class="mee-meta-lbl">Current</span>
+            <span class="mee-meta-val" style="color:${spColor}">${mee.state || '—'}</span>
+          </div>
+          <div class="mee-arrow-sep">→</div>
+          <div class="mee-transition next">
+            <span class="mee-meta-lbl">Next Most Probable</span>
+            <span class="mee-meta-val">${mee.nextProbableState || '—'}</span>
+          </div>
+        </div>
+
+        <div class="mee-trail-wrap">
+          <button class="mee-trail-toggle" onclick="event.stopPropagation(); toggleTrail('${s.signal_id}')">
+            <svg class="trail-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+            Transition Trail
+          </button>
+          <div class="mee-trail ${isExpanded ? 'open' : ''}" id="trail-${s.signal_id}">
+            ${buildTransitionTrail(s)}
+          </div>
+        </div>
+      </div>
 
       <!-- SMC Structure: D1 HTF | D2 15M -->
       <div class="smc-row">
@@ -420,12 +579,14 @@ function renderSignals() {
   if (!container) return;
 
   const filtered = allSignals.filter(s => {
-    if (filters.bucket !== 'all' && s.bucket !== filters.bucket) return false;
+    const mee = getMEE(s);
+    if (filters.spiral !== 'all' && mee.spiral !== filters.spiral) return false;
+    if (filters.evolution !== 'all' && mee.evolution !== filters.evolution) return false;
     if (filters.direction !== 'all' && s.direction !== filters.direction) return false;
     return true;
   });
 
-  updateBucketCounts(filtered);
+  updateSpiralCounts(filtered);
 
   if (filtered.length === 0 && allSignals.length === 0) {
     container.innerHTML = '';
@@ -477,30 +638,30 @@ function updateEmptyState(state) {
 }
 
 function clearFilters() {
-  filters = { bucket: 'all', direction: 'all' };
+  filters = { spiral: 'all', evolution: 'all', direction: 'all' };
   document.querySelectorAll('.filter-chip, .dir-chip').forEach(b => b.classList.remove('active'));
-  document.querySelector('[data-filter-bucket="all"]')?.classList.add('active');
+  document.querySelector('[data-filter-spiral="all"]')?.classList.add('active');
+  document.querySelector('[data-filter-evo="all"]')?.classList.add('active');
   document.querySelector('[data-filter-dir="all"]')?.classList.add('active');
   renderSignals();
 }
 
-// ── Bucket Counts ──────────────────────────────────────────────────
-function updateBucketCounts(filtered) {
-  const counts = {};
-  filtered.forEach(s => { counts[s.bucket] = (counts[s.bucket] || 0) + 1; });
+// ── Spiral Counts ──────────────────────────────────────────────────
+function updateSpiralCounts(filtered) {
+  const counts = { Expansion: 0, Correction: 0, Failure: 0, Neutral: 0 };
+  filtered.forEach(s => {
+    const sp = getMEE(s).spiral;
+    if (counts[sp] != null) counts[sp]++;
+  });
 
-  const set = (id, bucket) => {
+  const set = (id, v) => {
     const el = document.getElementById(id);
-    if (el) el.textContent = counts[bucket] || 0;
+    if (el) el.textContent = v;
   };
-  set('countReady', 'READY');
-  set('countBuilding', 'BUILDING');
-  set('countEarly', 'EARLY');
-  set('countDeveloping', 'DEVELOPING');
-  set('countWait', 'WAIT');
-  set('countMonitor', 'MONITOR');
-  set('countTrap', 'TRAP');
-  set('countIgnore', 'IGNORE');
+  set('countExpansion', counts.Expansion);
+  set('countCorrection', counts.Correction);
+  set('countFailure', counts.Failure);
+  set('countNeutral', counts.Neutral);
 }
 
 // ── Sparklines ─────────────────────────────────────────────────────
@@ -515,7 +676,6 @@ function drawSparklines() {
     const min = Math.min(...vals), max = Math.max(...vals);
     const range = max - min || 1;
 
-    // Gradient fill
     const grad = ctx.createLinearGradient(0, 0, 0, h);
     grad.addColorStop(0, 'rgba(59,130,246,0.15)');
     grad.addColorStop(1, 'rgba(59,130,246,0)');
@@ -528,7 +688,6 @@ function drawSparklines() {
       else ctx.lineTo(x, y);
     });
 
-    // Fill
     const lastX = w, lastY = h - ((vals[vals.length-1] - min) / range) * (h - 4) - 2;
     ctx.lineTo(lastX, h);
     ctx.lineTo(0, h);
@@ -536,7 +695,6 @@ function drawSparklines() {
     ctx.fillStyle = grad;
     ctx.fill();
 
-    // Line
     ctx.beginPath();
     ctx.strokeStyle = '#3b82f6';
     ctx.lineWidth = 1.5;
@@ -549,12 +707,20 @@ function drawSparklines() {
     });
     ctx.stroke();
 
-    // End dot
     ctx.beginPath();
     ctx.arc(lastX, lastY, 2, 0, Math.PI * 2);
     ctx.fillStyle = '#3b82f6';
     ctx.fill();
   });
+}
+
+// ── Transition Trail Toggle ────────────────────────────────────────
+function toggleTrail(id) {
+  const trail = document.getElementById('trail-' + id);
+  if (!trail) return;
+  trail.classList.toggle('open');
+  const btn = trail.previousElementSibling;
+  if (btn) btn.classList.toggle('expanded');
 }
 
 // ── Health Poll (fallback for scan timestamps) ─────────────────────
@@ -567,7 +733,6 @@ async function checkHealth() {
       updateStatsUI();
       updateScanActivity();
 
-      // Update empty state if no signals
       if (allSignals.length === 0) {
         const empty = document.getElementById('emptyState');
         if (empty && empty.parentNode) {
@@ -582,10 +747,19 @@ async function checkHealth() {
 
 // ── Filters ────────────────────────────────────────────────────────
 function initFilters() {
-  document.querySelectorAll('.filter-chip').forEach(btn => {
+  document.querySelectorAll('.spiral-chip').forEach(btn => {
     btn.addEventListener('click', () => {
-      filters.bucket = btn.dataset.filterBucket;
-      document.querySelectorAll('.filter-chip').forEach(b => b.classList.remove('active'));
+      filters.spiral = btn.dataset.filterSpiral;
+      document.querySelectorAll('.spiral-chip').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderSignals();
+    });
+  });
+
+  document.querySelectorAll('.evo-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      filters.evolution = btn.dataset.filterEvo;
+      document.querySelectorAll('.evo-chip').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       renderSignals();
     });
@@ -609,10 +783,8 @@ document.addEventListener('DOMContentLoaded', () => {
   connectWS();
   initFilters();
 
-  // Health poll every 3s (faster than before for live status feel)
   setInterval(checkHealth, 3000);
 
-  // Initial empty state
   const empty = document.getElementById('emptyState');
   if (empty) updateEmptyState('idle');
 });

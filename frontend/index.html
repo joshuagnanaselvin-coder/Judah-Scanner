@@ -90,36 +90,30 @@
       </div>
     </div>
 
-    <!-- BUCKET FILTERS -->
+    <!-- MEE FILTERS (Spiral + Evolution) -->
     <div class="filter-section">
-      <div class="bucket-scroll" id="bucketBar">
-        <button class="filter-chip active" data-filter-bucket="all">
-          <span class="chip-dot" style="background:#3b82f6"></span>All
+      <div class="filter-scroll" id="filterBar">
+        <span class="filter-group-label">Spiral</span>
+        <button class="filter-chip spiral-chip active" data-filter-spiral="all">All</button>
+        <button class="filter-chip spiral-chip spiral-expansion" data-filter-spiral="Expansion">
+          <span class="chip-dot" style="background:#22c55e"></span>Exp <span class="chip-count" id="countExpansion">0</span>
         </button>
-        <button class="filter-chip ready" data-filter-bucket="READY">
-          <span class="chip-dot" style="background:#22c55e"></span>Ready <span class="chip-count" id="countReady">0</span>
+        <button class="filter-chip spiral-chip spiral-correction" data-filter-spiral="Correction">
+          <span class="chip-dot" style="background:#f97316"></span>Corr <span class="chip-count" id="countCorrection">0</span>
         </button>
-        <button class="filter-chip building" data-filter-bucket="BUILDING">
-          <span class="chip-dot" style="background:#3b82f6"></span>Building <span class="chip-count" id="countBuilding">0</span>
+        <button class="filter-chip spiral-chip spiral-failure" data-filter-spiral="Failure">
+          <span class="chip-dot" style="background:#ef4444"></span>Fail <span class="chip-count" id="countFailure">0</span>
         </button>
-        <button class="filter-chip early" data-filter-bucket="EARLY">
-          <span class="chip-dot" style="background:#eab308"></span>Early <span class="chip-count" id="countEarly">0</span>
+        <button class="filter-chip spiral-chip spiral-neutral" data-filter-spiral="Neutral">
+          <span class="chip-dot" style="background:#6b7280"></span>Neutral <span class="chip-count" id="countNeutral">0</span>
         </button>
-        <button class="filter-chip developing" data-filter-bucket="DEVELOPING">
-          <span class="chip-dot" style="background:#f97316"></span>Dev <span class="chip-count" id="countDeveloping">0</span>
-        </button>
-        <button class="filter-chip wait" data-filter-bucket="WAIT">
-          <span class="chip-dot" style="background:#fbbf24"></span>Wait <span class="chip-count" id="countWait">0</span>
-        </button>
-        <button class="filter-chip monitor" data-filter-bucket="MONITOR">
-          <span class="chip-dot" style="background:#a855f7"></span>Monitor <span class="chip-count" id="countMonitor">0</span>
-        </button>
-        <button class="filter-chip trap" data-filter-bucket="TRAP">
-          <span class="chip-dot" style="background:#ef4444"></span>Trap <span class="chip-count" id="countTrap">0</span>
-        </button>
-        <button class="filter-chip ignore" data-filter-bucket="IGNORE">
-          <span class="chip-dot" style="background:#6b7280"></span>Off <span class="chip-count" id="countIgnore">0</span>
-        </button>
+
+        <span class="filter-sep"></span>
+        <span class="filter-group-label">Trend</span>
+        <button class="filter-chip evo-chip active" data-filter-evo="all">All</button>
+        <button class="filter-chip evo-chip evo-improving" data-filter-evo="improving">↑ Improving</button>
+        <button class="filter-chip evo-chip evo-stable" data-filter-evo="stable">→ Stable</button>
+        <button class="filter-chip evo-chip evo-degrading" data-filter-evo="degrading">↓ Degrading</button>
       </div>
 
       <div class="dir-filters">
