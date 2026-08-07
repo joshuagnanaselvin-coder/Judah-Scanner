@@ -116,6 +116,7 @@ D2_SCAN_INTERVAL_SECONDS = 5
 
 # === TIMEFRAMES ===
 TIMEFRAMES_HTF = ["1H", "4H", "1D"]  # Dimension 1
+TIMEFRAMES_LTF = ["15M"]  # Dimension 2
 ALL_TIMEFRAMES = ["15M", "1H", "4H", "1D"]  # All including D2
 # Backward-compat alias (D1 scanner still uses this name)
 TIMEFRAMES = TIMEFRAMES_HTF
