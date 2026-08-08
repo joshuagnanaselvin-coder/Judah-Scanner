@@ -73,8 +73,8 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
 
     # Flaw 3: Volume < 1.0x avg on key candle (last 2)
     if candles and len(candles) >= 2:
-        vol_avg = sum(c.get("volume", 0) for c in candles[-20:]) / min(len(candles[-20:]), 20)
-        last_vol = candles[-1].get("volume", 0)
+        vol_avg = sum(_get(c, 'volume') for c in candles[-20:]) / min(len(candles[-20:]), 20)
+        last_vol = _get(candles[-1], 'volume')
         if last_vol < vol_avg:
             flaws.append("low_volume_key_candle")
 
@@ -147,7 +147,7 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
     else:
         # FALLBACK: Weighted confidence for impulse coins
         logger.debug(f"[ltf_pipeline] CRT missing for {symbol} — trying SMC-only fallback")
-        fallback_crt = _build_smc_only_context(candles)
+        fallback_crt = build_smc_only_context(candles)
         if not fallback_crt:
             logger.debug(f"[ltf_pipeline] SKIP {symbol}: no CRT and no MSB direction")
             return None

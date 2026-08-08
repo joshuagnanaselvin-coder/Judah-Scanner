@@ -34,6 +34,6 @@ def get_initial_payload(store) -> dict:
     """Build the initial snapshot sent on WebSocket connect."""
     return {
         "type": "INITIAL",
-        "signals": store.get_all_decisions(),
+        "signals": list(store.get_all_decisions().values()),
         "stats": store.get_stats(),
     }

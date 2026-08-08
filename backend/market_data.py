@@ -56,11 +56,11 @@ class MarketData:
 
         # === Adaptive batch-wise concurrent bootstrap ===
         # Binance IP limit: 1200 req/min (weight=1 for klines).
-        # Start at 20 concurrent / 1.5s delay (~667/min). Back off on 429s.
-        BATCH_SIZE = 20
-        BASE_DELAY = 1.5
-        MAX_DELAY = 10.0
-        DELAY_STEP = 1.5
+        # 50 concurrent + 2.5s delay = ~1000/min safely under limit.
+        BATCH_SIZE = 50
+        BASE_DELAY = 2.5
+        MAX_DELAY = 5.0
+        DELAY_STEP = 1.0
 
         batch_delay = BASE_DELAY
         errors = 0
@@ -145,7 +145,7 @@ class MarketData:
             if attempt < max_retries - 1:
                 # 429 gets a longer backoff; other errors get shorter
                 if result == "RATE_LIMITED":
-                    wait = (2 ** attempt) * 2.0 + random.uniform(0, 1.0)  # 2s, 4s, 8s
+                    wait = (2 ** attempt) * 1.0 + random.uniform(0, 0.5)  # 1s, 2s, 4s
                 else:
                     wait = (2 ** attempt) * 0.5 + random.uniform(0, 0.5)  # 0.5s, 1s, 2s
                 logger.debug(f"Retry {attempt+1}/{max_retries} for {symbol} {interval} in {wait:.1f}s")
@@ -223,15 +223,19 @@ class MarketData:
                         self.on_candle_update(symbol, tf)
 
     def get_candles(self, symbol, tf):
-        """Lookup candles with case-insensitive timeframe key."""
+        """Lookup candles — returns a list (slice-safe).
+
+        Internal storage is a deque for O(1) append; we convert to tuple
+        here so callers can safely use slice syntax ([-30:], [-60:], etc.)
+        without hitting TypeError on deque.
+        """
         key = f"{symbol}_{tf}"
         if key in self.candles:
-            return self.candles[key]
-        # Case-insensitive fallback
+            return tuple(self.candles[key])
         tf_upper = tf.upper()
         key2 = f"{symbol}_{tf_upper}"
         if key2 in self.candles:
-            return self.candles[key2]
+            return tuple(self.candles[key2])
         return []
 
     async def close(self):

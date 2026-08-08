@@ -13,6 +13,7 @@ Type B signals (D1 REJECTED + strong D2) are valid trading opportunities.
 import asyncio
 import logging
 from datetime import datetime, timezone
+from typing import Any
 from backend.config import (
     TIER_SNIPER_SCORE,
     TIER_OPPORTUNITY_SCORE,
@@ -185,6 +186,9 @@ class FusionEngine:
                                f"| D1={alert['d1_tier']}({alert['d1_score']:.0f}) "
                                f"D2={alert['d2_tier']}({alert['d2_score']:.0f})")
 
+        # Update D3 fusion timestamp
+        await state_store.set_timestamp("last_d3_fusion")
+
     async def _fuse_coin(self, coin: str, type_e_alerts: list | None = None):
         """Fuse D1 + D2 for one coin. Returns package dict or None.
 
@@ -334,6 +338,10 @@ class FusionEngine:
                 "poc": d1_vp.get("poc_price", 0) if d1_vp else 0,
                 "va_high": d1_vp.get("va_high", 0) if d1_vp else 0,
                 "va_low": d1_vp.get("va_low", 0) if d1_vp else 0,
+                # CRT
+                "premium_discount": d1_best.get("premium_discount", "EQUILIBRIUM"),
+                "session": d1_best.get("session", ""),
+                "session_label": d1_best.get("session_label", d1_best.get("session", "")),
             }
 
         # ── D2 15M Structure (from raw_signal) ────────────────────────
@@ -375,6 +383,9 @@ class FusionEngine:
             "displacement_ratio": raw.get("displacement", {}).get("ratio", 0) if raw.get("displacement") else 0,
         }
 
+        # ── Alignment (D1 HTF vs D2 LTF) ──────────────────────────────
+        alignment = _compute_alignment(d1_structure, d2_structure, d1, d2)
+
         # ── SSL/BSL levels ────────────────────────────────────────────
         liq_pools = raw.get("liquidity_pools", {}) or {}
         d2_structure["ssl"] = _extract_ssl(liq_pools, getattr(d2, 'direction', 'BULLISH'))
@@ -405,6 +416,8 @@ class FusionEngine:
             "d1_timeframes": tf_breakdown,
             "d1_structure": d1_structure,
             "d2_structure": d2_structure,
+            # Alignment
+            "alignment": alignment,
             # Trade data
             "entry": getattr(d2, 'entry', 0),
             "sl": getattr(d2, 'sl', 0),
@@ -432,6 +445,7 @@ class FusionEngine:
             d1_tier, d1_score,
             d2_tier_name, d2_score,
             direction=package["direction"],
+            alignment_score=alignment.get("alignment_score", 0),
         )
         package["marketEvolution"] = me_state.to_dict()
 
@@ -442,6 +456,53 @@ class FusionEngine:
                       f"D1={d1_tier}({d1_score:.0f}) D2={d2_score:.0f} "
                       f"dir={package['direction']} EV={expected_value_pct:.2f}%")
         return package
+
+
+def _compute_alignment(d1s: dict, d2s: dict, d1: dict, d2: Any) -> dict:
+    """Compute HTF/LTF alignment between D1 and D2 structures.
+
+    Returns alignment dict with score (0-20) and 4 boolean components.
+    """
+    components = {
+        "direction_agreement": False,
+        "htf_ob_alignment": False,
+        "htf_zone_alignment": False,
+        "htf_liquidity_proximity": False,
+    }
+    score = 0
+
+    # 1. Direction agreement (0-5 pts)
+    d1_dir = (d1.get("direction") or "").upper()
+    d2_dir = (getattr(d2, 'direction', '') or "").upper()
+    if d1_dir and d2_dir and d1_dir == d2_dir:
+        components["direction_agreement"] = True
+        score += 5
+
+    # 2. HTF OB alignment — D2 entry near D1 OB zone (0-5 pts)
+    d1_ob_zone = (d1s.get("ob_zone") or "").upper()
+    d2_ob_zone = (d2s.get("ob_zone") or "").upper()
+    if d1_ob_zone and d2_ob_zone and d1_ob_zone == d2_ob_zone:
+        components["htf_ob_alignment"] = True
+        score += 5
+
+    # 3. HTF zone alignment — both in same premium/discount zone (0-5 pts)
+    d1_pd = (d1s.get("premium_discount") or "").upper()
+    d2_pd = (d2s.get("premium_discount") or "").upper()
+    if d1_pd and d2_pd and d1_pd == d2_pd and d1_pd != "UNKNOWN":
+        components["htf_zone_alignment"] = True
+        score += 5
+
+    # 4. HTF liquidity proximity — D2 near D1 swept liquidity level (0-5 pts)
+    d1_liq_swept = d1s.get("liq_swept", False)
+    d2_liq_level = d2s.get("liq_level", 0)
+    if d1_liq_swept and d2_liq_level > 0:
+        components["htf_liquidity_proximity"] = True
+        score += 5
+
+    return {
+        "alignment_score": min(score, 20),
+        "components": components,
+    }
 
 
 def _extract_ssl(liq_pools: dict, direction: str) -> dict:

@@ -363,4 +363,4 @@ def scan_entry(coin: str, d1_tier: str = "", d1_score: float = 0) -> Optional[di
                 f"dir={direction} nascent={raw['nascent_move']} "
                 f"EP={entry_precision:.0f} flow={flow:.0f} mom={momentum:.0f} "
                 f"RR={raw.get('rr1', 0):.1f}")
-    return raw
+    return LTFSignal(coin, raw, d1_tier=d1_tier, d1_score=d1_score)

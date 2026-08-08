@@ -27,6 +27,7 @@ import logging
 import asyncio
 import time as _time_module
 from datetime import datetime, timezone
+from typing import Any
 from backend.engines.ltf_scanner import LTFSignal
 from backend.market_data import market_data
 from backend.state_store import state_store
@@ -106,6 +107,10 @@ class LTFEngine:
         for coin, sig in list(existing.items()):
             candles = market_data.get_candles(coin, "15M")
             if not candles:
+                continue
+
+            sig = _ensure_ltf_signal(coin, sig)
+            if not sig:
                 continue
 
             if sig.is_expired():
@@ -233,3 +238,17 @@ def _was_recently_scanned(coin: str, max_age_sec: int = D2_SCAN_INTERVAL_SECONDS
 
 # Module-level singleton
 ltf_engine = LTFEngine()
+
+
+def _ensure_ltf_signal(coin: str, sig) -> Any:
+    """Normalize stored signal to LTFSignal object.
+
+    Handles both raw dicts (from older code) and LTFSignal objects.
+    """
+    if isinstance(sig, LTFSignal):
+        return sig
+    if isinstance(sig, dict):
+        return LTFSignal(coin, sig,
+                         d1_tier=sig.get("d1_tier", ""),
+                         d1_score=sig.get("d1_score", 0))
+    return None

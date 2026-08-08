@@ -117,7 +117,7 @@ async def get_signals():
     try:
         signals = signal_store.get_all()
         return {"count": len(signals), "timestamp": _now_ms(),
-                "stats": performance_tracker.get_stats(), "signals": signals}
+                "stats": performance_tracker.get_stats(), "signals": list(signals)}
     except Exception as e:
         logger.error(f"[api/signals] Error: {e}")
         return JSONResponse(status_code=500, content={"error": "Failed to fetch signals", "detail": str(e)})
@@ -130,7 +130,7 @@ async def get_fusion():
         return {"count": len(state_store.d3_decisions),
                 "timestamp": _now_ms(),
                 "stats": state_store.get_stats(),
-                "signals": state_store.get_all_decisions()}
+                "signals": list(state_store.get_all_decisions().values())}
     except Exception as e:
         logger.error(f"[api/fusion] Error: {e}")
         return JSONResponse(status_code=500, content={"error": "Failed to fetch fusion data", "detail": str(e)})
@@ -253,13 +253,7 @@ async def health():
             "ws_connected": market_data.ws_connected if hasattr(market_data, 'ws_connected') else False,
             "signal_count": len(signal_store.get_all()),
             "decision_count": len(state_store.d3_decisions),
-            "stats": {
-                "d1_coins": len(state_store.d1_tiers),
-                "d2_signals": len(state_store.d2_signals),
-                "d3_decisions": len(state_store.d3_decisions),
-                "last_d1_scan": state_store.last_d1_scan,
-                "last_d2_scan": state_store.last_d2_scan,
-            },
+            "stats": state_store.get_stats(),
         }
     except Exception as e:
         logger.error(f"[api/health] Error: {e}")

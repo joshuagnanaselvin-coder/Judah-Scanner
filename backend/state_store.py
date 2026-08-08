@@ -185,9 +185,10 @@ class StateStore:
         return {
             "d1_coins": len(self.d1_tiers),
             "d2_signals": len(self.d2_signals),
-            "d3_decisions": len(self.d3_decisions),
+            "d3_fusion": len(self.d3_decisions),
             "last_d1_scan": self.last_d1_scan,
             "last_d2_scan": self.last_d2_scan,
+            "last_d3_fusion": self.last_d3_fusion,
         }
 
 
