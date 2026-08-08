@@ -8,7 +8,7 @@ let allSignals = [];
 let ws = null;
 let filters = { direction: 'all', signalType: 'all' };
 const expandedCards = new Set();
-let stats = { scanned: 0, d1_coins: 0, d2_signals: 0, last_d1_scan: 0, last_d2_scan: 0, last_d3_fusion: 0 };
+let stats = { d1_coins: 0, d2_signals: 0, d3_fusion: 0, last_d1_scan: 0, last_d2_scan: 0, last_d3_fusion: 0 };
 let typeEAlerts = [];
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -56,22 +56,18 @@ const DIR_COLORS = { BULLISH: '#22c55e', BEARISH: '#ef4444', NEUTRAL: '#6b7280' 
 // ── Card Builder ──────────────────────────────────────────────────
 function buildCard(s) {
   const mee = getMEE(s);
-  const stype = s.signal_type || 'D';
-  const stypeColor = s.signal_type_color || '#6b7280';
-  const stypeBg = STYPE_BG[stype] || '#6b728022';
-  const d1Tier = s.d1_tier || '—';
-  const d2Tier = s.d2_tier || '—';
   const d1Score = s.d1_score ?? 0;
   const d2Score = s.d2_score ?? 0;
+  const d1Tier = s.d1_tier || '—';
+  const d2Tier = s.d2_tier || '—';
   const dir = s.direction || 'NEUTRAL';
-  const dirColor = DIR_COLORS[dir] || '#6b7280';
-  const tierColor = TIER_COLORS[d2Tier] || '#6b7280';
   const spiral = mee.spiral || 'Neutral';
   const spiralColor = SPIRAL_COLORS[spiral] || '#6b7280';
+  const meState = mee.state || '—';
+  const meConf = mee.confidence ?? 0;
   const ageLabel = fmtAge(s.born_at);
-  const isNew = !s.born_at || (Date.now() - new Date(s.born_at).getTime()) < 6000;
   const isExpanded = expandedCards.has(s.signal_id);
-  const action = s.action || 'WATCH';
+  const tierColor = TIER_COLORS[d2Tier] || '#6b7280';
 
   // D1 structure
   const d1s = s.d1_structure || {};
@@ -82,7 +78,6 @@ function buildCard(s) {
     d1s.liq_swept ? `<span class="tag tag-liq">LIQ SWEPT</span>` : '',
     d1s.poc ? `<span class="tag tag-poc">POC ${fmtPrice(d1s.poc)}</span>` : '',
     (d1s.va_low && d1s.va_high) ? `<span class="tag tag-va">VA ${fmtPrice(d1s.va_low)}–${fmtPrice(d1s.va_high)}</span>` : '',
-    d1s.premium_discount ? `<span class="tag tag-pd">${d1s.premium_discount}</span>` : '',
   ].filter(Boolean).join('');
 
   // D2 structure
@@ -101,12 +96,9 @@ function buildCard(s) {
   const align = s.alignment || {};
   const alignScore = align.alignment_score || 0;
   const alignPct = Math.round((alignScore / 20) * 100);
-  const d1Dir = align.d1_dir || d1s.direction || dir;
-  const d2Dir = align.d2_dir || dir;
-  const aligned = d1Dir === d2Dir && d1Dir !== '?';
   const alignColor = alignScore >= 15 ? '#22c55e' : alignScore >= 8 ? '#f59e0b' : '#ef4444';
 
-  // Score sparkline data
+  // Score history sparkline
   const hist = (s.score_history || []).slice(-12);
   const sparkData = hist.map(h => h[1] || h.score || 0).join(',');
 
@@ -121,61 +113,56 @@ function buildCard(s) {
   const evPct = s.expected_value_pct ?? 0;
   const evColor = evPct >= 1 ? '#22c55e' : evPct >= 0 ? '#f59e0b' : '#ef4444';
 
-  return `<div class="card${isNew ? ' card-new' : ''}" id="card-${s.signal_id}">
+  return `<div class="card${isExpanded ? ' card-expanded' : ''}" id="card-${s.signal_id}">
     <!-- HEADER ROW -->
     <div class="card-header" onclick="toggleExpand('${s.signal_id}')">
       <div class="card-left">
-        <span class="stype-dot" style="background:${stypeColor}"></span>
         <span class="coin-name">${s.coin}</span>
-        <span class="stype-badge" style="background:${stypeBg};color:${stypeColor};border-color:${stypeColor}44">${stype} ${s.signal_type_name || ''}</span>
-        <span class="action-badge action-${action.toLowerCase()}">${action}</span>
+        <span class="me-state-badge">${meState}</span>
+        <span class="score-flow">
+          <span class="score-d1">D1 ${d1Score}</span>
+          <span class="score-arrow">→</span>
+          <span class="score-d2">D2 ${d2Score}</span>
+        </span>
+        <span class="conf-badge conf-${confLevel(meConf)}">${meConf}%</span>
       </div>
       <div class="card-right">
-        <span class="dir-badge dir-${dir.toLowerCase()}">${dir}</span>
-        <div class="score-pair">
-          <span class="score-d1" title="D1 HTF Score">D1 <b>${d1Score}</b></span>
-          <span class="score-sep">→</span>
-          <span class="score-d2" title="D2 15M Score">D2 <b>${d2Score}</b></span>
-        </div>
         <span class="tier-badge tier-${d2Tier.toLowerCase()}">${d2Tier}</span>
-        ${ageLabel ? `<span class="age-badge age-${ageLabel === 'LIVE' || ageLabel === 'NEW' ? 'live' : 'normal'}">${ageLabel}</span>` : ''}
+        <span class="dir-dot dir-${dir.toLowerCase()}"></span>
+        ${ageLabel ? `<span class="age-badge">${ageLabel}</span>` : ''}
         <span class="expand-icon">${isExpanded ? '▾' : '▸'}</span>
       </div>
     </div>
 
     <!-- EXPANDED BODY -->
     ${isExpanded ? `<div class="card-body">
-      <!-- Market Evolution Banner -->
-      <div class="me-banner" style="border-left:3px solid ${stypeColor}">
-        <div class="me-cell">
-          <span class="me-label">State</span>
-          <span class="me-state">${mee.state || '—'}</span>
-          <span class="me-evolution">${mee.evolution || ''}</span>
+      <!-- Market Evolution Detail -->
+      <div class="me-detail-row">
+        <div class="me-detail-cell">
+          <span class="me-lbl">Evolution</span>
+          <span class="me-evol">${mee.evolution || '—'}</span>
         </div>
-        <div class="me-cell">
-          <span class="me-label">Confidence</span>
-          <div class="conf-bar-bg">
-            <div class="conf-bar-fill" style="width:${mee.confidence ?? 0}%;background:${stypeColor}"></div>
-          </div>
-          <span class="conf-val">${mee.confidence ?? 0}%</span>
-        </div>
-        <div class="me-cell">
-          <span class="me-label">Spiral</span>
+        <div class="me-detail-cell">
+          <span class="me-lbl">Spiral</span>
           <span class="me-spiral" style="color:${spiralColor}">${spiralIcon(spiral)} ${spiral}</span>
         </div>
-        <div class="me-cell">
-          <span class="me-label">Decision</span>
+        <div class="me-detail-cell">
+          <span class="me-lbl">Decision</span>
           <span class="me-decision">${mee.tradingDecision || '—'}</span>
         </div>
-        <div class="me-cell">
-          <span class="me-label">Momentum</span>
+        <div class="me-detail-cell">
+          <span class="me-lbl">Momentum</span>
           <span class="me-momentum">${(mee.momentumVelocity ?? 0).toFixed(1)}</span>
+        </div>
+        <div class="me-detail-cell">
+          <span class="me-lbl">Confidence</span>
+          <div class="conf-bar-bg"><div class="conf-bar-fill conf-${confLevel(meConf)}" style="width:${meConf}%"></div></div>
         </div>
       </div>
 
       <!-- D1 HTF + D2 15M Side by Side -->
       <div class="structure-row">
-        <div class="struct-panel d1-panel">
+        <div class="struct-panel">
           <div class="struct-header">
             <span class="struct-title">📊 D1 HTF</span>
             <span class="struct-tier tier-${d1Tier.toLowerCase()}">${d1Tier}</span>
@@ -184,7 +171,7 @@ function buildCard(s) {
           <div class="struct-tags">${d1Tags}</div>
           <div class="tf-breakdown">${tfHtml}</div>
         </div>
-        <div class="struct-panel d2-panel">
+        <div class="struct-panel">
           <div class="struct-header">
             <span class="struct-title">🎯 D2 15M</span>
             <span class="struct-tier tier-${d2Tier.toLowerCase()}">${d2Tier}</span>
@@ -196,37 +183,19 @@ function buildCard(s) {
 
       <!-- Alignment -->
       <div class="align-row align-${alignPct >= 70 ? 'high' : alignPct >= 40 ? 'mid' : 'low'}">
-        <span class="align-label">🔗 HTF/LTF Alignment</span>
-        <div class="align-bar-bg">
-          <div class="align-bar-fill" style="width:${alignPct}%;background:${alignColor}"></div>
-        </div>
+        <span class="align-label">🔗 Alignment</span>
+        <div class="align-bar-bg"><div class="align-bar-fill" style="width:${alignPct}%;background:${alignColor}"></div></div>
         <span class="align-score" style="color:${alignColor}">${alignScore}/20</span>
-        <span class="align-dirs">${d1Dir} → ${d2Dir} ${aligned ? '✓' : '✗'}</span>
+        <span class="align-dirs">${align.d1_dir || d1s.direction || '?'} → ${align.d2_dir || dir || '?'}</span>
       </div>
 
       <!-- Trade Levels -->
       <div class="levels-row">
-        <div class="lvl-cell lvl-entry">
-          <span class="lvl-lbl">Entry</span>
-          <span class="lvl-val">${fmtPrice(s.entry)}</span>
-        </div>
-        <div class="lvl-cell lvl-sl">
-          <span class="lvl-lbl">SL</span>
-          <span class="lvl-val">${fmtPrice(s.sl)}</span>
-        </div>
-        <div class="lvl-cell lvl-tp">
-          <span class="lvl-lbl">TP1</span>
-          <span class="lvl-val">${fmtPrice(s.tp1)}</span>
-        </div>
-        <div class="lvl-cell lvl-tp">
-          <span class="lvl-lbl">TP2</span>
-          <span class="lvl-val">${fmtPrice(s.tp2)}</span>
-        </div>
-        <div class="lvl-cell lvl-rr">
-          <span class="lvl-lbl">RR</span>
-          <span class="lvl-val">${fmtRR(s.rr1)}</span>
-          <span class="lvl-val2">${fmtRR(s.rr2)}</span>
-        </div>
+        <div class="lvl-cell lvl-entry"><span class="lvl-lbl">Entry</span><span class="lvl-val">${fmtPrice(s.entry)}</span></div>
+        <div class="lvl-cell lvl-sl"><span class="lvl-lbl">SL</span><span class="lvl-val">${fmtPrice(s.sl)}</span></div>
+        <div class="lvl-cell lvl-tp"><span class="lvl-lbl">TP1</span><span class="lvl-val">${fmtPrice(s.tp1)}</span></div>
+        <div class="lvl-cell lvl-tp"><span class="lvl-lbl">TP2</span><span class="lvl-val">${fmtPrice(s.tp2)}</span></div>
+        <div class="lvl-cell lvl-rr"><span class="lvl-lbl">RR</span><span class="lvl-val">${fmtRR(s.rr1)}</span><span class="lvl-val2">${fmtRR(s.rr2)}</span></div>
       </div>
 
       <!-- EV + Meta -->
@@ -236,13 +205,19 @@ function buildCard(s) {
           <span class="ev-val" style="color:${evColor}">${fmtPct(evPct)}</span>
           <span class="ev-wr">WR ${(s.estimated_win_rate ?? 0).toFixed(0)}%</span>
         </div>
-        ${s.nascent_move ? '<span class="nascent-badge">NASCENT</span>' : ''}
-        ${s.entry_precision ? `<span class="ep-badge">EP ${s.entry_precision.toFixed(0)}</span>` : ''}
+        ${s.nascent_move ? '<span class="tag tag-nascent">NASCENT</span>' : ''}
+        ${s.entry_precision ? `<span class="tag tag-ep">EP ${s.entry_precision.toFixed(0)}</span>` : ''}
         <span class="born-time">${new Date(s.born_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
         <canvas class="sparkline" data-values="${sparkData}" width="80" height="20"></canvas>
       </div>
     </div>` : ''}
   </div>`;
+}
+
+function confLevel(c) {
+  if (c >= 70) return 'high';
+  if (c >= 40) return 'mid';
+  return 'low';
 }
 
 function zoneLabel(z) {
@@ -418,9 +393,9 @@ async function checkHealth() {
     const data = await resp.json();
     if (data.stats) {
       stats = data.stats;
-      document.getElementById('scannedCount').textContent = stats.scanned || stats.d1_coins || 0;
-      const total = document.getElementById('totalSignals');
-      if (total) total.textContent = allSignals.length;
+      document.getElementById('d1Count').textContent = stats.d1_coins || 0;
+      document.getElementById('d2Count').textContent = stats.d2_signals || 0;
+      document.getElementById('d3Count').textContent = stats.d3_fusion || 0;
 
       // Activity indicators
       setActivity('actD1', stats.last_d1_scan);

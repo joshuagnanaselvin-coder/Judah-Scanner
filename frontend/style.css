@@ -98,6 +98,8 @@ body {
 }
 .stat-label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
 .stat-value { font-size: 15px; font-weight: 700; color: var(--text); }
+.stat-accent { border-color: #3b82f644; }
+.stat-accent .stat-value { color: var(--accent); }
 
 .btn-icon {
   width: 30px; height: 30px; border-radius: var(--radius-sm);
@@ -216,7 +218,7 @@ body {
   padding: 10px 14px; cursor: pointer;
   gap: 8px; flex-wrap: wrap;
 }
-.card-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+.card-left { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; flex-wrap: wrap; }
 .card-right { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
 
 .coin-name {
@@ -224,35 +226,41 @@ body {
   white-space: nowrap;
 }
 
-.stype-dot {
-  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
-}
-
-.stype-badge {
-  padding: 2px 8px; border-radius: 4px;
-  font-size: 10px; font-weight: 600; letter-spacing: 0.3px;
-  border: 1px solid;
+/* ME State badge — shows market evolution state */
+.me-state-badge {
+  padding: 2px 7px; border-radius: 3px;
+  font-size: 10px; font-weight: 600;
+  background: #a855f722; color: #a855f7; border: 1px solid #a855f744;
   white-space: nowrap;
 }
 
-.action-badge {
-  padding: 2px 6px; border-radius: 3px;
-  font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
-}
-.action-execute { background: #22c55e22; color: #22c55e; }
-.action-watch { background: #3b82f622; color: #3b82f6; }
-.action-alert { background: #ef444422; color: #ef4444; }
-
-/* Score Pair */
-.score-pair {
+/* Score flow: D1 → D2 */
+.score-flow {
   display: flex; align-items: center; gap: 4px;
-  font-size: 11px;
+  font-size: 12px; font-weight: 600;
 }
 .score-d1 { color: var(--text-sec); }
-.score-d1 b { color: var(--text); }
-.score-sep { color: var(--text-muted); font-size: 10px; }
-.score-d2 { color: var(--text); }
-.score-d2 b { font-size: 14px; font-weight: 700; }
+.score-arrow { color: var(--text-muted); font-size: 10px; }
+.score-d2 { color: var(--text); font-size: 14px; font-weight: 700; }
+
+/* Confidence badge */
+.conf-badge {
+  padding: 2px 7px; border-radius: 3px;
+  font-size: 10px; font-weight: 700;
+  border: 1px solid;
+  white-space: nowrap;
+}
+.conf-high { background: #22c55e22; color: #22c55e; border-color: #22c55e44; }
+.conf-mid { background: #f59e0b22; color: #f59e0b; border-color: #f59e0b44; }
+.conf-low { background: #ef444422; color: #ef4444; border-color: #ef444444; }
+
+/* Direction dot */
+.dir-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+}
+.dir-bullish { background: var(--green); }
+.dir-bearish { background: var(--red); }
+.dir-neutral { background: #6b7280; }
 
 /* Tier badge */
 .tier-badge {
@@ -292,16 +300,15 @@ body {
   display: flex; flex-direction: column; gap: 8px;
 }
 
-/* Market Evolution Banner */
-.me-banner {
+/* Market Evolution Detail Row */
+.me-detail-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-  gap: 8px; padding: 10px 0 6px;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 8px; padding: 8px 0;
 }
-.me-cell { display: flex; flex-direction: column; gap: 2px; }
-.me-label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
-.me-state { font-size: 13px; font-weight: 600; color: var(--text); }
-.me-evolution { font-size: 10px; color: var(--text-sec); }
+.me-detail-cell { display: flex; flex-direction: column; gap: 2px; }
+.me-lbl { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.me-evol { font-size: 11px; color: var(--text-sec); }
 .me-decision { font-size: 12px; color: var(--text); }
 .me-spiral { font-size: 12px; }
 .me-momentum { font-size: 14px; font-weight: 700; color: var(--text); }
