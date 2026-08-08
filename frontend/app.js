@@ -95,6 +95,8 @@ function connectWS() {
         if (allSignals.length > 100) allSignals = allSignals.slice(0, 100);
         renderSignals();
         if (idx < 0) flashNew(sig.signal_id);
+      } else if (data.type === 'TYPE_E_ALERT') {
+        handleTypeEAlert(data.data);
       }
     } catch (e) {
       console.error('[ws-fusion] Parse error:', e);
@@ -431,12 +433,19 @@ function buildCard(s) {
   `;
 
   // ── Card HTML ────────────────────────────────────────────────────
+  const stypeColor = s.signal_type_color || '#6b7280';
+  const stypeIcon = s.signal_type_icon || '';
+  const stypeName = s.signal_type_name || '—';
   return `
   <div class="signal-card v52 ${isNew ? 'is-new' : ''} ${isExpanded ? 'is-expanded' : ''}"
-       data-id="${s.signal_id}" data-cat="${cat}" data-vel="${mee.evolutionVelocity || 'stable'}">
+       data-id="${s.signal_id}" data-cat="${cat}" data-vel="${mee.evolutionVelocity || 'stable'}"
+       data-stype="${s.signal_type || '—'}">
     <div class="card-header" onclick="toggleExpand('${s.signal_id}')">
       <div class="card-header-left">
         <span class="cat-pip" style="background:${catColor}"></span>
+        <span class="signal-type-badge" style="color:${stypeColor};border-color:${stypeColor}40;background:${stypeColor}10">
+          ${stypeIcon} ${stypeName}
+        </span>
         <a class="coin-link" href="${tvUrl}" target="_blank" rel="noopener"
            title="View ${base} on TradingView" onclick="event.stopPropagation()">
           ${base}
@@ -579,6 +588,37 @@ function flashNew(id) {
     expandedCards.delete(id);
     renderSignals();
   }, 4000);
+}
+
+// ── Type E Conflict Alert ────────────────────────────────────────────
+let typeEAlerts = [];
+
+function handleTypeEAlert(alert) {
+  typeEAlerts.unshift(alert);
+  if (typeEAlerts.length > 20) typeEAlerts = typeEAlerts.slice(0, 20);
+  renderTypeEAlerts();
+}
+
+function renderTypeEAlerts() {
+  const container = document.getElementById('typeEAlertContainer');
+  if (!container || typeEAlerts.length === 0) {
+    if (container) container.style.display = 'none';
+    return;
+  }
+  container.style.display = 'block';
+  container.innerHTML = typeEAlerts.map(a => `
+    <div class="type-e-alert">
+      <span class="type-e-icon">⚠️</span>
+      <span class="type-e-coin">${a.coin}</span>
+      <span class="type-e-conflict">${a.d1_dir} vs ${a.d2_dir}</span>
+      <span class="type-e-time">${new Date(a.timestamp).toLocaleTimeString()}</span>
+    </div>
+  `).join('');
+}
+
+function dismissTypeEAlert(idx) {
+  typeEAlerts.splice(idx, 1);
+  renderTypeEAlerts();
 }
 
 // ── Render ────────────────────────────────────────────────────────

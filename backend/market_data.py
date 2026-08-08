@@ -1,5 +1,6 @@
 """REST bootstrap + Binance WebSocket client + candle builder."""
 import asyncio
+import collections
 import json
 import logging
 import aiohttp
@@ -32,6 +33,7 @@ class MarketData:
         self._init = True
 
         self.candles: dict = {}
+        self._lock = asyncio.Lock()
         self.session: Optional[aiohttp.ClientSession] = None
         self.ws_connected = False
         self.on_candle_close = None
@@ -79,7 +81,7 @@ class MarketData:
                     continue
                 if result and len(result) >= 25:
                     key = f"{sym}_{tf}"
-                    self.candles[key] = result
+                    self.candles[key] = collections.deque(result, maxlen=BOOTSTRAP_CANDLES + 50)
                     count += 1
                 else:
                     errors += 1
@@ -176,7 +178,7 @@ class MarketData:
                     self.ws_connected = True
                     async for msg in ws:
                         if msg.type == aiohttp.WSMsgType.TEXT:
-                            self._handle_kline(json.loads(msg.data))
+                            await self._handle_kline(json.loads(msg.data))
                         elif msg.type == aiohttp.WSMsgType.ERROR:
                             break
             except Exception as e:
@@ -185,12 +187,12 @@ class MarketData:
                 await asyncio.sleep(delay)
                 delay = min(delay * 1.5, 60)
 
-    def _handle_kline(self, msg):
+    async def _handle_kline(self, msg):
+        """Thread-safe kline handler — mutations go through the lock."""
         if msg.get("e") != "kline": return
 
         k = msg["k"]
         symbol, tf_raw = msg["s"], k["i"]
-        # Binance sends lowercase tf (1d, 4h, 1h) — normalize to match candle keys
         tf = tf_raw.upper()
         key = f"{symbol}_{tf}"
         if key not in self.candles: return
@@ -202,23 +204,23 @@ class MarketData:
             "volume": float(k["v"]), "close_time": k["T"],
             "is_closed": is_closed,
         }
-        existing = self.candles[key]
 
-        if is_closed:
-            existing.append(Candle(**candle_data))
-            if len(existing) > BOOTSTRAP_CANDLES + 50:
-                del existing[0]
-            if self.on_candle_close:
-                self.on_candle_close(symbol, tf)
-        else:
-            if existing:
-                last = existing[-1]
-                last.close = candle_data["close"]
-                last.high = max(last.high, candle_data["high"])
-                last.low = min(last.low, candle_data["low"])
-                last.volume = candle_data["volume"]
-                if self.on_candle_update:
-                    self.on_candle_update(symbol, tf)
+        async with self._lock:
+            existing = self.candles[key]
+
+            if is_closed:
+                existing.append(Candle(**candle_data))
+                if self.on_candle_close:
+                    self.on_candle_close(symbol, tf)
+            else:
+                if existing:
+                    last = existing[-1]
+                    last.close = candle_data["close"]
+                    last.high = max(last.high, candle_data["high"])
+                    last.low = min(last.low, candle_data["low"])
+                    last.volume = candle_data["volume"]
+                    if self.on_candle_update:
+                        self.on_candle_update(symbol, tf)
 
     def get_candles(self, symbol, tf):
         """Lookup candles with case-insensitive timeframe key."""

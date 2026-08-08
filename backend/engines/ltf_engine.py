@@ -72,16 +72,16 @@ class LTFEngine:
         """Production batch scan for D2:
 
         PASS 1: Revalidate + refresh existing D2 signals
-        PASS 2: Scan coins that D1 has active data for (same list D3 fuses on)
+        PASS 2: Scan ALL symbols for 15M entry (independent of D1)
         PASS 3: Write D2 tiers to state_store
         """
         refreshed = []
         revalidated = []
 
-        # Get D1-approved coins (SNIPER/OPPORTUNITY only)
-        scan_targets = state_store.get_active_coins()
+        # Scan ALL symbols — D2 is independent of D1 approval
+        scan_targets = self.symbols
         if not scan_targets:
-            logger.info("[ltf] No active D1 coins yet, skipping cycle")
+            logger.info("[ltf] No symbols configured, skipping cycle")
             return
 
         d1_approved = []
@@ -90,11 +90,8 @@ class LTFEngine:
             if d1 and d1.get("tier") in ("SNIPER", "OPPORTUNITY", "WATCH"):
                 d1_approved.append((coin, d1.get("tier", ""), d1.get("score", 0)))
 
-        if not d1_approved:
-            logger.info("[ltf] No D1 SNIPER/OPPORTUNITY/WATCH coins to scan (got %d active)", len(scan_targets))
-            return
-
-        logger.info(f"[ltf] D1 approved {len(d1_approved)} coins for 15M entry scan")
+        logger.info(f"[ltf] Scanning {len(scan_targets)} coins on 15M "
+                     f"({len(d1_approved)} with D1 context)")
 
         # DEBUG: show all D1 tiers received
         for coin in scan_targets:
@@ -134,11 +131,11 @@ class LTFEngine:
             # Light refresh — just update age/price
             refreshed.append(sig)
 
-        # === PASS 2: Scan D1-approved coins for 15M entry ===
+        # === PASS 2: Scan ALL symbols for 15M entry (D2 is independent of D1) ===
         new_signals = []
         scan_tasks = []
 
-        for coin, d1_tier, d1_score in d1_approved:
+        for coin in scan_targets:
             # Skip if already have a D2 signal
             if state_store.get_d2_signal(coin):
                 continue
@@ -150,26 +147,26 @@ class LTFEngine:
             if not should_select(coin, "15M"):
                 continue
 
-            scan_tasks.append((coin, d1_tier, d1_score))
+            scan_tasks.append(coin)
 
         logger.debug(f"[ltf] Batch: {len(scan_tasks)} candidates to scan")
 
         semaphore = self._scan_semaphore or asyncio.Semaphore(SCAN_CONCURRENCY)
 
-        async def _scan_with_limit(coin, d1_tier, d1_score):
+        async def _scan_with_limit(coin):
             async with semaphore:
                 try:
-                    return scan_entry(coin, d1_tier=d1_tier, d1_score=d1_score)
+                    return scan_entry(coin)
                 except Exception as e:
                     logger.warning(f"[ltf] Error {coin}: {e}")
                     return None
 
         results = await asyncio.gather(
-            *[_scan_with_limit(c, dt, ds) for c, dt, ds in scan_tasks],
+            *[_scan_with_limit(c) for c in scan_tasks],
             return_exceptions=True
         )
 
-        for (coin, _, _), result in zip(scan_tasks, results):
+        for coin, result in zip(scan_tasks, results):
             if isinstance(result, Exception) or not result:
                 _mark_scanned(coin)
                 continue

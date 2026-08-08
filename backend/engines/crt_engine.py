@@ -18,11 +18,11 @@ import logging
 from typing import Optional
 from backend.helpers.candle_math import (
     body_ratio, avg_body_size, range_metrics,
-    retracement_pct, is_in_ote, is_in_optimal_ote,
-    _get, atr, atr_percent
+    retracement_pct, is_in_ote, _get, atr, atr_percent
 )
 from backend.helpers.volume_profile import compute_volume_profile
 from backend.helpers.session import get_session_at, session_score, get_session_label
+from backend.config import CRT_SCORE_MAX
 
 logger = logging.getLogger("judah.crt")
 
@@ -46,13 +46,13 @@ _W_DISPLACEMENT = 3
 _W_FVG = 3
 _W_RETEST = 4
 _W_ZONE = 2
-_CRT_MAX_SCORE = 30
+_CRT_MAX_SCORE = 25            # Natural max: 8+8+3+4+2=25 (consol+range+disp+retest+zone)
 
 
 def run_crt(candles: list) -> Optional[dict]:
     """Full CRT analysis — 5-step methodology.
 
-    Returns dict with crt_score (capped at 40), displacement, fill data, entry/SL/TP,
+    Returns dict with crt_score (capped at 25), displacement, fill data, entry/SL/TP,
     or None if no valid CRT setup exists.
     """
     if not candles or len(candles) < _MIN_CANDLES_REQUIRED:
@@ -144,7 +144,7 @@ def run_crt(candles: list) -> Optional[dict]:
             premium_discount = "DISCOUNT"
 
     retrace_pct_val = retracement_pct(rc_high, rc_low, last_price, crt_trade_direction)
-    in_optimal_ote = is_in_optimal_ote(retrace_pct_val)
+    in_optimal_ote = is_in_ote(retrace_pct_val)
 
     # Calculate entry, SL, TP
     rc_open_price = rc_open
@@ -162,7 +162,6 @@ def run_crt(candles: list) -> Optional[dict]:
         "session_label": get_session_label(session),
         "session_bullish": session_score(get_session_at(candles[-1].time)),
         "session_bearish": session_score(get_session_at(candles[-1].time)),
-        "session_score": session_score(session),
         "range": rng,
         "displacement": {
             "candle_index": rc_index,

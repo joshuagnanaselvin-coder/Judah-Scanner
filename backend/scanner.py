@@ -115,7 +115,7 @@ class Scanner:
         async def _scan_with_limit(symbol, tf):
             async with semaphore:
                 try:
-                    return scan(symbol, tf)
+                    return await asyncio.to_thread(scan, symbol, tf)
                 except Exception as e:
                     logger.warning(f"[scan] Error {symbol} {tf}: {e}")
                     return None

@@ -1,4 +1,4 @@
-"""SMC Engine — Smart Money Concepts (ICT-aligned). Max SMC score: 20."""
+"""SMC Engine — Smart Money Concepts (ICT-aligned). Max SMC score: 25."""
 import logging
 from typing import Optional
 from backend.vsp_helpers import detect_swing_points, detect_fvg

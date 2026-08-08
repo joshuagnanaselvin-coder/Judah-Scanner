@@ -84,16 +84,8 @@ def get_current_session(timestamp_utc: int = None) -> str:
     return get_session_at(timestamp_utc)
 
 
-def session_score(signal_direction: str, timestamp_utc: int = None,
-                 displacement_ratio: float = 0.0,
-                 liquidity_swept: bool = False,
-                 liquidity_direction: str = None) -> int:
-    """Direction-aligned session scoring (0-10).
-
-    Returns score based on session + alignment with signal direction.
-    DST is handled automatically by get_session_at().
-    """
-    session = get_session_at(timestamp_utc)
+def session_score(session: str) -> int:
+    """Session-based quality score (0-10)."""
     return _SESSION_SCORES.get(session, 0)
 
 

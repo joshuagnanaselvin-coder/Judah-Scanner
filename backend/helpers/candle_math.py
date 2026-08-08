@@ -111,9 +111,7 @@ def retracement_pct(disp_high, disp_low, price, direction) -> float:
     return ((price - disp_low) / size) * 100
 
 def is_in_ote(pct: float) -> bool:
-    return 50 <= pct <= 62
-
-def is_in_optimal_ote(pct: float) -> bool:
+    """Optimal Trade Entry zone: 50-62% retracement (ICT definition)."""
     return 50 <= pct <= 62
 
 def dist_from_entry_pct(current: float, entry: float) -> float:

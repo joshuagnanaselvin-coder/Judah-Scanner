@@ -3,7 +3,7 @@
 3 Dimensions:
   D1 (HTF) → backend/scanner.py — WebSocket /ws for D1 signals
   D2 (LTF) → backend/engines/ltf_engine.py — runs in background, 15M
-  D3 (Fusion) → backend/engines/signal_fusion.py — watches D1+D2, pushes to /ws-fusion
+  D3 (Decision) → backend/engines/signal_fusion.py — watches D1+D2, pushes to /ws-fusion
 """
 import asyncio
 import logging
@@ -11,7 +11,7 @@ import json
 from datetime import datetime, timezone
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from backend.market_data import market_data
 from backend.scanner import scanner
 from backend.signal_store import signal_store
@@ -114,149 +114,156 @@ async def dashboard():
 @app.get("/api/signals")
 async def get_signals():
     """D1 signals (HTF)."""
-    signals = signal_store.get_all()
-    return {"count": len(signals), "timestamp": _now_ms(),
-            "stats": performance_tracker.get_stats(), "signals": signals}
+    try:
+        signals = signal_store.get_all()
+        return {"count": len(signals), "timestamp": _now_ms(),
+                "stats": performance_tracker.get_stats(), "signals": signals}
+    except Exception as e:
+        logger.error(f"[api/signals] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Failed to fetch signals", "detail": str(e)})
+
 
 @app.get("/api/fusion")
 async def get_fusion():
-    """D3 fusion signals (frontend display)."""
-    return {"count": len(state_store.d3_fusion),
-            "timestamp": _now_ms(),
-            "stats": state_store.get_stats(),
-            "signals": state_store.get_all_fusion()}
+    """D3 decision signals (frontend display)."""
+    try:
+        return {"count": len(state_store.d3_decisions),
+                "timestamp": _now_ms(),
+                "stats": state_store.get_stats(),
+                "signals": state_store.get_all_decisions()}
+    except Exception as e:
+        logger.error(f"[api/fusion] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Failed to fetch fusion data", "detail": str(e)})
 
-@app.get("/api/health")
-async def health():
-    return {"status": "ok", "ws_connected": market_data.ws_connected,
-            "signal_count": len(signal_store.signals),
-            "fusion_count": len(state_store.d3_fusion),
-            "stats": state_store.get_stats()}
 
 @app.get("/api/pairs")
 async def get_pairs():
-    return {"pairs": scanner.symbols, "timeframes": TIMEFRAMES_HTF}
+    try:
+        return {"pairs": scanner.symbols, "timeframes": TIMEFRAMES_HTF}
+    except Exception as e:
+        logger.error(f"[api/pairs] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Failed to fetch pairs", "detail": str(e)})
+
 
 @app.get("/api/stats")
 async def get_stats():
-    return performance_tracker.get_stats()
+    try:
+        return performance_tracker.get_stats()
+    except Exception as e:
+        logger.error(f"[api/stats] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Failed to fetch stats", "detail": str(e)})
+
 
 @app.get("/api/logs")
 async def get_logs(limit: int = 100):
-    from backend.signal_logger import get_recent_logs
-    return get_recent_logs(limit)
+    try:
+        from backend.signal_logger import get_recent_logs
+        return get_recent_logs(limit)
+    except Exception as e:
+        logger.error(f"[api/logs] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Failed to fetch logs", "detail": str(e)})
+
 
 @app.get("/api/debug-fusion")
 async def debug_fusion():
-    """Diagnostic: show D1/D2 overlap and why fusion produces few results."""
-    d1 = dict(state_store.d1_tiers)
-    d2 = state_store.get_all_d2_signals()
-    active = state_store.get_active_coins()
+    """Diagnostic: show D1/D2 overlap and decision layer output."""
+    try:
+        d1 = dict(state_store.d1_tiers)
+        d2 = state_store.get_all_d2_signals()
+        decisions = state_store.get_all_decisions()
 
-    d2_coins = set(d2.keys())
-    active_set = set(active)
-    overlap = d2_coins & active_set
-    only_d2 = d2_coins - active_set
+        d2_coins = set(d2.keys())
+        decision_coins = set(decisions.keys())
+        overlap = d2_coins & decision_coins
 
-    # Sample D1 tiers
-    d1_sample = {}
-    for coin in list(d1.keys())[:10]:
-        entry = d1[coin]
-        d1_sample[coin] = {"tier": entry.get("tier"), "score": entry.get("score"), "age_sec": round(__import__('time').time() - entry.get("updated_at", 0), 1)}
+        # Sample D1 tiers
+        d1_sample = {}
+        for coin in list(d1.keys())[:10]:
+            entry = d1[coin]
+            d1_sample[coin] = {"tier": entry.get("tier"), "score": entry.get("score"), "age_sec": round(__import__('time').time() - entry.get("updated_at", 0), 1)}
 
-    # Sample D2 signals
-    d2_sample = {}
-    for coin, sig in list(d2.items())[:10]:
-        d2_sample[coin] = {"score": getattr(sig, 'score', 0), "tier": getattr(sig, 'tier', '?'), "dir": getattr(sig, 'direction', '?')}
+        # Sample D2 signals
+        d2_sample = {}
+        for coin, sig in list(d2.items())[:10]:
+            d2_sample[coin] = {"score": getattr(sig, 'score', 0), "tier": getattr(sig, 'tier', '?'), "dir": getattr(sig, 'direction', '?')}
 
-    # D1 tiers for overlapped coins
-    overlap_detail = {}
-    for coin in list(overlap)[:10]:
-        d1_entry = d1.get(coin, {})
-        overlap_detail[coin] = {"d1_tier": d1_entry.get("tier"), "d1_score": d1_entry.get("score"), "d2_score": getattr(d2.get(coin), 'score', 0)}
+        # Sample decisions
+        decision_sample = {}
+        for coin in list(decisions.keys())[:10]:
+            d = decisions[coin]
+            decision_sample[coin] = {
+                "type": d.get("signal_type"),
+                "d1_tier": d.get("d1_tier"),
+                "d1_score": d.get("d1_score"),
+                "d2_score": d.get("d2_score"),
+                "action": d.get("action"),
+                "ev": d.get("expected_value"),
+            }
 
-    # Why no overlap?
-    no_overlap_reason = {}
-    for coin in list(only_d2)[:5]:
-        d1_entry = d1.get(coin)
-        if not d1_entry:
-            no_overlap_reason[coin] = "no D1 data"
-        else:
-            no_overlap_reason[coin] = f"D1={d1_entry.get('tier')} score={d1_entry.get('score')}"
+        return {
+            "tier_thresholds": {"SNIPER": 85, "OPPORTUNITY": 65, "WATCH": 40},
+            "d1_count": len(d1),
+            "d2_count": len(d2),
+            "decision_count": len(decisions),
+            "overlap_count": len(overlap),
+            "d1_sample": d1_sample,
+            "d2_sample": d2_sample,
+            "decision_sample": decision_sample,
+        }
+    except Exception as e:
+        logger.error(f"[api/debug-fusion] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Failed to fetch debug data", "detail": str(e)})
 
-    return {
-        "tier_thresholds": {"SNIPER": 70, "OPPORTUNITY": 55, "WATCH": 40},
-        "d1_count": len(d1),
-        "d2_count": len(d2),
-        "active_count": len(active),
-        "d3_fusion_count": len(state_store.d3_fusion),
-        "overlap_count": len(overlap),
-        "only_d2_count": len(only_d2),
-        "d1_sample": d1_sample,
-        "d2_sample": d2_sample,
-        "overlap_detail": overlap_detail,
-        "no_overlap_reason": no_overlap_reason,
-    }
 
 @app.get("/api/performance")
 async def get_performance():
-    from backend.performance_tracker import PerformanceTrackerCSV
-    tracker = PerformanceTrackerCSV()
-    tracker.load_from_csv()
-    return {
-        "summary": tracker.get_summary(),
-        "by_scenario": tracker.get_scenario_report(),
-    }
+    try:
+        from backend.performance_tracker import PerformanceTrackerCSV
+        tracker = PerformanceTrackerCSV()
+        tracker.load_from_csv()
+        return {
+            "summary": tracker.get_summary(),
+            "by_scenario": tracker.get_scenario_report(),
+        }
+    except Exception as e:
+        logger.error(f"[api/performance] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Failed to fetch performance data", "detail": str(e)})
 
 
 @app.post("/api/restart")
 async def restart_scanner():
-    logger.info("[restart] Initiating full scanner restart...")
-    result = await scanner.restart()
-    return {"ok": True, "msg": "Restart triggered", "detail": result}
+    try:
+        logger.info("[restart] Initiating full scanner restart...")
+        result = await scanner.restart()
+        return {"ok": True, "msg": "Restart triggered", "detail": result}
+    except Exception as e:
+        logger.error(f"[api/restart] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Restart failed", "detail": str(e)})
 
-
-# ---- HELPERS ----
-
-def _now_ms() -> int:
-    return int(datetime.now(timezone.utc).timestamp() * 1000)
-
-def _safe(obj):
-    if obj is None:
-        return None
-    if isinstance(obj, (str, int, float, bool)):
-        return obj
-    if isinstance(obj, dict):
-        return {k: _safe(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
-        return [_safe(x) for x in obj]
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    return str(obj)
-
-
-# ---- STARTUP ----
 
 @app.get("/api/health")
 async def health():
     """Instant health check — always responds, even during startup."""
-    import time
-    ready = state_store.last_d1_scan > 0
-    return {
-        "status": "ok" if ready else "initializing",
-        "ready": ready,
-        "ws_connected": market_data.ws_connected if hasattr(market_data, 'ws_connected') else False,
-        "signal_count": len(signal_store.get_all()),
-        "fusion_count": len(state_store.d3_fusion),
-        "stats": {
-            "d1_coins": len(state_store.d1_tiers),
-            "d2_signals": len(state_store.d2_signals),
-            "d3_fusion": len(state_store.d3_fusion),
-            "last_d1_scan": state_store.last_d1_scan,
-            "last_d2_scan": state_store.last_d2_scan,
-            "last_d3_fusion": state_store.last_d3_fusion,
-        },
-    }
+    try:
+        import time
+        ready = state_store.last_d1_scan > 0
+        return {
+            "status": "ok" if ready else "initializing",
+            "ready": ready,
+            "ws_connected": market_data.ws_connected if hasattr(market_data, 'ws_connected') else False,
+            "signal_count": len(signal_store.get_all()),
+            "decision_count": len(state_store.d3_decisions),
+            "stats": {
+                "d1_coins": len(state_store.d1_tiers),
+                "d2_signals": len(state_store.d2_signals),
+                "d3_decisions": len(state_store.d3_decisions),
+                "last_d1_scan": state_store.last_d1_scan,
+                "last_d2_scan": state_store.last_d2_scan,
+            },
+        }
+    except Exception as e:
+        logger.error(f"[api/health] Error: {e}")
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
 
 async def _bootstrap():

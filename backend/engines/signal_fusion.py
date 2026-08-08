@@ -1,18 +1,14 @@
-"""Dimension 3 — Fusion Engine.
+"""Dimension 3 — Decision Layer.
 
-Reads D1 tiers + D2 scores from state_store, assigns buckets
-via a 3x3 grid (SNIPER/OPPORTUNITY/WATCH × SNIPER/OPPORTUNITY/WATCH),
-packages for frontend, pushes via WebSocket.
+Reads D1 tiers + D2 signals from state_store, classifies signals
+into types A/B/C/D/E, packages for frontend, pushes via WebSocket.
 
 No sensitivity modes — fixed thresholds for both D1 and D2.
-All 9 combos produce a bucket; REJECTED on either dimension → IGNORE.
+Signal Types: A (HTF Structure), B (LTF Momentum), C (Full Confluence),
+              D (HTF Early Warning), E (Conflict/Trap).
 
-3×3 Bucket Matrix:
-  D1 \ D2      | SNIPER        | OPPORTUNITY    | WATCH
-  -------------|---------------|----------------|--------
-  SNIPER       | 🟢 READY      | 🔵 BUILDING    | ⏳ WAIT
-  OPPORTUNITY  | 🟡 EARLY      | 🟠 DEVELOPING  | 👀 MONITOR
-  WATCH        | 🔴 TRAP       | ⚫ IGNORE      | ⚫ IGNORE
+D2 is fully independent — scans all pairs regardless of D1 tier.
+Type B signals (D1 REJECTED + strong D2) are valid trading opportunities.
 """
 import asyncio
 import logging
@@ -22,6 +18,9 @@ from backend.config import (
     TIER_OPPORTUNITY_SCORE,
     TIER_WATCH_SCORE,
     D2_SIGNAL_TTL_MINUTES,
+    TYPE_B_MIN_D2_SCORE,
+    TYPE_B_ENTRY_PRECISION_GATE,
+    IGNORE_MIN_SCORE,
 )
 from backend.state_store import state_store
 from backend.ws_hub import broadcast, get_initial_payload
@@ -30,36 +29,26 @@ from backend.market_evolution.history import history_store
 
 logger = logging.getLogger("judah.fusion")
 
-# ── Bucket definitions ──────────────────────────────────────────────
+# ── Signal Type Definitions ────────────────────────────────────────
 
-BUCKETS = [
-    "READY", "BUILDING", "WAIT",
-    "EARLY", "DEVELOPING", "MONITOR",
-    "TRAP", "IGNORE", "IGNORE",
-]
-
-BUCKET_LABELS = {
-    "READY": "Ready", "BUILDING": "Building", "WAIT": "Wait",
-    "EARLY": "Early", "DEVELOPING": "Developing", "MONITOR": "Monitor",
-    "TRAP": "Trap", "IGNORE": "Ignore",
+SIGNAL_TYPES = {
+    "A": {"name": "HTF Structure",   "color": "#eab308", "icon": "🟡", "action": "EXECUTE", "ttl_min": 120},
+    "B": {"name": "LTF Momentum",    "color": "#3b82f6", "icon": "🔵", "action": "EXECUTE", "ttl_min": 15},
+    "C": {"name": "Full Confluence", "color": "#22c55e", "icon": "🟢", "action": "EXECUTE", "ttl_min": 240},
+    "D": {"name": "HTF Early Warn",  "color": "#f97316", "icon": "🟠", "action": "WATCH",   "ttl_min": 60},
+    "E": {"name": "Conflict/Trap",   "color": "#ef4444", "icon": "🔴", "action": "ALERT",   "ttl_min": 0},
 }
 
-BUCKET_COLORS = {
-    "READY":    "#22c55e",  # green
-    "EARLY":    "#eab308",  # amber
-    "BUILDING": "#3b82f6",  # blue
-    "DEVELOPING":"#f97316", # orange
-    "WAIT":     "#fbbf24",  # yellow
-    "MONITOR":  "#a855f7",  # purple
-    "TRAP":     "#ef4444",  # red
-    "IGNORE":   "#6b7280",  # dark gray
-}
+# Position size multipliers by signal type
+TYPE_POSITION_MULT = {"A": 0.75, "B": 0.35, "C": 1.0, "D": 0.0, "E": 0.0}
 
-BUCKET_ICONS = {
-    "READY": "🟢", "BUILDING": "🔵", "WAIT": "⏳",
-    "EARLY": "🟡", "DEVELOPING": "🟠", "MONITOR": "👀",
-    "TRAP": "🔴", "IGNORE": "⚫",
-}
+# Stop width multipliers by signal type
+TYPE_STOP_MULT = {"A": 1.5, "B": 1.0, "C": 1.5, "D": 1.5, "E": 1.5}
+
+# Decay rates per signal type (per 5-min interval)
+DECAY_TYPE_A = 0.94
+DECAY_TYPE_C = 0.98
+
 
 def classify_tier(score: float) -> str:
     """Classify a score into SNIPER / OPPORTUNITY / WATCH / REJECTED."""
@@ -72,30 +61,55 @@ def classify_tier(score: float) -> str:
     return "REJECTED"
 
 
-def bucket(d1_score: float, d2_score: float) -> str:
-    """3×3 bucket grid from D1 and D2 scores.
+def calculate_ev(win_rate: float, avg_win: float, avg_loss: float) -> float:
+    """Calculate Expected Value per trade: EV = (Win_Rate × Avg_Win) - (Loss_Rate × Avg_Loss)."""
+    loss_rate = 1.0 - win_rate
+    return (win_rate * avg_win) - (loss_rate * avg_loss)
 
-    REJECTED on either dimension → IGNORE.
+
+def classify_signal_type(d1_tier: str, d1_score: float, d2_tier: str, d2_score: float,
+                          d1_direction: str, d2_direction: str,
+                          nascent_move: bool = False, entry_precision: float = 0.0) -> str | None:
+    """Decision Layer: classify signal into Type A/B/C/D/E or None.
+
+    Classification order (first match wins):
+    1. Type C: D1 SNIPER (>=85) AND D2 SNIPER (>=85) AND directions align
+    2. Type A: D1 >= 70 AND D2 >= 50 AND directions align
+    3. Type B: D1 NOT approved AND D2 >= 72 AND nascent_move AND Entry Precision >= 18
+    4. Type D: D1 >= 70 AND D2 not aligned
+    5. Type E: Both valid but opposing directions
+    6. None: everything else
     """
-    d1 = classify_tier(d1_score)
-    d2 = classify_tier(d2_score)
+    d1_approved = d1_tier in ("SNIPER", "OPPORTUNITY")
+    d1_sniper = d1_score >= 85
+    d2_sniper = d2_score >= 85
+    d1_opp_or_above = d1_score >= 70
+    d2_min_b = d2_score >= TYPE_B_MIN_D2_SCORE
+    directions_align = d1_direction == d2_direction and d1_direction != ""
+    ep_gate = entry_precision >= TYPE_B_ENTRY_PRECISION_GATE
 
-    # REJECTED → always IGNORE
-    if d1 == "REJECTED" or d2 == "REJECTED":
-        return "IGNORE"
+    # Type C: both SNIPER on both sides (highest conviction)
+    if d1_sniper and d2_sniper and directions_align:
+        return "C"
 
-    grid = {
-        ("SNIPER",      "SNIPER"):      "READY",
-        ("OPPORTUNITY", "SNIPER"):      "EARLY",
-        ("WATCH",       "SNIPER"):      "TRAP",
-        ("SNIPER",      "OPPORTUNITY"): "BUILDING",
-        ("OPPORTUNITY", "OPPORTUNITY"): "DEVELOPING",
-        ("WATCH",       "OPPORTUNITY"): "IGNORE",
-        ("SNIPER",      "WATCH"):       "WAIT",
-        ("OPPORTUNITY", "WATCH"):       "MONITOR",
-        ("WATCH",       "WATCH"):       "IGNORE",
-    }
-    return grid.get((d1, d2), "IGNORE")
+    # Type A: D1 approved + D2 moderate confirmation
+    if d1_approved and d2_score >= 50 and directions_align:
+        return "A"
+
+    # Type B: D1 not approved, D2 LTF momentum play
+    if not d1_approved and d2_min_b and nascent_move and ep_gate:
+        return "B"
+
+    # Type E: both valid but opposing directions (check before Type D — more specific)
+    if d1_approved and d2_tier in ("SNIPER", "OPPORTUNITY") and not directions_align:
+        return "E"
+
+    # Type D: D1 approved but D2 not aligned (general case)
+    if d1_opp_or_above and not directions_align and d2_tier != "REJECTED":
+        return "D"
+
+    # No signal
+    return None
 
 
 # ── Fusion Engine ───────────────────────────────────────────────────
@@ -118,7 +132,7 @@ class FusionEngine:
         """Start D3 fusion loop."""
         self.running = True
         self.scan_task = asyncio.create_task(self._scan_loop())
-        logger.info("[fusion] D3 Fusion Engine started (9-bucket grid, no sensitivity mode)")
+        logger.info("[fusion] D3 Fusion Engine started (Signal Types A/B/C/D/E)")
 
     async def stop(self):
         self.running = False
@@ -137,7 +151,7 @@ class FusionEngine:
             await asyncio.sleep(2)
 
     async def _check_and_fuse(self):
-        """Check if D1 or D2 has new data, fuse if so."""
+        """Check if D1 or D2 has new data, fuse all D2 signals (independent of D1)."""
         last_d1 = state_store.last_d1_scan
         last_d2 = state_store.last_d2_scan
 
@@ -147,52 +161,125 @@ class FusionEngine:
         self._last_d1_scan = last_d1
         self._last_d2_scan = last_d2
 
-        active = state_store.get_active_coins()
+        # D2 scans ALL 529 pairs independently — fuse all D2 signals
         d2_all = state_store.get_all_d2_signals()
         d2_coins = set(d2_all.keys())
-        active_set = set(active)
-        overlap = d2_coins & active_set
 
-        logger.info(f"[fusion] Active={len(active)} D2={len(d2_all)} overlap={len(overlap)}")
-
+        logger.info(f"[fusion] D2={len(d2_all)} signals to process")
         results = []
-        skip_no_d1 = 0
-        skip_no_d2 = 0
-        for coin in active:
+        type_e_alerts = []
+        for coin in d2_coins:
             d1 = state_store.get_d1_tier(coin)
-            d2 = state_store.get_d2_signal(coin)
-            if not d1:
-                skip_no_d1 += 1
-                continue
-            if not d2:
-                skip_no_d2 += 1
-                continue
-            pkg = await self._fuse_coin(coin)
+            d2 = d2_all[coin]
+            pkg = await self._fuse_coin(coin, type_e_alerts)
             if pkg:
                 results.append(pkg)
 
         if results:
-            logger.info(f"[fusion] Fused {len(results)} from {len(active)} active coins")
-        elif active:
-            logger.info(f"[fusion] 0 fused — {skip_no_d1} no-D1, {skip_no_d2} no-D2")
+            logger.info(f"[fusion] Fused {len(results)} from {len(d2_coins)} D2 signals")
 
-    async def _fuse_coin(self, coin: str):
-        """Fuse D1 + D2 for one coin. Returns package dict or None."""
+        if type_e_alerts:
+            logger.warning(f"[fusion] ⚠️  {len(type_e_alerts)} Type E conflict alerts this cycle:")
+            for alert in type_e_alerts:
+                logger.warning(f"  → {alert['coin']}: D1={alert['d1_dir']} vs D2={alert['d2_dir']} "
+                               f"| D1={alert['d1_tier']}({alert['d1_score']:.0f}) "
+                               f"D2={alert['d2_tier']}({alert['d2_score']:.0f})")
+
+    async def _fuse_coin(self, coin: str, type_e_alerts: list | None = None):
+        """Fuse D1 + D2 for one coin. Returns package dict or None.
+
+        D2 is independent — if D1 data is missing, defaults to REJECTED.
+        Type B signals (D1 not approved) still proceed.
+
+        Args:
+            coin: Trading pair symbol.
+            type_e_alerts: Optional list to append Type E conflict alerts to.
+        """
         d1 = state_store.get_d1_tier(coin)
         d2 = state_store.get_d2_signal(coin)
 
-        if not d1 or not d2:
+        if not d2:
             return None
+
+        # Default D1 to REJECTED if no data (D2 is independent)
+        if not d1:
+            d1 = {"tier": "REJECTED", "score": 0, "direction": "", "timeframes": {}}
 
         d1_tier = d1.get("tier", "WATCH")
         d1_score = d1.get("score", 0)
         d2_score = float(getattr(d2, 'score', 0))
         d2_tier_name = classify_tier(d2_score)
 
-        # Bucket assignment
-        b = bucket(d1_score, d2_score)
+        # ── Signal Type Classification ─────────────────────────────────
+        d1_direction = d1.get("direction", "")
+        d2_direction = getattr(d2, 'direction', '')
+        nascent_move = getattr(d2, 'nascent_move', False)
+        entry_precision = getattr(d2, 'entry_precision', 0.0)
 
-        # Package D1 TF breakdown
+        sig_type = classify_signal_type(
+            d1_tier, d1_score, d2_tier_name, d2_score,
+            d1_direction, d2_direction, nascent_move, entry_precision
+        )
+
+        # Type E conflict alert (sent to frontend + logged)
+        if sig_type == "E" and type_e_alerts is not None:
+            alert = {
+                "coin": coin,
+                "d1_tier": d1_tier,
+                "d1_score": d1_score,
+                "d1_dir": d1_direction,
+                "d2_tier": d2_tier_name,
+                "d2_score": d2_score,
+                "d2_dir": d2_direction,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            type_e_alerts.append(alert)
+            # Push alert to connected clients via WebSocket
+            await broadcast({
+                "type": "TYPE_E_ALERT",
+                "data": alert,
+            })
+
+        type_info = SIGNAL_TYPES.get(sig_type, SIGNAL_TYPES.get("D", {}))
+        action = type_info.get("action", "WATCH")
+        position_mult = TYPE_POSITION_MULT.get(sig_type, 0.0)
+        stop_mult = TYPE_STOP_MULT.get(sig_type, 1.5)
+        ttl_min = type_info.get("ttl_min", 60)
+
+        # ── Structured Scoring Decision Log ────────────────────────────
+        logger.info(
+            f"[scoring] coin={coin} sig_type={sig_type or '—'} action={action} "
+            f"d1_tier={d1_tier} d1_score={d1_score:.0f} d2_tier={d2_tier_name} "
+            f"d2_score={d2_score:.0f} dir_d1={d1_direction or '?'} "
+            f"dir_d2={d2_direction or '?'} dirs_align={d1_direction == d2_direction and bool(d1_direction)} "
+            f"nascent={nascent_move} ep={entry_precision:.0f} pos_mult={position_mult} "
+            f"stop_mult={stop_mult} ttl={ttl_min}min"
+        )
+
+        # ── Expected Value Calculation ─────────────────────────────────
+        # Per-signal EV using formula: EV = (WinRate × AvgWin) - (LossRate × AvgLoss)
+        raw_signal = getattr(d2, 'raw_signal', {}) or {}
+        rr = getattr(d2, 'rr', 1.0)
+        # Estimate win rate from score: higher score → higher win rate
+        # SNIPER(85+) = 75%, OPPORTUNITY(65+) = 60%, WATCH(40+) = 45%
+        if d2_score >= 85:
+            estimated_win_rate = 0.75
+        elif d2_score >= 65:
+            estimated_win_rate = 0.60
+        elif d2_score >= 40:
+            estimated_win_rate = 0.45
+        else:
+            estimated_win_rate = 0.35
+
+        # Avg win/loss derived from RR
+        # Assume 1% risk per trade
+        risk_amount = 0.01
+        avg_win = risk_amount * rr
+        avg_loss = risk_amount
+        expected_value = calculate_ev(estimated_win_rate, avg_win, avg_loss)
+        expected_value_pct = expected_value * 100  # Convert to %
+
+        # ── Package D1 TF breakdown ───────────────────────────────────
         tf_breakdown = {}
         for tf, data in d1.get("timeframes", {}).items():
             tf_breakdown[tf] = {
@@ -200,7 +287,7 @@ class FusionEngine:
                 "score": data.get("score", 0),
             }
 
-        # ── D1 HTF Structure (from signal_store) ─────────────────────────
+        # ── D1 HTF Structure (from signal_store) ─────────────────────
         from backend.config import TIMEFRAMES_HTF
         from backend.signal_store import signal_store as sig_store
 
@@ -249,7 +336,7 @@ class FusionEngine:
                 "va_low": d1_vp.get("va_low", 0) if d1_vp else 0,
             }
 
-        # ── D2 15M Structure (from raw_signal) ──────────────────────────
+        # ── D2 15M Structure (from raw_signal) ────────────────────────
         raw = getattr(d2, 'raw_signal', {}) or {}
         d2_structure = {
             # Scenario
@@ -288,45 +375,58 @@ class FusionEngine:
             "displacement_ratio": raw.get("displacement", {}).get("ratio", 0) if raw.get("displacement") else 0,
         }
 
-        # ── SSL/BSL levels ───────────────────────────────────────────────
-        # SSL = swing low support (bullish SL anchor)
-        # BSL = swing high resistance (bearish SL anchor)
+        # ── SSL/BSL levels ────────────────────────────────────────────
         liq_pools = raw.get("liquidity_pools", {}) or {}
         d2_structure["ssl"] = _extract_ssl(liq_pools, getattr(d2, 'direction', 'BULLISH'))
         d2_structure["bsl"] = _extract_bsl(liq_pools, getattr(d2, 'direction', 'BULLISH'))
 
-        # ── Build package ───────────────────────────────────────────────
+        # ── Build package ─────────────────────────────────────────────
         package = {
             "signal_id": getattr(d2, 'signal_id', ''),
             "coin": coin,
             "timeframe": "15M",
             "direction": getattr(d2, 'direction', 'BULLISH'),
-            "bucket": b,
-            "bucket_label": BUCKET_LABELS.get(b, b),
-            "bucket_icon": BUCKET_ICONS.get(b, ""),
-            "bucket_color": BUCKET_COLORS.get(b, "#6b7280"),
+            # Signal Type (new Decision Layer)
+            "signal_type": sig_type or "—",
+            "signal_type_name": type_info.get("name", "—"),
+            "signal_type_icon": type_info.get("icon", ""),
+            "signal_type_color": type_info.get("color", "#6b7280"),
+            "action": action,
+            # Position sizing
+            "position_mult": position_mult,
+            "stop_mult": stop_mult,
+            "ttl_min": ttl_min,
+            # Scores
             "d2_score": round(d2_score, 1),
             "d2_tier": d2_tier_name,
             "d1_tier": d1_tier,
             "d1_score": round(d1_score, 1),
+            # Structure
             "d1_timeframes": tf_breakdown,
             "d1_structure": d1_structure,
             "d2_structure": d2_structure,
+            # Trade data
             "entry": getattr(d2, 'entry', 0),
             "sl": getattr(d2, 'sl', 0),
             "tp1": getattr(d2, 'tp1', 0),
             "tp2": getattr(d2, 'tp2', 0),
             "rr1": round(getattr(d2, 'rr1', 0), 2),
             "rr2": round(getattr(d2, 'rr2', 0), 2),
+            # Expected Value
+            "expected_value": round(expected_value, 4),
+            "expected_value_pct": round(expected_value_pct, 2),
+            "estimated_win_rate": round(estimated_win_rate * 100, 1),
+            # Metadata
             "freshness": getattr(d2, 'freshness', 'HOT'),
             "score_history": list(getattr(d2, 'score_history', []))[-10:],
             "born_at": getattr(d2, 'born_at', datetime.now(timezone.utc)).isoformat(),
             "last_scan": getattr(d2, 'last_scan', datetime.now(timezone.utc)).isoformat(),
+            # Nascent move flag
+            "nascent_move": nascent_move,
+            "entry_precision": entry_precision,
         }
 
         # ── Market Evolution Engine (16-state matrix) ─────────────────
-        # The new primary object. Replaces D3 buckets as the
-        # single source of truth the frontend consumes.
         me_state = me_evaluate(
             coin,
             d1_tier, d1_score,
@@ -335,10 +435,12 @@ class FusionEngine:
         )
         package["marketEvolution"] = me_state.to_dict()
 
-        await state_store.set_d3_fusion(coin, package)
+        await state_store.set_d3_decision(coin, package)
         await broadcast({"type": "signal", "data": package})
 
-        logger.debug(f"[fusion] {coin}: {b} D1={d1_tier}({d1_score:.0f}) D2={d2_score:.0f} dir={package['direction']}")
+        logger.debug(f"[fusion] {coin}: Type {sig_type or '—'} "
+                      f"D1={d1_tier}({d1_score:.0f}) D2={d2_score:.0f} "
+                      f"dir={package['direction']} EV={expected_value_pct:.2f}%")
         return package
 
 
@@ -348,7 +450,6 @@ def _extract_ssl(liq_pools: dict, direction: str) -> dict:
         return {"level": 0, "touches": 0, "swept": False}
 
     pools = sorted(liq_pools["pools"], key=lambda p: p.get("level", 0))
-    # For bullish: lowest swing low with most touches
     for pool in pools:
         if pool.get("level", 0) > 0:
             return {
@@ -365,7 +466,6 @@ def _extract_bsl(liq_pools: dict, direction: str) -> dict:
         return {"level": 0, "touches": 0, "swept": False}
 
     pools = sorted(liq_pools["pools"], key=lambda p: p.get("level", 0), reverse=True)
-    # For bearish: highest swing high with most touches
     for pool in pools:
         if pool.get("level", 0) > 0:
             return {

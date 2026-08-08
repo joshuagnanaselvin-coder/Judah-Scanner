@@ -5,6 +5,11 @@ No hardcoded if/else - driven entirely by constants.py.
 
 V5.2: STATE_ORDER provides monotonic progression index for evolution velocity.
 """
+from backend.config import (
+    TIER_SNIPER_SCORE,
+    TIER_OPPORTUNITY_SCORE,
+    TIER_WATCH_SCORE,
+)
 from .constants import (
     get_state as _matrix_lookup,
     STATE_TO_CATEGORY,
@@ -35,17 +40,17 @@ STATE_ORDER = {
 
 def d1_tier_from_score(score: float) -> str:
     """Classify a D1 score into a tier label."""
-    if score >= 70: return "SNIPER"
-    if score >= 55: return "OPPORTUNITY"
-    if score >= 40: return "WATCH"
+    if score >= TIER_SNIPER_SCORE: return "SNIPER"
+    if score >= TIER_OPPORTUNITY_SCORE: return "OPPORTUNITY"
+    if score >= TIER_WATCH_SCORE: return "WATCH"
     return "REJECT"
 
 
 def d2_tier_from_score(score: float) -> str:
     """Same thresholds for D2."""
-    if score >= 70: return "SNIPER"
-    if score >= 55: return "OPPORTUNITY"
-    if score >= 40: return "WATCH"
+    if score >= TIER_SNIPER_SCORE: return "SNIPER"
+    if score >= TIER_OPPORTUNITY_SCORE: return "OPPORTUNITY"
+    if score >= TIER_WATCH_SCORE: return "WATCH"
     return "REJECT"
 
 

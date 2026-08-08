@@ -1,15 +1,8 @@
 """Dimension 2 — LTF Entry Scanner (15M timeframe).
 
-D2 receives its coin list EXCLUSIVELY from D1's HTF output.
-It does NOT scan independently — only coins D1 flagged as SNIPER/OPPORTUNITY
-are scanned on 15M for precise entry timing.
-
-Architecture:
-  D1 (HTF: 1H/4H/1D) → produces tier per coin
-    ↓
-  D2 (15M) → scans only D1's SNIPER/OPPORTUNITY coins for entry timing
-    ↓
-  D3 (Fusion) → D1 tier × D2 entry signal → bucket
+D2 receives its coin list from D1's HTF output AND scans all coins independently.
+Nascent Move Detector identifies LTF-first breakouts for Type B signals.
+Entry Precision sub-scorer gates Type B classification.
 """
 import logging
 import uuid
@@ -21,19 +14,26 @@ from backend.market_data import market_data
 from backend.state_store import state_store
 from backend.config import (
     TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE,
+    TYPE_B_MIN_D2_SCORE, TYPE_B_ENTRY_PRECISION_GATE,
+    D2_MIN_ENTRY_PRECISION, D2_MIN_FLOW, D2_MIN_MOMENTUM,
+    IGNORE_MIN_SCORE,
 )
+from backend.helpers.candle_math import atr
+from backend.vsp_helpers import detect_swing_points, detect_fvg
 
 logger = logging.getLogger("judah.ltf")
 
 
 class LTFSignal:
-    """Persistent D2 signal — 15M entry timing for a D1-approved coin."""
+    """Persistent D2 signal — 15M entry timing."""
 
     __slots__ = (
         "signal_id", "coin", "timeframe", "direction",
         "score", "tier", "entry", "sl", "tp1", "tp2",
         "rr1", "rr2", "freshness", "born_at", "last_scan",
         "score_history", "raw_signal", "d1_tier", "d1_score",
+        "nascent_move", "entry_precision", "flow_score",
+        "momentum_score", "htf_bonus",
     )
 
     def __init__(self, coin: str, raw: dict, d1_tier: str = "", d1_score: float = 0):
@@ -57,6 +57,12 @@ class LTFSignal:
         self.raw_signal = raw
         self.d1_tier = d1_tier
         self.d1_score = d1_score
+        # Nascent Move & Entry Precision
+        self.nascent_move = bool(raw.get("nascent_move", False))
+        self.entry_precision = float(raw.get("entry_precision", 0.0))
+        self.flow_score = float(raw.get("flow_score", 0.0))
+        self.momentum_score = float(raw.get("momentum_score", 0.0))
+        self.htf_bonus = float(raw.get("htf_bonus", 0.0))
 
     def update(self, raw: dict):
         self.score = float(raw.get("composite_score", 0))
@@ -71,6 +77,11 @@ class LTFSignal:
         self.last_scan = datetime.now(timezone.utc)
         self.score_history.append((self.last_scan.timestamp(), self.score))
         self.raw_signal = raw
+        self.nascent_move = bool(raw.get("nascent_move", self.nascent_move))
+        self.entry_precision = float(raw.get("entry_precision", self.entry_precision))
+        self.flow_score = float(raw.get("flow_score", self.flow_score))
+        self.momentum_score = float(raw.get("momentum_score", self.momentum_score))
+        self.htf_bonus = float(raw.get("htf_bonus", self.htf_bonus))
         self._update_freshness()
 
     def _update_freshness(self):
@@ -114,28 +125,182 @@ class LTFSignal:
             "score_history": list(self.score_history),
             "d1_tier": self.d1_tier,
             "d1_score": self.d1_score,
+            "nascent_move": self.nascent_move,
+            "entry_precision": self.entry_precision,
+            "flow_score": self.flow_score,
+            "momentum_score": self.momentum_score,
+            "htf_bonus": self.htf_bonus,
         }
 
 
 def get_d1_approved_coins() -> list[str]:
     """Get coins that D1 has flagged as SNIPER or OPPORTUNITY.
 
-    This is D2's ONLY source of coins — no independent scanning.
+    This is D2's historical source of coins — now D2 also scans all coins independently.
     """
     active = state_store.get_active_coins()
     approved = []
     for coin in active:
         d1 = state_store.get_d1_tier(coin)
-        if d1 and d1.get("tier") in ("SNIPER", "OPPORTUNITY"):
+        if d1 and d1.get("tier") in ("SNIPER", "OPPORTUNITY", "WATCH"):
             approved.append(coin)
     return approved
 
 
-def scan_entry(coin: str, d1_tier: str = "", d1_score: float = 0) -> Optional[LTFSignal]:
-    """Scan 15M for entry timing on a D1-approved coin.
+def detect_nascent_move(candles: list, direction: str, d1_direction: str = "") -> dict:
+    """5-condition Nascent Move Detector — identifies LTF-first breakouts.
 
-    Runs the same 4-layer pipeline but ONLY on coins D1 already approved.
-    D1's tier/direction is used as context — D2 score is independent.
+    Conditions (all pass/fail):
+    1. 15M structure break (close above/below swing point with >= 1.5x volume)
+    2. OB interaction (retesting impulse OB within 15-30 min of break)
+    3. Volume + Delta (breakout candle >= 2x avg volume AND delta >= 60% aligned)
+    4. Liquidity sweep (stop-loss cluster taken out within last 2h, >= 0.5% of price)
+    5. No opposing HTF structure (1H/4H have no DIRECT opposing signal)
+
+    Returns:
+        dict with "nascent_move" (bool), "conditions_met" (int), "partial" (bool)
+    """
+    if not candles or len(candles) < 25:
+        return {"nascent_move": False, "conditions_met": 0, "partial": False}
+
+    conditions_met = 0
+    last = candles[-1]
+    last_price = last.close
+
+    # Condition 1: 15M structure break with volume
+    swings = detect_swing_points(candles[-30:])
+    if direction == "BULLISH":
+        recent_highs = swings.get("swing_highs", [])
+        if recent_highs:
+            swing_high = recent_highs[-1].get("price", 0) if isinstance(recent_highs[-1], dict) else recent_highs[-1]
+            if last.close > swing_high and swing_high > 0:
+                avg_vol = sum(c.volume for c in candles[-10:-1]) / max(len(candles[-10:-1]), 1)
+                if last.volume >= avg_vol * 1.5:
+                    conditions_met += 1
+    else:
+        recent_lows = swings.get("swing_lows", [])
+        if recent_lows:
+            swing_low = recent_lows[-1].get("price", 0) if isinstance(recent_lows[-1], dict) else recent_lows[-1]
+            if last.close < swing_low and swing_low > 0:
+                avg_vol = sum(c.volume for c in candles[-10:-1]) / max(len(candles[-10:-1]), 1)
+                if last.volume >= avg_vol * 1.5:
+                    conditions_met += 1
+
+    # Condition 2: OB interaction
+    fvgs = detect_fvg(candles) or []
+    for fvg in fvgs:
+        fvg_type = fvg.get("type", "")
+        fvg_top = fvg.get("top", 0)
+        fvg_bot = fvg.get("bottom", 0)
+        if direction == "BULLISH" and fvg_type == "BULLISH":
+            if fvg_bot <= last_price <= fvg_top:
+                conditions_met += 1
+                break
+        elif direction == "BEARISH" and fvg_type == "BEARISH":
+            if fvg_bot <= last_price <= fvg_top:
+                conditions_met += 1
+                break
+
+    # Condition 3: Volume + Delta (breakout candle)
+    avg_vol_20 = sum(c.volume for c in candles[-20:]) / max(len(candles[-20:]), 1)
+    if last.volume >= avg_vol_20 * 2.0:
+        # Delta check: close vs open alignment
+        body = abs(last.close - last.open)
+        total_range = last.high - last.low
+        if total_range > 0 and (body / total_range) >= 0.6:
+            conditions_met += 1
+
+    # Condition 4: Liquidity sweep (check if recent swing was swept)
+    from backend.liquidity_map import detect_liquidity_pools
+    liq_pools = detect_liquidity_pools(swings) if swings else {"pools": []}
+    for pool in liq_pools.get("pools", []):
+        level = pool.get("level", 0)
+        if level > 0 and abs(last_price - level) / last_price * 100 >= 0.5:
+            if pool.get("swept", False):
+                conditions_met += 1
+                break
+
+    # Condition 5: No opposing HTF structure
+    if d1_direction and d1_direction == direction:
+        conditions_met += 1
+    elif not d1_direction:
+        # No D1 data — give partial credit
+        conditions_met += 1
+
+    # Scoring
+    if conditions_met >= 4:
+        return {"nascent_move": True, "conditions_met": conditions_met, "partial": False}
+    elif conditions_met == 3:
+        return {"nascent_move": True, "conditions_met": conditions_met, "partial": True}
+    else:
+        return {"nascent_move": False, "conditions_met": conditions_met, "partial": False}
+
+
+def calculate_entry_precision(candles: list, signal: dict, direction: str) -> float:
+    """Entry Precision sub-scorer — max 25 points.
+
+    Components:
+    - OB retest: 0-10 pts (in OB zone = 10, near OB = 5, far = 0)
+    - FVG fill: 0-8 pts (in FVG = 8, near FVG = 4, far = 0)
+    - Wick rejection: 0-7 pts (upper wick for bearish, lower wick for bullish)
+
+    Also checks D2 minimum thresholds from config:
+    - Entry Precision >= 15 (D2_MIN_ENTRY_PRECISION)
+    - Flow >= 8 (D2_MIN_FLOW)
+    - Momentum >= 8 (D2_MIN_MOMENTUM)
+    """
+    if not candles or len(candles) < 5:
+        return 0.0
+
+    last = candles[-1]
+    last_price = last.close
+    score = 0.0
+
+    # OB retest (0-10)
+    ob = signal.get("ob", {})
+    if ob:
+        ob_high = ob.get("high", 0)
+        ob_low = ob.get("low", 0)
+        if ob_low and ob_high and ob_low <= last_price <= ob_high:
+            score += 10.0  # Inside OB
+        elif ob_low and ob_high and abs(last_price - (ob_low + ob_high) / 2) / last_price * 100 <= 1.0:
+            score += 5.0  # Within 1% of OB center
+
+    # FVG fill (0-8)
+    fvg = signal.get("fvg", {})
+    if fvg:
+        fvg_top = fvg.get("top", 0)
+        fvg_bot = fvg.get("bottom", 0)
+        if fvg_bot and fvg_top and fvg_bot <= last_price <= fvg_top:
+            score += 8.0  # Inside FVG
+        elif fvg_bot and fvg_top and abs(last_price - (fvg_bot + fvg_top) / 2) / last_price * 100 <= 1.0:
+            score += 4.0  # Near FVG
+
+    # Wick rejection (0-7)
+    total_range = last.high - last.low
+    if total_range > 0:
+        if direction == "BULLISH":
+            lower_wick = last.close - last.low
+            wick_ratio = lower_wick / total_range
+            if wick_ratio >= 0.5:
+                score += 7.0  # Strong lower wick rejection
+            elif wick_ratio >= 0.3:
+                score += 4.0  # Moderate wick
+        else:
+            upper_wick = last.high - last.close
+            wick_ratio = upper_wick / total_range
+            if wick_ratio >= 0.5:
+                score += 7.0  # Strong upper wick rejection
+            elif wick_ratio >= 0.3:
+                score += 4.0  # Moderate wick
+
+    return min(score, 25.0)
+
+
+def scan_entry(coin: str, d1_tier: str = "", d1_score: float = 0) -> Optional[dict]:
+    """Scan 15M for entry timing on a coin.
+
+    Runs the D2 pipeline, adds nascent move detection and entry precision.
     """
     from backend.engines.ltf_pipeline import scan_ltf_pipeline
 
@@ -149,9 +314,53 @@ def scan_entry(coin: str, d1_tier: str = "", d1_score: float = 0) -> Optional[LT
     if not raw:
         return None
 
-    score = float(raw.get("composite_score", 0))
-    signal = LTFSignal(coin, raw, d1_tier=d1_tier, d1_score=d1_score)
-    logger.info(f"[ltf] {coin}: score={score:.1f} tier={signal.tier} "
-                f"dir={signal.direction} entry={signal.entry:.5f} "
-                f"SL={signal.sl:.5f} TP1={signal.tp1:.5f} RR={signal.rr1:.1f}")
-    return signal
+    # Nascent Move Detection
+    direction = raw.get("direction", "BULLISH")
+    d1_dir = raw.get("d1_direction", "") or ""
+    nascent = detect_nascent_move(candles, direction, d1_dir)
+    raw["nascent_move"] = nascent.get("nascent_move", False)
+    raw["nascent_conditions"] = nascent.get("conditions_met", 0)
+    raw["nascent_partial"] = nascent.get("partial", False)
+
+    # Entry Precision
+    entry_precision = calculate_entry_precision(candles, raw, direction)
+    raw["entry_precision"] = entry_precision
+
+    # D2 Minimum Thresholds enforcement
+    composite = raw.get("composite_score", 0)
+    flow = raw.get("flow_score", 0.0)
+    momentum = raw.get("momentum_score", 0.0)
+
+    # Apply minimum thresholds — mark in signal if any fail
+    raw["threshold_flow_pass"] = flow >= D2_MIN_FLOW
+    raw["threshold_momentum_pass"] = momentum >= D2_MIN_MOMENTUM
+    raw["threshold_ep_pass"] = entry_precision >= D2_MIN_ENTRY_PRECISION
+    raw["thresholds_passed"] = all([
+        raw["threshold_ep_pass"],
+        raw["threshold_flow_pass"],
+        raw["threshold_momentum_pass"],
+    ])
+
+    # D2 tier recalculation with minimum thresholds
+    if composite >= TIER_SNIPER_SCORE:
+        tier = "SNIPER"
+    elif composite >= TIER_OPPORTUNITY_SCORE:
+        tier = "OPPORTUNITY"
+    elif composite >= TIER_WATCH_SCORE:
+        tier = "WATCH"
+    else:
+        tier = "REJECTED"
+
+    # If sub-thresholds fail, downgrade tier
+    if not raw["thresholds_passed"] and composite < IGNORE_MIN_SCORE:
+        tier = "REJECTED"
+
+    raw["tier"] = tier
+    raw["score"] = composite
+
+    score = composite
+    logger.info(f"[ltf] {coin}: score={score:.1f} tier={tier} "
+                f"dir={direction} nascent={raw['nascent_move']} "
+                f"EP={entry_precision:.0f} flow={flow:.0f} mom={momentum:.0f} "
+                f"RR={raw.get('rr1', 0):.1f}")
+    return raw

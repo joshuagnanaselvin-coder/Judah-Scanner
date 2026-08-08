@@ -36,14 +36,21 @@ class StateStore:
         # key="KAVAUSDT" → LTFSignal dataclass
         self.d2_signals: dict[str, Any] = {}
 
-        # D3: fusion results per coin
-        # key="KAVAUSDT" → {"bucket": "READY", "updated_at": ts, "d1_tier": "SNIPER", "d2_score": 75}
-        self.d3_fusion: dict[str, dict] = {}
+        # D3: Decision Layer — position sizing decisions with decay tracking
+        # key="KAVAUSDT" → {"signal_type": "A", "position_multiplier": 0.75, "decayed_score": 78, ...}
+        self.d3_decisions: dict[str, dict] = {}
+
+        # Active positions (open trades)
+        self.positions: dict[str, dict] = {}
+
+        # Current regime per coin (updated hourly by regime engine)
+        self.regimes: dict[str, dict] = {}
 
         # Global timestamps
         self.last_d1_scan: float = 0.0
         self.last_d2_scan: float = 0.0
         self.last_d3_fusion: float = 0.0
+        self.last_regime_update: float = 0.0
 
     async def set_timestamp(self, field: str, ts: float = None):
         """Thread-safe timestamp setter for last_d1_scan / last_d2_scan / last_d3_fusion."""
@@ -113,60 +120,74 @@ class StateStore:
         """Get all D2 signals. Called by D3 for fusion."""
         return dict(self.d2_signals)
 
-    # ── D3 Methods ──────────────────────────────────────────────────
+    # ── D3 Decision Layer ───────────────────────────────────────────
 
-    async def set_d3_fusion(self, coin: str, fusion: dict):
-        """Update D3 fusion result. Called by D3 engine."""
+    async def set_d3_decision(self, coin: str, decision: dict):
+        """Update D3 decision for a coin (signal type, position sizing, action)."""
         async with self._lock:
-            self.d3_fusion[coin] = {
-                **fusion,
+            self.d3_decisions[coin] = {
+                **decision,
                 "updated_at": datetime.now(timezone.utc).timestamp(),
             }
-            self.last_d3_fusion = datetime.now(timezone.utc).timestamp()
 
-    def get_d3_fusion(self, coin: str) -> dict | None:
-        """Get D3 fusion for a coin. Called by frontend."""
-        return self.d3_fusion.get(coin)
+    def get_d3_decision(self, coin: str) -> dict | None:
+        """Get D3 decision for a coin."""
+        return self.d3_decisions.get(coin)
 
-    def get_all_fusion(self) -> list:
-        """Get all fusion results for frontend push."""
-        now = datetime.now(timezone.utc).timestamp()
-        results = []
-        for coin, fusion in self.d3_fusion.items():
-            age = now - fusion.get("updated_at", 0)
-            # Only include non-expired signals
-            if age < 1800:  # 30 min TTL for display
-                results.append(fusion)
-        return sorted(results, key=lambda x: x.get("d2_score", 0), reverse=True)
+    def get_all_decisions(self) -> dict:
+        """Get all D3 decisions for frontend push."""
+        return dict(self.d3_decisions)
 
-    # ── Utility ─────────────────────────────────────────────────────
+    # ── Position Management ─────────────────────────────────────────
 
-    def should_scan_d2(self, coin: str) -> bool:
-        """Check if D2 should scan this coin (not all-WATCH on D1)."""
-        return not self.is_all_watch(coin)
+    async def set_position(self, coin: str, position: dict):
+        """Record an open position."""
+        async with self._lock:
+            self.positions[coin] = {
+                **position,
+                "opened_at": datetime.now(timezone.utc).timestamp(),
+            }
 
-    def get_active_coins(self) -> list[str]:
-        """Get coins with any D1 signal (for D2 targeting).
+    def get_position(self, coin: str) -> dict | None:
+        """Get position for a coin."""
+        return self.positions.get(coin)
 
-        MTF leak mitigation: only include coins whose D1 data is fresh
-        (updated_at < D1_TTL_SECONDS ago). Prevents stale HTF context
-        from driving LTF entry scans.
-        """
-        import time
-        from backend.config import D1_TTL_SECONDS
-        cutoff = time.time() - D1_TTL_SECONDS
-        return [c for c, d in self.d1_tiers.items()
-                if not self.is_all_watch(c) and d.get("updated_at", 0) > cutoff]
+    def get_all_positions(self) -> dict:
+        """Get all open positions."""
+        return dict(self.positions)
+
+    async def close_position(self, coin: str):
+        """Remove position after close."""
+        async with self._lock:
+            self.positions.pop(coin, None)
+
+    # ── Regime Tracking ─────────────────────────────────────────────
+
+    async def set_regime(self, coin: str, regime_data: dict):
+        """Update regime for a coin."""
+        async with self._lock:
+            self.regimes[coin] = {
+                **regime_data,
+                "updated_at": datetime.now(timezone.utc).timestamp(),
+            }
+            self.last_regime_update = datetime.now(timezone.utc).timestamp()
+
+    def get_regime(self, coin: str) -> dict | None:
+        """Get regime for a coin."""
+        return self.regimes.get(coin)
+
+    def get_all_regimes(self) -> dict:
+        """Get all regimes."""
+        return dict(self.regimes)
 
     def get_stats(self) -> dict:
         """Get pipeline stats for health endpoint."""
         return {
             "d1_coins": len(self.d1_tiers),
             "d2_signals": len(self.d2_signals),
-            "d3_fusion": len(self.d3_fusion),
+            "d3_decisions": len(self.d3_decisions),
             "last_d1_scan": self.last_d1_scan,
             "last_d2_scan": self.last_d2_scan,
-            "last_d3_fusion": self.last_d3_fusion,
         }
 
 
