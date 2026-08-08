@@ -69,6 +69,12 @@ function buildCard(s) {
   const isExpanded = expandedCards.has(s.signal_id);
   const tierColor = TIER_COLORS[d2Tier] || '#6b7280';
 
+  // Chart links
+  const rawCoin = s.coin || 'BTCUSDT';
+  const base = rawCoin.replace(/USDT$/i, '').replace(/BINANCE:/i, '');
+  const tvUrl = 'https://www.tradingview.com/chart/?symbol=' + encodeURIComponent('BINANCE:' + base + 'USDT.P');
+  const binanceUrl = 'https://www.binance.com/en/futures/' + encodeURIComponent(base + 'USDT');
+
   // D1 structure
   const d1s = s.d1_structure || {};
   const d1Tags = [
@@ -117,7 +123,13 @@ function buildCard(s) {
     <!-- HEADER ROW -->
     <div class="card-header" onclick="toggleExpand('${s.signal_id}')">
       <div class="card-left">
-        <span class="coin-name">${s.coin}</span>
+        <a class="coin-link" href="${tvUrl}" target="_blank" rel="noopener" title="View ${base} on TradingView" onclick="event.stopPropagation()">
+          ${s.coin}
+          <svg class="tv-icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/></svg>
+        </a>
+        <a class="binance-link" href="${binanceUrl}" target="_blank" rel="noopener" title="Trade ${base} on Binance Futures" onclick="event.stopPropagation()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18M6 3l12 9-12 9"/><path d="M18 3v18"/></svg>
+        </a>
         <span class="me-state-badge">${meState}</span>
         <span class="score-flow">
           <span class="score-d1">D1 ${d1Score}</span>
@@ -269,7 +281,6 @@ function renderTypeEAlerts() {
 function applyFilters() {
   return allSignals.filter(s => {
     if (filters.direction !== 'all' && s.direction !== filters.direction) return false;
-    if (filters.signalType !== 'all' && s.signal_type !== filters.signalType) return false;
     return true;
   });
 }
@@ -279,14 +290,6 @@ function initFilters() {
     btn.addEventListener('click', () => {
       filters.direction = btn.dataset.filterDir;
       document.querySelectorAll('.dir-chip').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      renderSignals();
-    });
-  });
-  document.querySelectorAll('.stype-chip').forEach(btn => {
-    btn.addEventListener('click', () => {
-      filters.signalType = btn.dataset.filterStype;
-      document.querySelectorAll('.stype-chip').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       renderSignals();
     });
