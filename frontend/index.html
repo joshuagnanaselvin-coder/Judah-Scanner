@@ -115,6 +115,16 @@
     </div>
   </div>
 
+  <script>
+    // Unregister stale service worker caches on load
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(regs => {
+        regs.forEach(r => {
+          if (r.active && r.active.scriptURL.includes('sw.js')) r.unregister();
+        });
+      });
+    }
+  </script>
   <script src="/static/app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
