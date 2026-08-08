@@ -305,6 +305,13 @@ function renderSignals() {
 
   const filtered = applyFilters();
 
+  // Sort by confidence descending — highest confidence first
+  filtered.sort((a, b) => {
+    const ca = (a.marketEvolution || {}).confidence ?? 0;
+    const cb = (b.marketEvolution || {}).confidence ?? 0;
+    return cb - ca;
+  });
+
   if (allSignals.length === 0) {
     container.innerHTML = '';
     if (empty) { empty.style.display = ''; container.appendChild(empty); }
