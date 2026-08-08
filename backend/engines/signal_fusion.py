@@ -391,6 +391,27 @@ class FusionEngine:
         d2_structure["ssl"] = _extract_ssl(liq_pools, getattr(d2, 'direction', 'BULLISH'))
         d2_structure["bsl"] = _extract_bsl(liq_pools, getattr(d2, 'direction', 'BULLISH'))
 
+        # ── SL override: use D1 structural levels if tighter ─────────────
+        # D2 SL comes from 15M structure + 0.3x ATR buffer.
+        # If D1 has a closer OB/MSB level in the right direction,
+        # that HTF level makes a better SL anchor.
+        d2_sl = getattr(d2, 'sl', 0)
+        d2_entry = getattr(d2, 'entry', 0)
+        d2_dir = getattr(d2, 'direction', 'BULLISH')
+        if d2_sl and d2_entry and d1_structure:
+            d1_sl = _d1_structural_sl(d1_structure, d2_entry, d2_dir, d2_sl)
+            if d1_sl:
+                d2.sl = d1_sl
+                # Recalculate TPs from new SL distance
+                risk = abs(d2_entry - d2_sl)
+                new_risk = abs(d2_entry - d1_sl)
+                if new_risk > 0 and risk > 0:
+                    scale = new_risk / risk
+                    d2.tp1 = d2_entry + (d2.tp1 - d2_entry) * scale if d2_dir == 'BULLISH' else d2_entry - (d2_entry - d2.tp1) * scale
+                    d2.tp2 = d2_entry + (d2.tp2 - d2_entry) * scale if d2_dir == 'BULLISH' else d2_entry - (d2_entry - d2.tp2) * scale
+                    d2.rr1 = round(abs(d2.tp1 - d2_entry) / new_risk, 2)
+                    d2.rr2 = round(abs(d2.tp2 - d2_entry) / new_risk, 2)
+
         # ── Build package ─────────────────────────────────────────────
         package = {
             "signal_id": getattr(d2, 'signal_id', ''),
@@ -535,6 +556,64 @@ def _extract_bsl(liq_pools: dict, direction: str) -> dict:
                 "swept": pool.get("swept", False),
             }
     return {"level": 0, "touches": 0, "swept": False}
+
+
+def _d1_structural_sl(d1: dict, entry: float, direction: str, current_sl: float) -> float | None:
+    """Check D1 HTF structural levels for a tighter SL than D2's.
+
+    For BULLISH: look for OB low, MSB swing low, or FVG bottom below entry.
+    For BEARISH: look for OB high, MSB swing high, or FVG top above entry.
+    Returns the improved SL or None if D2 SL is already tighter.
+    """
+    if not d1 or not entry:
+        return None
+
+    if direction == "BULLISH":
+        # Must be below entry
+        candidates = []
+        ob_low = d1.get("ob_low", 0)
+        if ob_low and ob_low < entry:
+            candidates.append(ob_low)
+        msb_level = d1.get("msb_level", 0)
+        if msb_level and msb_level < entry:
+            candidates.append(msb_level)
+        # FVG bottom (size_atr is approximate; use entry - fvg_size_atr * entry)
+        fvg_size = d1.get("fvg_size_atr", 0)
+        if fvg_size and fvg_size > 0:
+            fvg_bot = entry * (1 - fvg_size / 100)
+            if fvg_bot < entry:
+                candidates.append(fvg_bot)
+        if not candidates:
+            return None
+        best = max(c for c in candidates if c < entry)  # closest to entry
+        current_dist = entry - current_sl
+        new_dist = entry - best
+        # Only use D1 SL if it's tighter (smaller distance) and reasonable
+        if 0 < new_dist < current_dist and new_dist < entry * 0.04:
+            return best
+
+    else:  # BEARISH
+        candidates = []
+        ob_high = d1.get("ob_high", 0)
+        if ob_high and ob_high > entry:
+            candidates.append(ob_high)
+        msb_level = d1.get("msb_level", 0)
+        if msb_level and msb_level > entry:
+            candidates.append(msb_level)
+        fvg_size = d1.get("fvg_size_atr", 0)
+        if fvg_size and fvg_size > 0:
+            fvg_top = entry * (1 + fvg_size / 100)
+            if fvg_top > entry:
+                candidates.append(fvg_top)
+        if not candidates:
+            return None
+        best = min(c for c in candidates if c > entry)  # closest to entry
+        current_dist = current_sl - entry
+        new_dist = best - entry
+        if 0 < new_dist < current_dist and new_dist < entry * 0.04:
+            return best
+
+    return None
 
 
 # Module-level singleton
