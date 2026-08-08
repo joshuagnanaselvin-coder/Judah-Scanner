@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#1e293b">
+  <meta name="theme-color" content="#0c1220">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Judah">
   <link rel="manifest" href="/static/manifest.json">
   <link rel="icon" type="image/svg+xml" href="/static/icon-192.svg">
   <link rel="apple-touch-icon" href="/static/icon-192.svg">
-  <title>Judah — Institutional Market Evolution Terminal</title>
+  <title>Judah — D1/D2 Hybrid Scanner</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -24,7 +24,7 @@
           </div>
           <div class="logo-text">
             <h1>Judah</h1>
-            <span>Institutional Market Evolution Terminal</span>
+            <span>Hybrid Scanner — D1 HTF + D2 15M + Decision Layer</span>
           </div>
         </div>
       </div>
@@ -35,7 +35,6 @@
             <span class="scan-dot" id="scanDot"></span>
             <span class="scan-text" id="scanText">Connecting...</span>
           </div>
-          <div class="scan-detail" id="scanDetail"></div>
         </div>
 
         <div class="status-pill" id="wsStatus">
@@ -44,17 +43,13 @@
         </div>
 
         <div class="stat-group">
-          <div class="stat-chip" title="D1 HTF Signals">
-            <span class="stat-label">D1</span>
-            <span class="stat-value" id="d1Count">0</span>
-          </div>
-          <div class="stat-chip" title="D2 LTF Signals">
-            <span class="stat-label">D2</span>
-            <span class="stat-value" id="d2Count">0</span>
-          </div>
-          <div class="stat-chip stat-accent" title="Fusion Results">
-            <span class="stat-label">Fusion</span>
+          <div class="stat-chip">
+            <span class="stat-label">Signals</span>
             <span class="stat-value" id="totalSignals">0</span>
+          </div>
+          <div class="stat-chip">
+            <span class="stat-label">Scanned</span>
+            <span class="stat-value" id="scannedCount">0</span>
           </div>
         </div>
 
@@ -64,69 +59,47 @@
       </div>
     </header>
 
-    <!-- SCAN ACTIVITY BAR -->
-    <div class="activity-bar" id="activityBar">
-      <div class="activity-item" id="actD1">
-        <span class="act-dot"></span>
-        <span class="act-label">D1 Scan</span>
-        <span class="act-status" id="actD1Status">—</span>
-        <span class="act-time" id="actD1Time"></span>
-      </div>
-      <div class="activity-item" id="actD2">
-        <span class="act-dot"></span>
-        <span class="act-label">D2 Scan</span>
-        <span class="act-status" id="actD2Status">—</span>
-        <span class="act-time" id="actD2Time"></span>
-      </div>
-      <div class="activity-item" id="actD3">
-        <span class="act-dot"></span>
-        <span class="act-label">D3 Fusion</span>
-        <span class="act-status" id="actD3Status">—</span>
-        <span class="act-time" id="actD3Time"></span>
-      </div>
-    </div>
-
-    <!-- V5.2 INSTITUTIONAL FILTERS -->
-    <div class="filter-section v52-filters">
-      <!-- Type E Conflict Alerts -->
-      <div id="typeEAlertContainer" style="display:none;"></div>
-      <!-- Market Type filter -->
-      <div class="filter-scroll" id="filterBar">
-        <span class="filter-group-label">Market Type</span>
-        <button class="filter-chip mt-chip active" data-filter-mt="all">All</button>
-        <button class="filter-chip mt-chip mt-trend" data-filter-mt="TREND">
-          🏛 Trend <span class="chip-count" id="countTrend">0</span>
-        </button>
-        <button class="filter-chip mt-chip mt-reentry" data-filter-mt="RE_ENTRY">
-          🏛 Re-Entry <span class="chip-count" id="countReentry">0</span>
-        </button>
-        <button class="filter-chip mt-chip mt-reversal" data-filter-mt="REVERSAL">
-          🏛 Reversal <span class="chip-count" id="countReversal">0</span>
-        </button>
-        <button class="filter-chip mt-chip mt-dormant" data-filter-mt="DORMANT">
-          ⚪ Dormant <span class="chip-count" id="countDormant">0</span>
-        </button>
-
-        <span class="filter-sep"></span>
-        <!-- Trend filter (evolution velocity) -->
-        <span class="filter-group-label">Trend</span>
-        <button class="filter-chip evo-chip active" data-filter-evo="all">All</button>
-        <button class="filter-chip evo-chip evo-improving" data-filter-evo="improving">↑ Improving</button>
-        <button class="filter-chip evo-chip evo-stable" data-filter-evo="stable">→ Stable</button>
-        <button class="filter-chip evo-chip evo-degrading" data-filter-evo="degrading">↓ Degrading</button>
-
-        <span class="filter-sep"></span>
-        <!-- Direction filter -->
+    <!-- FILTER BAR -->
+    <div class="filter-section">
+      <div class="filter-scroll">
         <span class="filter-group-label">Direction</span>
-        <button class="dir-chip active" data-filter-dir="all">All</button>
-        <button class="dir-chip" data-filter-dir="BULLISH">
+        <button class="filter-chip dir-chip active" data-filter-dir="all">All</button>
+        <button class="filter-chip dir-chip bullish" data-filter-dir="BULLISH">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="18 15 12 9 6 15"/></svg>
           Long
         </button>
-        <button class="dir-chip bearish" data-filter-dir="BEARISH">
+        <button class="filter-chip dir-chip bearish" data-filter-dir="BEARISH">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
           Short
         </button>
+
+        <span class="filter-sep"></span>
+        <span class="filter-group-label">Signal Type</span>
+        <button class="filter-chip stype-chip active" data-filter-stype="all">All</button>
+        <button class="filter-chip stype-chip" data-filter-stype="A">🟡 HTF Structure</button>
+        <button class="filter-chip stype-chip" data-filter-stype="B">🔵 LTF Momentum</button>
+        <button class="filter-chip stype-chip" data-filter-stype="C">🟢 Full Confluence</button>
+        <button class="filter-chip stype-chip" data-filter-stype="D">🟠 Early Warn</button>
+        <button class="filter-chip stype-chip" data-filter-stype="E">🔴 Conflict</button>
+      </div>
+    </div>
+
+    <!-- TYPE E ALERT BAR -->
+    <div id="typeEAlertContainer" style="display:none;"></div>
+
+    <!-- SCAN ACTIVITY BAR -->
+    <div class="activity-bar" id="activityBar">
+      <div class="activity-item" id="actD1">
+        <span class="act-label">D1</span>
+        <span class="act-status" id="actD1Status">—</span>
+      </div>
+      <div class="activity-item" id="actD2">
+        <span class="act-label">D2</span>
+        <span class="act-status" id="actD2Status">—</span>
+      </div>
+      <div class="activity-item" id="actD3">
+        <span class="act-label">D3</span>
+        <span class="act-status" id="actD3Status">—</span>
       </div>
     </div>
 
@@ -136,11 +109,8 @@
         <div class="empty-spinner" id="emptySpinner">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         </div>
-        <h2 id="emptyTitle">Initializing Market Evolution Engine...</h2>
-        <p id="emptyMsg">Scanning 529 coins · HTF + 15M LTF · 16-State Matrix</p>
-        <div class="empty-progress" id="emptyProgress">
-          <div class="progress-bar" id="progressBar"></div>
-        </div>
+        <h2 id="emptyTitle">Initializing...</h2>
+        <p id="emptyMsg">Scanning markets · D1 HTF + D2 15M + Decision Layer</p>
       </div>
     </div>
   </div>
