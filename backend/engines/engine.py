@@ -19,7 +19,7 @@ from backend.vsp_helpers import detect_swing_points
 from backend.helpers.session import get_session_at, session_score, get_session_label
 from backend.config import (
     MIN_ATR_PERCENT, ADAPTIVE_ATR_MIN_ABSOLUTE, MIN_RANGE_MULTIPLIER,
-    TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE,
+    TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE, TIER_WEAK_SCORE,
     SMC_SCORE_MAX, MIN_RR,
     TIMING_KILLZONE_MAX, TIMING_SESSION_MAX, TIMING_DAYS_MAX,
     RR_SCORE_MAX, SL_QUALITY_MAX, CONFLUENCE_MAX,
@@ -208,6 +208,8 @@ def scan(symbol: str, timeframe: str) -> dict | None:
             signal["tier"] = "OPPORTUNITY"
         elif composite >= TIER_WATCH_SCORE:
             signal["tier"] = "WATCH"
+        elif composite >= TIER_WEAK_SCORE:
+            signal["tier"] = "WEAK"
         else:
             signal["tier"] = "REJECTED"
 
@@ -232,7 +234,6 @@ def _score_timing(candles: list) -> int:
 
     Killzone alignment (4 pts):
       - London open (08:00-11:00 UTC) OR NY open (13:30-16:30 UTC) = 4 pts
-      - Overlap (both sessions) = 4 pts
       - London close (10:30-12:00 UTC) = 2 pts
       - Asian session = 0 pts
 
@@ -241,29 +242,67 @@ def _score_timing(candles: list) -> int:
       - Normal = 2 pts
       - Low volatility = 1 pt
 
-    Days factor (3 pts): already captured by session quality.
+    Recency (3 pts):
+      - Setup formed within last 1-2 bars = 3 pts
+      - Setup 3-5 bars old = 2 pts
+      - Setup 6-10 bars old = 1 pt
+      - Setup 10+ bars old = 0 pts
     """
     from backend.helpers.session import get_session_at, session_score
     from datetime import datetime, timezone
 
     ts = int(datetime.now(timezone.utc).timestamp())
     session = get_session_at(ts)
-
-    # Killzone alignment
     utc_hour = datetime.fromtimestamp(ts, tz=timezone.utc).hour + datetime.fromtimestamp(ts, tz=timezone.utc).minute / 60.0
 
+    # Killzone alignment (4 pts max)
     if (KILLZONE_LONDON_START <= utc_hour < KILLZONE_LONDON_END or
         KILLZONE_NY_START <= utc_hour < KILLZONE_NY_END):
-        killzone_score = TIMING_KILLZONE_MAX
+        killzone_score = TIMING_KILLZONE_MAX  # 4
     elif KILLZONE_LONDON_CLOSE_START <= utc_hour < KILLZONE_LONDON_CLOSE_END:
         killzone_score = 2
     else:
         killzone_score = 0
 
-    # Session quality
-    session_quality_score = min(session_score(session), TIMING_SESSION_MAX)
+    # Session quality (3 pts max)
+    raw_session_score = session_score(session)
+    session_quality_score = min(raw_session_score, TIMING_SESSION_MAX)  # capped at 3
 
-    return min(killzone_score + session_quality_score, 10)
+    # Recency factor (TIMING_DAYS_MAX pts) — how recent is the setup?
+    recency_score = 0
+    if candles and len(candles) >= 2:
+        bars_since_setup = _estimate_setup_age(candles, session)
+        if bars_since_setup <= 2:
+            recency_score = TIMING_DAYS_MAX  # 3 pts — fresh setup
+        elif bars_since_setup <= 5:
+            recency_score = 2
+        elif bars_since_setup <= 10:
+            recency_score = 1
+        # else 0
+
+    return min(killzone_score + session_quality_score + recency_score, 10)
+
+
+def _estimate_setup_age(candles: list, session: str) -> int:
+    """Estimate how many bars ago the current setup began.
+
+    Heuristic: count bars since the last significant directional move
+    in the current session. A fresh setup (< 3 bars) is more reliable.
+    """
+    if not candles or len(candles) < 3:
+        return 999
+
+    recent = candles[-10:]  # look at last 10 bars
+    directional_bars = 0
+    for i in range(len(recent) - 1, 0, -1):
+        body = abs(recent[i].close - recent[i].open)
+        body_pct = body / recent[i].close * 100 if recent[i].close > 0 else 0
+        if body_pct >= 0.02:  # meaningful body movement
+            directional_bars += 1
+        else:
+            break
+
+    return directional_bars
 
 
 def _score_rr(signal: dict, smc: dict, crt: dict, candles: list) -> tuple:
@@ -390,20 +429,25 @@ def _check_fatal_flaws(signal: dict, flow: dict, smc: dict) -> bool:
     if sl <= 0 or entry <= 0:
         return True
 
-    # 3. Delta strongly opposing (>60%) on the impulse candle
-    # Check flow triggers for delta opposition
+    # 3. Sweep reversal opposing signal direction — if flow detected a sweep
+    #    in the OPPOSITE direction of the proposed signal, that's a fatal conflict.
     triggers = flow.get("triggers", [])
+    signal_dir = signal.get("direction", "")
     for trigger in triggers:
-        name = trigger.get("name", "").lower()
-        if "delta_divergence" in name or "delta_opposing" in name:
+        t_name = trigger.get("name", "").lower()
+        if signal_dir == "BULLISH" and "bearish" in t_name:
+            return True
+        if signal_dir == "BEARISH" and "bullish" in t_name:
             return True
 
-    # 4. Regular divergence (SMC check)
+    # 4. MSB (Market Structure Break) opposing signal direction
     msb = smc.get("msb", {})
-    if msb.get("type") == "BEARISH" and signal.get("direction") == "BULLISH":
-        return True
-    if msb.get("type") == "BULLISH" and signal.get("direction") == "BEARISH":
-        return True
+    msb_type = msb.get("type", "NONE")
+    if msb_type != "NONE":
+        if msb_type == "BEARISH" and signal_dir == "BULLISH":
+            return True
+        if msb_type == "BULLISH" and signal_dir == "BEARISH":
+            return True
 
     return False
 

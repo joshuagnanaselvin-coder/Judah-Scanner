@@ -13,7 +13,7 @@ from typing import Optional
 from backend.market_data import market_data
 from backend.state_store import state_store
 from backend.config import (
-    TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE,
+    TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE, TIER_WEAK_SCORE,
     TYPE_B_MIN_D2_SCORE, TYPE_B_ENTRY_PRECISION_GATE,
     D2_MIN_ENTRY_PRECISION, D2_MIN_FLOW, D2_MIN_MOMENTUM,
     IGNORE_MIN_SCORE,
@@ -348,6 +348,8 @@ def scan_entry(coin: str, d1_tier: str = "", d1_score: float = 0) -> Optional[di
         tier = "OPPORTUNITY"
     elif composite >= TIER_WATCH_SCORE:
         tier = "WATCH"
+    elif composite >= TIER_WEAK_SCORE:
+        tier = "WEAK"
     else:
         tier = "REJECTED"
 

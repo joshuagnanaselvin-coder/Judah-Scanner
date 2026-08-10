@@ -23,6 +23,7 @@ from backend.config import (
     TIER_SNIPER_SCORE,
     TIER_OPPORTUNITY_SCORE,
     TIER_WATCH_SCORE,
+    TIER_WEAK_SCORE,
 )
 
 logger = logging.getLogger("judah.builder")
@@ -42,6 +43,8 @@ def _tier(score: float) -> str:
         return "OPPORTUNITY"
     if score >= TIER_WATCH_SCORE:
         return "WATCH"
+    if score >= TIER_WEAK_SCORE:
+        return "WEAK"
     return "REJECTED"
 
 
@@ -185,25 +188,25 @@ def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, cr
 # ──────────────────────────────────────────────────────────────────────────
 
 def _detect_swept_level(direction: str, level: float, candles: list) -> bool:
-    """Return True if the given swing level has been 'swallowed' — price traded
+    """Return True if the given swing level has been 'swallowed' — price wick-tested
     through it and closed back on the other side (stale structure).
 
-    Bullish: level was a swing low. Swept if price has gone BELOW it and
-             closed back ABOVE it.
-    Bearish: level was a swing high. Swept if price has gone ABOVE it and
-             closed back BELOW it.
+    Bullish: level is a swing LOW (support). Swept if price wick went BELOW it
+             and the candle CLOSED back ABOVE it (c.low < level < c.close).
+    Bearish: level is a swing HIGH (resistance). Swept if price wick went ABOVE it
+             and the candle CLOSED back BELOW it (c.high > level > c.close).
     """
     if not candles or len(candles) < 3:
         return False
 
     for c in candles[-SWING_SL_LOOKBACK:]:
         if direction == "BULLISH":
-            if c.close < level and c.close > c.open:
-                # Bullish candle closed below the level — it was broken through
+            # Swept = wick below level + close above level (broke support, then recovered)
+            if c.low < level < c.close:
                 return True
         else:
-            if c.close > level and c.close < c.open:
-                # Bearish candle closed above the level — it was broken through
+            # Swept = wick above level + close below level (broke resistance, then fell back)
+            if c.close < level < c.high:
                 return True
     return False
 

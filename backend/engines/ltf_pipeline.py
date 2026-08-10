@@ -21,7 +21,7 @@ from backend.helpers.candle_math import atr, calc_envelope, _get
 from backend.vsp_helpers import detect_swing_points, detect_fvg
 from backend.config import (
     MIN_ATR_PERCENT, ADAPTIVE_ATR_MIN_ABSOLUTE, MIN_RANGE_MULTIPLIER,
-    TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE,
+    TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE, TIER_WEAK_SCORE,
     D2_FLOW_SCORE_MAX, SMC_SCORE_MAX,
     HTF_CONTEXT_SAME, HTF_CONTEXT_NEUTRAL, HTF_CONTEXT_OPPOSING,
     HTF_CONTEXT_NO_DATA, HTF_CONTEXT_MAX, HTF_CONTEXT_MIN,
@@ -268,6 +268,8 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
             signal["tier"] = "OPPORTUNITY"
         elif composite >= TIER_WATCH_SCORE:
             signal["tier"] = "WATCH"
+        elif composite >= TIER_WEAK_SCORE:
+            signal["tier"] = "WEAK"
         else:
             signal["tier"] = "REJECTED"
 

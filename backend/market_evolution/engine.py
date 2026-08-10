@@ -63,7 +63,8 @@ def evaluate(coin: str,
              d1_tier: str, d1_score: float,
              d2_tier: str, d2_score: float,
              direction: str = "BULLISH",
-             alignment_score: int = 0) -> MarketEvolutionState:
+             alignment_score: int = 0,
+             signal_type: str = "") -> MarketEvolutionState:
     """Evaluate Market Evolution for one coin.
 
     V5.2 - Institutional Frontend:
@@ -98,7 +99,9 @@ def evaluate(coin: str,
     velocity = momentum_velocity(prev_d1, d1_score, prev_d2, d2_score)
 
     # V5.2 - Blended confidence (matrix + scores + alignment)
-    confidence = get_confidence(d1_tier, d2_tier, d1_score, d2_score, alignment_score)
+    state_name_for_bayes = state_def.get("name", state_name)
+    confidence = get_confidence(d1_tier, d2_tier, d1_score, d2_score, alignment_score,
+                                state_name=state_name_for_bayes, signal_type=signal_type)
     rec = get_recommendation(d1_tier, d2_tier)
 
     # V5.2 - Institutional category + trading decision (derived from state)

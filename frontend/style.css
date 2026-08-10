@@ -282,6 +282,7 @@ body {
 .tier-sniper { background: #eab30822; color: #eab308; border-color: #eab30844; }
 .tier-opportunity { background: #22c55e22; color: #22c55e; border-color: #22c55e44; }
 .tier-watch { background: #3b82f622; color: #3b82f6; border-color: #3b82f644; }
+.tier-weak { background: #a855f722; color: #a855f7; border-color: #a855f744; }
 .tier-rejected { background: #6b728022; color: #6b7280; border-color: #6b728044; }
 
 /* Direction badge */

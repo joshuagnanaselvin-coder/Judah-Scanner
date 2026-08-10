@@ -37,6 +37,26 @@ class SignalStore:
         return sorted(self.signals.values(),
                       key=lambda s: s["composite_score"], reverse=True)[:MAX_SIGNALS]
 
+    def get_all_decisions(self) -> dict:
+        """Return all signals keyed by symbol_engine (for ws_hub initial payload)."""
+        now = datetime.now(timezone.utc).timestamp() * 1000
+        self._clean_expired(now)
+        return dict(self.signals)
+
+    def get_stats(self) -> dict:
+        """Return summary stats for the header stat chips."""
+        all_sigs = self.get_all()
+        tiers = {"SNIPER": 0, "OPPORTUNITY": 0, "WATCH": 0, "REJECTED": 0, "INVALIDATED": 0, "EXPIRED": 0}
+        for s in all_sigs:
+            t = s.get("tier", "REJECTED")
+            tiers[t] = tiers.get(t, 0) + 1
+        return {
+            "total": len(all_sigs),
+            "by_tier": tiers,
+            "hot": sum(1 for s in all_sigs if s.get("freshness_state") == "hot"),
+            "warm": sum(1 for s in all_sigs if s.get("freshness_state") == "warm"),
+        }
+
     def remove(self, symbol, engine):
         self.signals.pop(f"{symbol}_{engine}", None)
 

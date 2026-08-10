@@ -34,6 +34,42 @@ def atr_percent(candles: list, period: int = 14) -> float:
     if not candles or _get(candles[-1], 'close') == 0: return 0.0
     return (_atr / _get(candles[-1], 'close')) * 100
 
+def vw_atr(candles: list, period: int = 14) -> float:
+    """Volume-weighted ATR — weights each bar's TR by its volume share.
+
+    Standard ATR treats every bar equally. VWATR gives more weight to
+    high-volume bars (institutional activity) and less to low-volume bars
+    (noise). This produces tighter, more meaningful structural levels.
+
+    Returns the VWATR value (same units as ATR).
+    """
+    if not candles or len(candles) < period + 1:
+        return 0.0
+
+    # Calculate TR for each bar
+    trs = []
+    volumes = []
+    for i in range(1, len(candles)):
+        c, prev = candles[i], _get(candles[i-1], 'close')
+        tr = max(_get(c, 'high') - _get(c, 'low'),
+                 abs(_get(c, 'high') - prev),
+                 abs(_get(c, 'low') - prev))
+        trs.append(tr)
+        volumes.append(_get(c, 'volume'))
+
+    # Use last `period` bars
+    recent_tr = trs[-period:]
+    recent_vol = volumes[-period:]
+    total_vol = sum(recent_vol)
+
+    if total_vol <= 0:
+        # Fallback to standard ATR if no volume data
+        return sum(recent_tr) / len(recent_tr)
+
+    # Volume-weighted average TR
+    vwatr = sum(tr * (vol / total_vol) for tr, vol in zip(recent_tr, recent_vol))
+    return vwatr
+
 def calc_envelope(candles: list, period: int = 20) -> dict:
     """Calculate the high/low envelope from the LAST `period` candles.
 

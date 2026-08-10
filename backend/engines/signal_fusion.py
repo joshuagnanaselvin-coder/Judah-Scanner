@@ -18,6 +18,7 @@ from backend.config import (
     TIER_SNIPER_SCORE,
     TIER_OPPORTUNITY_SCORE,
     TIER_WATCH_SCORE,
+    TIER_WEAK_SCORE,
     D2_SIGNAL_TTL_MINUTES,
     TYPE_B_MIN_D2_SCORE,
     TYPE_B_ENTRY_PRECISION_GATE,
@@ -52,13 +53,15 @@ DECAY_TYPE_C = 0.98
 
 
 def classify_tier(score: float) -> str:
-    """Classify a score into SNIPER / OPPORTUNITY / WATCH / REJECTED."""
+    """Classify a score into SNIPER / OPPORTUNITY / WATCH / WEAK / REJECTED."""
     if score >= TIER_SNIPER_SCORE:
         return "SNIPER"
     if score >= TIER_OPPORTUNITY_SCORE:
         return "OPPORTUNITY"
     if score >= TIER_WATCH_SCORE:
         return "WATCH"
+    if score >= TIER_WEAK_SCORE:
+        return "WEAK"
     return "REJECTED"
 
 
@@ -467,6 +470,7 @@ class FusionEngine:
             d2_tier_name, d2_score,
             direction=package["direction"],
             alignment_score=alignment.get("alignment_score", 0),
+            signal_type=sig_type or "",
         )
         package["marketEvolution"] = me_state.to_dict()
 

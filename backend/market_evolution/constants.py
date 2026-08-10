@@ -6,7 +6,7 @@ Each (D1_tier, D2_tier) combination maps to a market evolution state.
 from typing import Dict, Tuple
 
 # Tier values as used by D1/D2 scanners
-TIERS = ("REJECT", "WATCH", "OPPORTUNITY", "SNIPER")
+TIERS = ("REJECT", "WEAK", "WATCH", "OPPORTUNITY", "SNIPER")
 
 # The 16-state matrix: (D1_tier, D2_tier) -> state definition
 MARKET_EVOLUTION_MATRIX: Dict[Tuple[str, str], dict] = {
@@ -22,6 +22,18 @@ MARKET_EVOLUTION_MATRIX: Dict[Tuple[str, str], dict] = {
         "trend": False,
         "reversal": False,
         "nextProbableState": "Awakening",
+    },
+    ("REJECT", "WEAK"): {
+        "name": "Dormant",
+        "description": "Both timeframes rejected. No actionable signal.",
+        "spiral": "Neutral",
+        "tradeStyle": "Ignore",
+        "action": "Ignore",
+        "confidence": 10,
+        "risk": "Very High",
+        "trend": False,
+        "reversal": False,
+        "nextProbableState": "Dormant",
     },
     ("REJECT", "WATCH"): {
         "name": "Awakening",
@@ -85,6 +97,18 @@ MARKET_EVOLUTION_MATRIX: Dict[Tuple[str, str], dict] = {
         "reversal": True,
         "nextProbableState": "Expansion Watch",
     },
+    ("WATCH", "WEAK"): {
+        "name": "Consolidation",
+        "description": "HTF watching, LTF weak. No clear directional bias. Wait.",
+        "spiral": "Neutral",
+        "tradeStyle": "Observe",
+        "action": "Wait",
+        "confidence": 25,
+        "risk": "Medium",
+        "trend": False,
+        "reversal": False,
+        "nextProbableState": "Context Building",
+    },
     ("WATCH", "OPPORTUNITY"): {
         "name": "Expansion Watch",
         "description": "HTF watching, LTF building. Prepare for breakout.",
@@ -135,6 +159,18 @@ MARKET_EVOLUTION_MATRIX: Dict[Tuple[str, str], dict] = {
         "reversal": False,
         "nextProbableState": "Trend Building",
     },
+    ("OPPORTUNITY", "WEAK"): {
+        "name": "Pullback",
+        "description": "HTF aligned, LTF weak. Trend intact, waiting for LTF to recover.",
+        "spiral": "Correction",
+        "tradeStyle": "Trend Following",
+        "action": "Wait",
+        "confidence": 35,
+        "risk": "Medium",
+        "trend": True,
+        "reversal": False,
+        "nextProbableState": "Expansion Setup",
+    },
     ("OPPORTUNITY", "OPPORTUNITY"): {
         "name": "Trend Building",
         "description": "Both timeframes building. Trend developing, momentum increasing.",
@@ -184,6 +220,18 @@ MARKET_EVOLUTION_MATRIX: Dict[Tuple[str, str], dict] = {
         "trend": True,
         "reversal": True,
         "nextProbableState": "Institutional Flow",
+    },
+    ("SNIPER", "WEAK"): {
+        "name": "Momentum Cooling",
+        "description": "HTF strong, LTF weak. Trend intact but LTF losing conviction.",
+        "spiral": "Correction",
+        "tradeStyle": "Trend Following",
+        "action": "Manage Trade",
+        "confidence": 45,
+        "risk": "Medium",
+        "trend": True,
+        "reversal": False,
+        "nextProbableState": "Expansion Setup",
     },
     ("SNIPER", "OPPORTUNITY"): {
         "name": "Institutional Flow",

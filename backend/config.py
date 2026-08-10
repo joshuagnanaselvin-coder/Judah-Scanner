@@ -73,10 +73,11 @@ SMC_SCORE_LIQUIDITY = 5
 
 # === TIERS (fixed — no sensitivity modes) ===
 # Same thresholds for D1 and D2 scoring.
-TIER_SNIPER_SCORE = 85       # SNIPER >= 85: highest probability (was 70)
-TIER_OPPORTUNITY_SCORE = 65  # OPPORTUNITY >= 65: strong setups (was 55)
-TIER_WATCH_SCORE = 40        # WATCH >= 40: partial confirmation
-IGNORE_MIN_SCORE = 60        # Below this: IGNORE regardless of tier (was 50)
+TIER_SNIPER_SCORE = 65       # SNIPER >= 65: highest probability (top 10%)
+TIER_OPPORTUNITY_SCORE = 48  # OPPORTUNITY >= 48: strong setups (top 30%)
+TIER_WATCH_SCORE = 30        # WATCH >= 30: partial confirmation
+TIER_WEAK_SCORE = 20         # WEAK >= 20: low conviction, shown with caution badge
+IGNORE_MIN_SCORE = 20        # Below this: not shown (was 60 — way too aggressive)
 MIN_RR = 1.5
 
 # === 100-POINT SCORING WEIGHTS ===

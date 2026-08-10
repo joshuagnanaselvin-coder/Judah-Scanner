@@ -49,7 +49,7 @@ function fmtAge(ts) {
 // ── Signal Type colors ────────────────────────────────────────────
 const STYPE_COLORS = { A: '#eab308', B: '#3b82f6', C: '#22c55e', D: '#f97316', E: '#ef4444' };
 const STYPE_BG = { A: '#eab30822', B: '#3b82f622', C: '#22c55e22', D: '#f9731622', E: '#ef444422' };
-const TIER_COLORS = { SNIPER: '#eab308', OPPORTUNITY: '#22c55e', WATCH: '#3b82f6', REJECTED: '#6b7280' };
+const TIER_COLORS = { SNIPER: '#eab308', OPPORTUNITY: '#22c55e', WATCH: '#3b82f6', WEAK: '#a855f7', REJECTED: '#6b7280' };
 const SPIRAL_COLORS = { Expansion: '#22c55e', Correction: '#f59e0b', Failure: '#ef4444', Neutral: '#6b7280' };
 const DIR_COLORS = { BULLISH: '#22c55e', BEARISH: '#ef4444', NEUTRAL: '#6b7280' };
 
@@ -434,6 +434,14 @@ function connectWS() {
     document.getElementById('wsLabel').textContent = 'Live';
     document.getElementById('scanDot').style.background = '#22c55e';
     document.getElementById('scanText').textContent = 'Receiving';
+  };
+
+  ws.onerror = (err) => {
+    document.getElementById('wsDot').style.background = '#f59e0b';
+    document.getElementById('wsLabel').textContent = 'Error';
+    document.getElementById('scanDot').style.background = '#f59e0b';
+    document.getElementById('scanText').textContent = 'Retrying...';
+    ws.close();
   };
 
   ws.onclose = () => {

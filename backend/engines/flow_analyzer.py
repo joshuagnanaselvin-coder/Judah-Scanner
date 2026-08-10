@@ -51,13 +51,31 @@ def compute_session_vwap(candles: list, session_start_index: int) -> Optional[fl
 
 
 def _find_session_start(candles: list, timeframe: str = "1h") -> int:
-    """Find the index of the most recent session start (00:00 UTC for daily,
-    or use 4h/8h boundaries for 1H chart)."""
+    """Find the index of the most recent session start for VWAP computation.
+
+    Timeframe-aware:
+      1H  → 4-hour aligned UTC boundaries (00:00, 04:00, 08:00, 12:00, 16:00, 20:00)
+      4H  → 4-hour aligned UTC boundaries (matching the candle open time)
+      1D  → midnight UTC (00:00)
+      Fallback → last 50 candles
+    """
     if not candles:
         return 0
 
-    if timeframe.lower() in ("1h", "1H"):
-        # 4-hour rolling session for VWAP
+    tf = timeframe.lower()
+
+    if tf == "1d":
+        # Daily: session starts at 00:00 UTC
+        target_hour = 0
+        for i in range(len(candles) - 1, -1, -1):
+            c = candles[i]
+            ts = c.time if c.time < 4_000_000_000 else c.time / 1000
+            if datetime.fromtimestamp(ts, tz=timezone.utc).hour < target_hour:
+                return i + 1
+        return 0
+
+    elif tf == "4h":
+        # 4H: align to 4-hour UTC boundaries (0, 4, 8, 12, 16, 20)
         target_hour = (datetime.now(timezone.utc).hour // 4) * 4
         for i in range(len(candles) - 1, -1, -1):
             c = candles[i]
@@ -66,8 +84,20 @@ def _find_session_start(candles: list, timeframe: str = "1h") -> int:
             if hour < target_hour:
                 return i + 1
         return 0
+
+    elif tf == "1h":
+        # 1H: 4-hour rolling session for VWAP (existing behavior)
+        target_hour = (datetime.now(timezone.utc).hour // 4) * 4
+        for i in range(len(candles) - 1, -1, -1):
+            c = candles[i]
+            ts = c.time if c.time < 4_000_000_000 else c.time / 1000
+            hour = datetime.fromtimestamp(ts, tz=timezone.utc).hour
+            if hour < target_hour:
+                return i + 1
+        return 0
+
     else:
-        # 4H / 1D: start of window
+        # 15M, 30M, or unknown: use last 50 candles as session window
         return max(0, len(candles) - 50)
 
 

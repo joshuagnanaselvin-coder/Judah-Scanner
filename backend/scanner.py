@@ -190,10 +190,45 @@ class Scanner:
         # Push to frontend
         if self._callback:
             all_signals = signal_store.get_all()
+            self._apply_zscore_normalization(all_signals)
             try:
                 await self._callback(new_signals, all_signals, refreshed, revalidated)
             except Exception as e:
                 logger.warning(f"[scan] callback error: {e}")
+
+    def _apply_zscore_normalization(self, all_signals: list) -> list:
+        """Normalize composite scores across the live signal universe.
+
+        Blends raw score (70%) with percentile rank (30%) so that
+        a score of 60 in a quiet market means the same as 60 in a volatile
+        market — both are top ~30% of available setups.
+
+        Uses base_score (pre-decay) for fair comparison.
+        """
+        if len(all_signals) < 3:
+            return all_signals  # too few to normalize
+
+        scores = [s.get("base_score", s.get("composite_score", 0)) for s in all_signals]
+        n = len(scores)
+        mean = sum(scores) / n
+        variance = sum((s - mean) ** 2 for s in scores) / n
+        std = variance ** 0.5
+        if std < 1e-6:
+            return all_signals  # all same score, no normalization needed
+
+        for sig in all_signals:
+            raw = sig.get("base_score", sig.get("composite_score", 0))
+            z = (raw - mean) / std
+            # Map z to 0-100 percentile rank using cumulative normal approximation
+            import math
+            percentile = 0.5 * (1 + math.erf(z / 1.41421356)) * 100
+            # Blend: 70% raw score, 30% percentile rank
+            blended = round(0.7 * raw + 0.3 * percentile, 1)
+            sig["composite_score"] = min(blended, 100)
+            sig["z_score"] = round(z, 2)
+            sig["percentile"] = round(percentile, 1)
+
+        return all_signals
 
     def _on_candle_close(self, symbol: str, tf: str):
         """WS callback — offload blocking scan() to avoid blocking the WS read loop."""
