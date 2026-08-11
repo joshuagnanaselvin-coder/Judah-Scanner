@@ -81,106 +81,133 @@ def _detect_tick_size(price: float) -> float:
 # ──────────────────────────────────────────────────────────────────────────
 
 def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, crt: dict) -> tuple:
-    """Institutional limit-entry at verified structural anchor.
+    """Institutional limit-entry at the correct structural anchor.
 
-    Rules (hedge fund methodology):
-    1. If scenario has a structural anchor (OB, FVG, sweep, MSB, OTE, CRT), use it
-       ONLY if the anchor is within 2% of current market price.
-       If anchor is >2% away → the setup is stale / hasn't reached entry yet → use
-       ATR-bounded limit near market (within 0.5%).
-    2. Never use a pure "last + buffer" market entry without any structural basis.
-    3. If no structural anchor → reject signal (not a valid institutional setup).
+    Zone discipline (hedge fund methodology):
+      - BULLISH entry MUST be in the DISCOUNT zone (below the range/midpoint)
+      - BEARISH entry MUST be in the PREMIUM zone (above the range/midpoint)
+      - We NEVER buy in the premium zone or sell in the discount zone.
+
+    Priority order (first valid anchor wins):
+      1. OTE retracement (0.618 Fib) — best risk/reward
+      2. OB low (bullish) / OB high (bearish) — order block edge
+      3. FVG bottom (bullish) / FVG top (bearish) — gap fill
+      4. CRT range boundary — range reversion
+      5. MSB level — structural break retest
+      6. ATR-bounded limit near market — last resort
 
     Returns (entry_price, entry_type, distance_to_entry_pct)
     """
     last = candles[-1].close
     atr_val = crt.get("atr_value", last * 0.01) or last * 0.01
     tick_size = _detect_tick_size(last)
-    atr_buffer = max(tick_size, atr_val * 0.05, last * 0.0005)
 
-    # We build a prioritized list of (price, type, score) candidates.
-    # The highest-scoring valid candidate wins.
-    candidates: list[tuple[float, str, float]] = []
-
-    def _add_candidate(price: float, etype: str, base_score: float = 5.0):
-        if price <= 0 or not (0.00000001 <= price <= 999_999_999):
-            return
-        dist_pct = abs(price - last) / last * 100
-        # Proximity gate: only accept if within 2% of market
-        if dist_pct > 2.0:
-            return
-        # Prefer candidates closer to market (lower distance = higher effective score)
-        adj_score = base_score - dist_pct
-        candidates.append((round(price, 8), etype, adj_score))
-
-    # ── Scenario-specific structural anchors ──────────────────────────────
+    # ── Priority-ordered entry selection (no scoring contest) ──────────────
+    # Institutional rule: entry must be in the ZONE that supports the thesis.
+    # Bullish = buy in discount (below current price or at discount boundary).
+    # Bearish = sell in premium (above current price or at premium boundary).
     try:
-        if scenario == "OB_BOUNCE" and smc.get("ob"):
-            ob = smc["ob"]
-            ob_high = ob.get("high", 0)
-            ob_low = ob.get("low", 0)
-            if ob_high and ob_low:
-                _add_candidate((ob_high + ob_low) / 2, "structural_ob", 5.0)
-
-        elif scenario and scenario.startswith("FVG_FILL") and smc.get("fvg"):
-            fvg = smc["fvg"]
-            fvg_top = fvg.get("top", 0)
-            fvg_bot = fvg.get("bottom", 0)
-            if fvg_top and fvg_bot:
-                _add_candidate((fvg_top + fvg_bot) / 2, "structural_fvg", 5.0)
-
-        elif scenario == "LIQUIDITY_SWEEP" and smc.get("liquidity"):
-            liq = smc["liquidity"]
-            level = liq.get("level", 0)
-            if level and level > 0:
-                _add_candidate(level, "structural_sweep", 5.0)
-
-        elif scenario == "MSB_RETEST" and smc.get("msb"):
-            msb = smc["msb"]
-            level = msb.get("level")
-            if level:
-                _add_candidate(level, "structural_msb", 5.0)
-
-        elif scenario == "DISPLACEMENT_RETRACEMENT" and crt.get("displacement"):
+        # Priority 1: OTE (optimal retracement) — best R:R
+        if scenario == "DISPLACEMENT_RETRACEMENT" and crt.get("displacement"):
             d = crt["displacement"]
             disp_low = d.get("low", 0)
             disp_high = d.get("high", 0)
             if disp_low and disp_high and disp_high > disp_low:
                 if direction == "BULLISH":
-                    entry_candidate = disp_low + (disp_high - disp_low) * 0.59
+                    # 0.618 retracement from the low — enters in the discount zone
+                    ote = disp_low + (disp_high - disp_low) * 0.618
                 else:
-                    entry_candidate = disp_high - (disp_high - disp_low) * 0.59
-                _add_candidate(entry_candidate, "structural_ote", 5.0)
+                    # 0.618 retracement from the high — enters in the premium zone
+                    ote = disp_high - (disp_high - disp_low) * 0.618
+                if ote > 0 and abs(ote - last) / last <= 0.02:
+                    dist = (ote - last) / last * 100 if last else 0
+                    return round(ote, 8), "structural_ote", round(dist, 3)
 
-        elif scenario == "CRT_SETUP" and crt.get("range"):
+        # Priority 2: OB edge — the ORDER BLOCK that caused the move
+        if scenario and "OB" in scenario and smc.get("ob"):
+            ob = smc["ob"]
+            ob_high = ob.get("high", 0)
+            ob_low = ob.get("low", 0)
+            if ob_high and ob_low:
+                if direction == "BULLISH":
+                    # Enter at the BOTTOM of the OB (discount edge)
+                    entry_price = ob_low
+                else:
+                    # Enter at the TOP of the OB (premium edge)
+                    entry_price = ob_high
+                if entry_price > 0 and abs(entry_price - last) / last <= 0.02:
+                    dist = (entry_price - last) / last * 100 if last else 0
+                    return round(entry_price, 8), "structural_ob", round(dist, 3)
+
+        # Priority 3: FVG edge — gap to fill
+        if scenario and "FVG" in scenario and smc.get("fvg"):
+            fvg = smc["fvg"]
+            fvg_top = fvg.get("top", 0)
+            fvg_bot = fvg.get("bottom", 0)
+            if fvg_top and fvg_bot:
+                if direction == "BULLISH":
+                    # Enter at the BOTTOM of the FVG (discount edge — price fills up)
+                    entry_price = fvg_bot
+                else:
+                    # Enter at the TOP of the FVG (premium edge — price fills down)
+                    entry_price = fvg_top
+                if entry_price > 0 and abs(entry_price - last) / last <= 0.02:
+                    dist = (entry_price - last) / last * 100 if last else 0
+                    return round(entry_price, 8), "structural_fvg", round(dist, 3)
+
+        # Priority 3b: Liquidity sweep — enter at the swept level
+        if scenario == "LIQUIDITY_SWEEP" and smc.get("liquidity"):
+            liq = smc["liquidity"]
+            level = liq.get("level", 0)
+            if level and level > 0:
+                if direction == "BULLISH" and level < last:
+                    dist = (level - last) / last * 100 if last else 0
+                    return round(level, 8), "structural_sweep", round(dist, 3)
+                elif direction == "BEARISH" and level > last:
+                    dist = (level - last) / last * 100 if last else 0
+                    return round(level, 8), "structural_sweep", round(dist, 3)
+
+        # Priority 4: CRT range boundary
+        if scenario == "CRT_SETUP" and crt.get("range"):
             rng = crt["range"]
             rng_low = rng.get("low", 0)
             rng_high = rng.get("high", 0)
             if direction == "BULLISH" and rng_low:
-                _add_candidate(rng_low, "structural_crt_low", 4.0)
+                entry_price = rng_low
             elif direction == "BEARISH" and rng_high:
-                _add_candidate(rng_high, "structural_crt_high", 4.0)
+                entry_price = rng_high
+            else:
+                entry_price = 0
+            if entry_price > 0 and abs(entry_price - last) / last <= 0.02:
+                dist = (entry_price - last) / last * 100 if last else 0
+                return round(entry_price, 8), "structural_crt", round(dist, 3)
+
+        # Priority 5: MSB retest
+        if scenario == "MSB_RETEST" and smc.get("msb"):
+            msb = smc["msb"]
+            level = msb.get("level", 0)
+            if level and level > 0:
+                if direction == "BULLISH" and level < last:
+                    dist = (level - last) / last * 100 if last else 0
+                    return round(level, 8), "structural_msb", round(dist, 3)
+                elif direction == "BEARISH" and level > last:
+                    dist = (level - last) / last * 100 if last else 0
+                    return round(level, 8), "structural_msb", round(dist, 3)
 
     except Exception:
         pass
 
-    # ── ATR-bounded limit near market (always valid as fallback) ───────────
+    # ── ATR-bounded limit near market (always valid fallback) ─────────────
+    # For bullish: slight discount below market (0.3x ATR below)
+    # For bearish: slight premium above market (0.3x ATR above)
+    atr_buffer = max(tick_size, atr_val * 0.3, last * 0.0005)
     if direction == "BULLISH":
-        market_limit = last - atr_buffer * 0.3
+        entry_price = last - atr_buffer
     else:
-        market_limit = last + atr_buffer * 0.3
-    _add_candidate(market_limit, "limit_near_market", 3.0)
+        entry_price = last + atr_buffer
 
-    if not candidates:
-        # Absolute safety net: use current price (rare edge case)
-        return round(last, 8), "market_fallback", 0.0
-
-    # Pick highest-adjusted candidate
-    candidates.sort(key=lambda x: x[2], reverse=True)
-    entry, entry_type, _ = candidates[0]
-
-    distance_pct = (entry - last) / last * 100 if last else 0
-    return round(entry, 8), entry_type, round(distance_pct, 3)
+    dist = (entry_price - last) / last * 100 if last else 0
+    return round(entry_price, 8), "limit_near_market", round(dist, 3)
 
 
 # ──────────────────────────────────────────────────────────────────────────
