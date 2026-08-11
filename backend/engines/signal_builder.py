@@ -81,20 +81,20 @@ def _detect_tick_size(price: float) -> float:
 # ──────────────────────────────────────────────────────────────────────────
 
 def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, crt: dict) -> tuple:
-    """Institutional limit-entry at the correct structural anchor.
+    """Institutional limit-entry — liquidity-trap model (hedge fund / smart money).
 
-    Zone discipline (hedge fund methodology):
-      - BULLISH entry MUST be in the DISCOUNT zone (below the range/midpoint)
-      - BEARISH entry MUST be in the PREMIUM zone (above the range/midpoint)
-      - We NEVER buy in the premium zone or sell in the discount zone.
+    Entry priority (first valid anchor wins):
+      1. LIQUIDITY SWEEP — smart money swept a pool, we enter AT that level
+      2. OTE retracement (0.618 Fib) — best R:R
+      3. OB low (bullish) / OB high (bearish)
+      4. FVG bottom (bullish) / FVG top (bearish)
+      5. CRT range boundary
+      6. MSB level
+      7. ATR-bounded limit near market — last resort
 
-    Priority order (first valid anchor wins):
-      1. OTE retracement (0.618 Fib) — best risk/reward
-      2. OB low (bullish) / OB high (bearish) — order block edge
-      3. FVG bottom (bullish) / FVG top (bearish) — gap fill
-      4. CRT range boundary — range reversion
-      5. MSB level — structural break retest
-      6. ATR-bounded limit near market — last resort
+    Zone discipline:
+      - BULLISH entry MUST be in the DISCOUNT zone (below entry/range)
+      - BEARISH entry MUST be in the PREMIUM zone (above entry/range)
 
     Returns (entry_price, entry_type, distance_to_entry_pct)
     """
@@ -102,72 +102,63 @@ def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, cr
     atr_val = crt.get("atr_value", last * 0.01) or last * 0.01
     tick_size = _detect_tick_size(last)
 
-    # ── Priority-ordered entry selection (no scoring contest) ──────────────
-    # Institutional rule: entry must be in the ZONE that supports the thesis.
-    # Bullish = buy in discount (below current price or at discount boundary).
-    # Bearish = sell in premium (above current price or at premium boundary).
     try:
-        # Priority 1: OTE (optimal retracement) — best R:R
+        # Priority 1: LIQUIDITY SWEEP — enter AT the swept level (smart money entry)
+        if scenario == "LIQUIDITY_SWEEP" and smc.get("liquidity"):
+            liq = smc["liquidity"]
+            level = liq.get("level", 0)
+            liq_dir = liq.get("direction", "")
+            if level and level > 0:
+                if direction == "BULLISH" and liq_dir == "BULLISH" and level < last:
+                    dist = (level - last) / last * 100 if last else 0
+                    return round(level, 8), "liquidity_sweep", round(dist, 3)
+                elif direction == "BEARISH" and liq_dir == "BEARISH" and level > last:
+                    dist = (level - last) / last * 100 if last else 0
+                    return round(level, 8), "liquidity_sweep", round(dist, 3)
+
+        # Priority 2: OTE (optimal retracement) — best R:R
         if scenario == "DISPLACEMENT_RETRACEMENT" and crt.get("displacement"):
             d = crt["displacement"]
             disp_low = d.get("low", 0)
             disp_high = d.get("high", 0)
             if disp_low and disp_high and disp_high > disp_low:
                 if direction == "BULLISH":
-                    # 0.618 retracement from the low — enters in the discount zone
                     ote = disp_low + (disp_high - disp_low) * 0.618
                 else:
-                    # 0.618 retracement from the high — enters in the premium zone
                     ote = disp_high - (disp_high - disp_low) * 0.618
                 if ote > 0 and abs(ote - last) / last <= 0.02:
                     dist = (ote - last) / last * 100 if last else 0
                     return round(ote, 8), "structural_ote", round(dist, 3)
 
-        # Priority 2: OB edge — the ORDER BLOCK that caused the move
+        # Priority 3: OB edge
         if scenario and "OB" in scenario and smc.get("ob"):
             ob = smc["ob"]
             ob_high = ob.get("high", 0)
             ob_low = ob.get("low", 0)
             if ob_high and ob_low:
                 if direction == "BULLISH":
-                    # Enter at the BOTTOM of the OB (discount edge)
                     entry_price = ob_low
                 else:
-                    # Enter at the TOP of the OB (premium edge)
                     entry_price = ob_high
                 if entry_price > 0 and abs(entry_price - last) / last <= 0.02:
                     dist = (entry_price - last) / last * 100 if last else 0
                     return round(entry_price, 8), "structural_ob", round(dist, 3)
 
-        # Priority 3: FVG edge — gap to fill
+        # Priority 4: FVG edge
         if scenario and "FVG" in scenario and smc.get("fvg"):
             fvg = smc["fvg"]
             fvg_top = fvg.get("top", 0)
             fvg_bot = fvg.get("bottom", 0)
             if fvg_top and fvg_bot:
                 if direction == "BULLISH":
-                    # Enter at the BOTTOM of the FVG (discount edge — price fills up)
                     entry_price = fvg_bot
                 else:
-                    # Enter at the TOP of the FVG (premium edge — price fills down)
                     entry_price = fvg_top
                 if entry_price > 0 and abs(entry_price - last) / last <= 0.02:
                     dist = (entry_price - last) / last * 100 if last else 0
                     return round(entry_price, 8), "structural_fvg", round(dist, 3)
 
-        # Priority 3b: Liquidity sweep — enter at the swept level
-        if scenario == "LIQUIDITY_SWEEP" and smc.get("liquidity"):
-            liq = smc["liquidity"]
-            level = liq.get("level", 0)
-            if level and level > 0:
-                if direction == "BULLISH" and level < last:
-                    dist = (level - last) / last * 100 if last else 0
-                    return round(level, 8), "structural_sweep", round(dist, 3)
-                elif direction == "BEARISH" and level > last:
-                    dist = (level - last) / last * 100 if last else 0
-                    return round(level, 8), "structural_sweep", round(dist, 3)
-
-        # Priority 4: CRT range boundary
+        # Priority 5: CRT range boundary
         if scenario == "CRT_SETUP" and crt.get("range"):
             rng = crt["range"]
             rng_low = rng.get("low", 0)
@@ -182,7 +173,7 @@ def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, cr
                 dist = (entry_price - last) / last * 100 if last else 0
                 return round(entry_price, 8), "structural_crt", round(dist, 3)
 
-        # Priority 5: MSB retest
+        # Priority 6: MSB retest
         if scenario == "MSB_RETEST" and smc.get("msb"):
             msb = smc["msb"]
             level = msb.get("level", 0)
@@ -197,9 +188,7 @@ def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, cr
     except Exception:
         pass
 
-    # ── ATR-bounded limit near market (always valid fallback) ─────────────
-    # For bullish: slight discount below market (0.3x ATR below)
-    # For bearish: slight premium above market (0.3x ATR above)
+    # Priority 7: ATR-bounded limit near market (always valid fallback)
     atr_buffer = max(tick_size, atr_val * 0.3, last * 0.0005)
     if direction == "BULLISH":
         entry_price = last - atr_buffer
@@ -315,20 +304,34 @@ def calculate_structural_sl_tp(
     candles: list,
     fvg_zones: list = None,
     atr_val: float = None,
+    entry_type: str = "",
+    smc: dict = None,
 ) -> tuple:
     """Calculate SL and TP — institutional hedge fund methodology.
 
-    Returns (stop_loss, take_profit_1, take_profit_2, risk_reward, sl_method).
+    MODE A — Liquidity sweep entry (hedge fund model):
+      Smart money swept a pool → we entered there → SL goes just BEYOND
+      the swept wick. TP targets the opposing liquidity pool.
+
+      BULLISH: SL = swept_low - buffer  (below the wick low)
+      BEARISH: SL = swept_high + buffer (above the wick high)
+
+    MODE B — All other entries (structural/OTE/FVG/CRT/MSB):
+      SL = nearest opposing swing level + buffer (traditional SMC).
 
     SL priority:
-      1. Structural swing (nearest UNSWEPT, within 3% of entry)
-      2. ATR fallback (1.5x ATR) if no valid swing
-      3. Always cap max distance at 4% of entry
+      1. Sweep wick boundary (liquidity mode only)
+      2. Structural swing (nearest UNSWEPT, within 3% of entry)
+      3. ATR fallback (1.5x ATR) if no valid swing
+      4. Always cap max distance at 4% of entry
 
     TP priority:
-      1. Nearest opposing FVG zone
-      2. 1:1 minimum, 2.5:1 extension from SL distance
-      3. Hard cap at 4:1 RR (institutional standard — no lottery tickets)
+      1. Nearest opposing liquidity pool (hedge fund target)
+      2. Next structural swing on the target side
+      3. 1:1 minimum, 2.5:1 extension from SL distance
+      4. Hard cap at 4:1 RR (institutional standard)
+
+    Returns (stop_loss, take_profit_1, take_profit_2, risk_reward, sl_method).
     """
     if not candles:
         # No candle data — pure ATR fallback
@@ -346,9 +349,81 @@ def calculate_structural_sl_tp(
         return round(sl, 5), round(tp1, 5), round(tp2, 5), rr, "atr"
 
     atr_safe = atr_val or atr(candles) or (entry_price * 0.01)
+    tick_size = _detect_tick_size(entry_price)
     buffer = max(atr_safe * 0.3, entry_price * 0.0003)
 
-    # ── STEP 1: Try structural swing ──────────────────────────────────────
+    # ═══════════════════════════════════════════════════════════════════
+    # MODE A: LIQUIDITY SWEEP — SL just beyond the swept wick
+    # ═══════════════════════════════════════════════════════════════════
+    if entry_type == "liquidity_sweep" and smc:
+        liq = smc.get("liquidity", {})
+        liq_dir = liq.get("direction", "")
+        liq_level = liq.get("level", 0)
+
+        if liq_level > 0 and liq_dir == direction:
+            # Find the actual wick extreme (deepest wick within lookback)
+            recent = candles[-SWING_SL_LOOKBACK:]
+            if direction == "BULLISH":
+                # Find the deepest wick below the swept level
+                wick_low = min(c.low for c in recent)
+                # SL = wick_low - buffer (beyond where stops were triggered)
+                buffer_liq = max(tick_size * 3, atr_safe * 0.2, entry_price * 0.0005)
+                stop_loss = wick_low - buffer_liq
+                sl_method = "liquidity_sweep"
+
+                # TP = opposing liquidity pool (buyside = equal highs)
+                tp1 = _find_opposing_liquidity("BULLISH", entry_price, candles)
+                if tp1:
+                    tp2 = tp1 + (tp1 - entry_price) * 0.5  # extended target
+                else:
+                    risk = entry_price - stop_loss
+                    tp1 = entry_price + risk * TP_RR_MULTIPLIER
+                    tp2 = entry_price + risk * 2.0
+
+            else:  # BEARISH
+                wick_high = max(c.high for c in recent)
+                buffer_liq = max(tick_size * 3, atr_safe * 0.2, entry_price * 0.0005)
+                stop_loss = wick_high + buffer_liq
+                sl_method = "liquidity_sweep"
+
+                # TP = opposing liquidity pool (sellside = equal lows)
+                tp1 = _find_opposing_liquidity("BEARISH", entry_price, candles)
+                if tp1:
+                    tp2 = tp1 - (entry_price - tp1) * 0.5
+                else:
+                    risk = stop_loss - entry_price
+                    tp1 = entry_price - risk * TP_RR_MULTIPLIER
+                    tp2 = entry_price - risk * 2.0
+
+            # Cap SL distance
+            max_sl = entry_price * SL_MAX_STRUCTURAL_DISTANCE_PCT / 100
+            sl_dist = abs(entry_price - stop_loss)
+            if sl_dist > max_sl:
+                if direction == "BULLISH":
+                    stop_loss = entry_price - max_sl
+                else:
+                    stop_loss = entry_price + max_sl
+                sl_method = "liquidity_sweep_capped"
+
+            risk = abs(entry_price - stop_loss)
+            reward = abs(tp1 - entry_price)
+            rr = round(reward / risk, 2) if risk > 0 else 1.0
+
+            # Sanity cap: liquidity targets are real levels but cap display RR at 10x
+            if rr > 10.0:
+                rr = 10.0
+
+            return (
+                round(stop_loss, 5),
+                round(tp1, 5),
+                round(tp2, 5),
+                rr,
+                sl_method,
+            )
+
+    # ═══════════════════════════════════════════════════════════════════
+    # MODE B: STRUCTURAL SL — nearest opposing swing (traditional SMC)
+    # ═══════════════════════════════════════════════════════════════════
     sl_method = "structural"
     swing_level = _find_institutional_sl(direction, entry_price, candles)
 
@@ -358,25 +433,22 @@ def calculate_structural_sl_tp(
             stop_loss = swing_level - buffer
         else:
             stop_loss = swing_level + buffer
-        # Verify the swing didn't place SL too far
         max_sl_dist = entry_price * SL_MAX_STRUCTURAL_DISTANCE_PCT / 100
         sl_dist = abs(entry_price - stop_loss)
         if sl_dist > max_sl_dist:
-            # Structural swing too distant — fall back to ATR
             sl_method = "atr"
             if direction == "BULLISH":
                 stop_loss = entry_price - atr_safe * SL_ATR_FALLBACK_MULT
             else:
                 stop_loss = entry_price + atr_safe * SL_ATR_FALLBACK_MULT
     else:
-        # ── STEP 2: ATR fallback ──────────────────────────────────────────
         sl_method = "atr"
         if direction == "BULLISH":
             stop_loss = entry_price - atr_safe * SL_ATR_FALLBACK_MULT
         else:
             stop_loss = entry_price + atr_safe * SL_ATR_FALLBACK_MULT
 
-    # ── STEP 3: Cap max SL distance (hard limit) ──────────────────────────
+    # Cap max SL distance
     max_sl = entry_price * SL_MAX_STRUCTURAL_DISTANCE_PCT / 100
     sl_dist = abs(entry_price - stop_loss)
     if sl_dist > max_sl:
@@ -387,9 +459,8 @@ def calculate_structural_sl_tp(
         if sl_method == "structural":
             sl_method = "capped"
 
-    # ── STEP 4: TP calculation ────────────────────────────────────────────
+    # TP calculation
     risk = abs(entry_price - stop_loss)
-    # 1:1 minimum, then extend toward TP_RR_MULTIPLIER (capped at TP_MAX_RR)
     tp_rr = min(TP_RR_MULTIPLIER or 2.5, TP_MAX_RR)
 
     if direction == "BULLISH":
@@ -399,9 +470,9 @@ def calculate_structural_sl_tp(
         take_profit_1 = entry_price - risk * 1.0
         take_profit_2 = entry_price - risk * tp_rr
 
-    # Refine TP with FVG levels (nearest opposing FVG — structural target)
+    # Refine TP with FVG levels
     if fvg_zones:
-        fvg_targets = _find_fvg_target(direction, fvg_zones, candles)
+        fvg_targets = _find_fvg_target(direction, fvg_zones, candles, entry_price)
         if fvg_targets:
             take_profit_1 = fvg_targets[0]
             if len(fvg_targets) > 1:
@@ -411,13 +482,12 @@ def calculate_structural_sl_tp(
     risk = abs(entry_price - stop_loss)
     reward_tp1 = abs(take_profit_1 - entry_price)
     if risk > 0 and reward_tp1 / risk < MIN_RR:
-        # Force TP1 to MIN_RR distance to pass the gate
         if direction == "BULLISH":
             take_profit_1 = entry_price + risk * MIN_RR
         else:
             take_profit_1 = entry_price - risk * MIN_RR
 
-    # Hard cap TP at TP_MAX_RR
+    # Hard cap TP
     max_tp_dist = risk * TP_MAX_RR
     if direction == "BULLISH":
         if abs(take_profit_1 - entry_price) > max_tp_dist:
@@ -437,7 +507,42 @@ def calculate_structural_sl_tp(
     )
 
 
-def _find_fvg_target(direction: str, fvg_zones: list, candles: list) -> list:
+def _find_opposing_liquidity(direction: str, entry_price: float, candles: list) -> float | None:
+    """Find the nearest opposing liquidity pool as TP target.
+
+    Hedge fund model: after sweeping sellside (bullish entry), target the
+    buyside liquidity (nearest swing highs cluster). After sweeping buyside
+    (bearish entry), target the sellside liquidity (nearest swing lows).
+
+    Returns the nearest opposing level price, or None if no liquidity found.
+    """
+    swings = detect_swing_points(candles[-SWING_SL_LOOKBACK * 3:])
+    if not swings:
+        return None
+
+    candidates = []
+
+    if direction == "BULLISH":
+        # Target: nearest swing HIGH above entry (buyside liquidity)
+        for sh in swings.get("swing_highs", []):
+            price = sh["price"] if isinstance(sh, dict) else (sh if isinstance(sh, (int, float)) else 0)
+            if price > entry_price * 1.001:
+                candidates.append(price)
+    else:
+        # Target: nearest swing LOW below entry (sellside liquidity)
+        for sl in swings.get("swing_lows", []):
+            price = sl["price"] if isinstance(sl, dict) else (sl if isinstance(sl, (int, float)) else 0)
+            if price > 0 and price < entry_price * 0.999:
+                candidates.append(price)
+
+    if candidates:
+        candidates.sort()
+        return candidates[0]  # nearest opposing level
+
+    return None
+
+
+def _find_fvg_target(direction: str, fvg_zones: list, candles: list, entry_price: float = None) -> list:
     """Find the nearest opposing FVG zone to use as TP target(s).
 
     For BULLISH: target is nearest BULLISH FVG above entry (price runs up into it).
@@ -448,27 +553,25 @@ def _find_fvg_target(direction: str, fvg_zones: list, candles: list) -> list:
     if not fvg_zones or not candles:
         return []
 
-    entry_price = candles[-1].close
+    ep = entry_price or candles[-1].close
     targets = []
 
     for fvg in fvg_zones:
         fvg_type = fvg.get("type", "")
-        # For BULLISH: FVG above entry → price can rise into it
-        # For BEARISH: FVG below entry → price can fall into it
         if direction == "BULLISH" and fvg_type == "BULLISH":
             fvg_top = fvg.get("top", 0)
-            if fvg_top > entry_price:
+            if fvg_top > ep:
                 targets.append(fvg_top)
         elif direction == "BEARISH" and fvg_type == "BEARISH":
             fvg_bottom = fvg.get("bottom", 0)
-            if fvg_bottom < entry_price and fvg_bottom > 0:
+            if fvg_bottom < ep and fvg_bottom > 0:
                 targets.append(fvg_bottom)
 
     if not targets:
         return []
 
-    # Sort by proximity to entry
-    targets.sort(key=lambda t: abs(t - entry_price))
+    # Sort by proximity to entry price
+    targets.sort(key=lambda t: abs(t - ep))
 
     # Return up to 2 levels
     return targets[:2]
@@ -545,7 +648,7 @@ def build_signal(
         scenario, direction, candles, smc, crt
     )
 
-    # Structural SL/TP — passes hybrid entry so RR reflects structural-to-structural
+    # Structural SL/TP — passes hybrid entry + SMC data so RR reflects liquidity-to-structural
     fvgs = detect_fvg(candles) or []
     smc_fvgs = smc.get("fvg_zones", []) or fvgs
     stop_loss, tp1, tp2, risk_reward, sl_method = calculate_structural_sl_tp(
@@ -554,6 +657,8 @@ def build_signal(
         candles=candles,
         fvg_zones=smc_fvgs,
         atr_val=atr_val,
+        entry_type=entry_type,
+        smc=smc,
     )
 
     risk = abs(entry - stop_loss)
@@ -712,15 +817,20 @@ def build_signal(
 
 def _scenario(crt, smc):
     direction = crt["displacement"]["crt_trade_direction"]
-    fvg = smc.get("fvg")
-    if crt["in_optimal_ote"] and smc.get("ob"):
-        return "DISPLACEMENT_RETRACEMENT"
-    if fvg and fvg.get("proximity", 999) <= 1.0:
-        return "FVG_FILL_ENTRY_" + direction
-    if smc.get("msb", {}).get("confirmed"):
-        return "MSB_RETEST"
+    # 1. LIQUIDITY SWEEP — primary hedge fund entry (highest conviction)
     if smc.get("liquidity", {}).get("swept"):
         return "LIQUIDITY_SWEEP"
+    # 2. OTE — best R:R, lower conviction than liquidity
+    if crt["in_optimal_ote"] and smc.get("ob"):
+        return "DISPLACEMENT_RETRACEMENT"
+    # 3. FVG
+    fvg = smc.get("fvg")
+    if fvg and fvg.get("proximity", 999) <= 1.0:
+        return "FVG_FILL_ENTRY_" + direction
+    # 4. MSB
+    if smc.get("msb", {}).get("confirmed"):
+        return "MSB_RETEST"
+    # 5. OB bounce
     if smc.get("ob"):
         return "OB_BOUNCE"
     return "CRT_SETUP"

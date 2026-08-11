@@ -504,19 +504,21 @@ body {
   gap: var(--gap);
 }
 
-/* Expired signal card — muted / faded look */
+/* Expired signal card — readable, clickable, subtle age fade */
 .history-card {
   background: var(--bg-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   padding: 10px 12px;
-  opacity: 0.55;
-  transition: opacity var(--transition);
+  opacity: 0.85;
+  transition: opacity 0.3s, border-color 0.3s;
+  cursor: pointer;
   position: relative;
 }
 
 .history-card:hover {
-  opacity: 0.8;
+  opacity: 1;
+  border-color: var(--accent);
 }
 
 .history-card .card-header {
@@ -567,9 +569,9 @@ body {
   margin-top: 4px;
 }
 
-/* History age indicator — fades more with age */
-.history-card.age-recent { opacity: 0.6; }
-.history-card.age-old   { opacity: 0.3; }
+/* Age-based fade — subtle, never invisible */
+.history-card.age-recent { opacity: 0.75; }
+.history-card.age-old   { opacity: 0.55; }
 
 @media (max-width: 768px) {
   .history-grid {

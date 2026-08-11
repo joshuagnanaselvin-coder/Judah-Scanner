@@ -284,17 +284,39 @@ def _find_relevant_fvg(fvgs, crt, candles):
 
 
 def _detect_liquidity(candles, swings):
+    """Detect liquidity sweeps — smart money triggering retail stops.
+
+    Checks both:
+    1. Direct sweep: current candle wick goes past level + closes back on other side
+    2. Trap pattern: current candle wicks past level, prior candle closed on other side
+       (catches sweep-in-progress where the reversal candle hasn't closed yet)
+    """
     if not swings:
         return {"swept": False}
-    last = candles[-1]
     thresh = LIQUIDITY_SWEEP_PERCENT
 
+    # ── BULLISH sweep: wick below swing low + close above (retail shorts trapped) ──
     for sl in swings["swing_lows"][-5:]:
-        if last.low < sl["price"] * (1 - thresh / 100) and last.close > sl["price"]:
-            return {"swept": True, "direction": "BULLISH", "level": sl["price"]}
+        level = sl["price"]
+        # Direct sweep: current candle wick below + close above
+        if candles[-1].low < level * (1 - thresh / 100) and candles[-1].close > level:
+            return {"swept": True, "direction": "BULLISH", "level": level}
+        # Trap pattern: prior candle closed above, current wicking below (sweep in progress)
+        if len(candles) >= 2:
+            prev = candles[-2]
+            if prev.close > level and candles[-1].low < level * (1 - thresh / 100):
+                return {"swept": True, "direction": "BULLISH", "level": level}
 
+    # ── BEARISH sweep: wick above swing high + close below (retail longs trapped) ──
     for sh in swings["swing_highs"][-5:]:
-        if last.high > sh["price"] * (1 + thresh / 100) and last.close < sh["price"]:
-            return {"swept": True, "direction": "BEARISH", "level": sh["price"]}
+        level = sh["price"]
+        # Direct sweep: current candle wick above + close below
+        if candles[-1].high > level * (1 + thresh / 100) and candles[-1].close < level:
+            return {"swept": True, "direction": "BEARISH", "level": level}
+        # Trap pattern: prior candle closed below, current wicking above (sweep in progress)
+        if len(candles) >= 2:
+            prev = candles[-2]
+            if prev.close < level and candles[-1].high > level * (1 + thresh / 100):
+                return {"swept": True, "direction": "BEARISH", "level": level}
 
     return {"swept": False}
