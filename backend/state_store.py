@@ -62,12 +62,13 @@ class StateStore:
 
     # ── D1 Methods ──────────────────────────────────────────────────
 
-    async def set_d1_tier(self, coin: str, tier: str, score: float, timeframes: dict):
+    async def set_d1_tier(self, coin: str, tier: str, score: float, timeframes: dict, direction: str = ""):
         """Update D1 tier for a coin. Called by D1 scanner."""
         async with self._lock:
             self.d1_tiers[coin] = {
                 "tier": tier,
                 "score": score,
+                "direction": direction,
                 "timeframes": timeframes,
                 "updated_at": datetime.now(timezone.utc).timestamp(),
             }

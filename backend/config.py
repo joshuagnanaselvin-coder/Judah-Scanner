@@ -207,10 +207,6 @@ D2_MIN_ENTRY_PRECISION = 12        # min sub-score out of 20 (was 15)
 D2_MIN_FLOW = 8                    # min sub-score (was 5)
 D2_MIN_MOMENTUM = 8                # min sub-score (was 0)
 
-# === DECAY RATES (per signal type, per 5-min interval) ===
-DECAY_TYPE_A = 0.94                # Type A (2h TTL): decay 0.94x per 5 min
-DECAY_TYPE_C = 0.98                # Type C (4h TTL): decay 0.98x per 5 min
-
 # === ACCELERATION STATE ===
 ACCELERATION_NEW_ENTRY_MULT = 0.0  # 0x for new entries — take profits only
 ACCELERATION_HOLD_MULT = 1.0       # Full size for existing positions in acceleration

@@ -153,13 +153,15 @@ class Scanner:
                 coin_tf_map[coin] = {}
             coin_tf_map[coin][sig['engine']] = {
                 "tier": sig.get('tier', 'WATCH'),
-                "score": sig.get('base_score', sig.get('composite_score', 0)),
+                "score": sig.get('composite_score', 0),
+                "direction": sig.get('direction', ''),
             }
 
         for coin, tfs in coin_tf_map.items():
             best_tf = max(tfs.items(), key=lambda x: x[1]['score'])
             best_tier = best_tf[1]['tier']
             best_score = best_tf[1]['score']
+            best_direction = best_tf[1].get('direction', '')
 
             prev_tier = self._prev_tiers.get(coin, "WATCH")
             if prev_tier != best_tier:
@@ -167,7 +169,7 @@ class Scanner:
                     self.on_tier_change(coin, prev_tier, best_tier)
                 self._prev_tiers[coin] = best_tier
 
-            await state_store.set_d1_tier(coin, best_tier, best_score, tfs)
+            await state_store.set_d1_tier(coin, best_tier, best_score, tfs, best_direction)
             d1_tiers_this_cycle[coin] = best_tier
 
         await state_store.set_timestamp("last_d1_scan")
@@ -296,7 +298,8 @@ class Scanner:
             if sig:
                 tfs[tf] = {
                     "tier": sig.get('tier', 'WATCH'),
-                    "score": sig.get('base_score', sig.get('composite_score', 0)),
+                    "score": sig.get('composite_score', 0),
+                    "direction": sig.get('direction', ''),
                 }
 
         if not tfs:
@@ -305,6 +308,7 @@ class Scanner:
         best_tf = max(tfs.items(), key=lambda x: x[1]['score'])
         best_tier = best_tf[1]['tier']
         best_score = best_tf[1]['score']
+        best_direction = best_tf[1].get('direction', '')
 
         prev_tier = self._prev_tiers.get(coin, "WATCH")
         if prev_tier != best_tier:
@@ -312,7 +316,7 @@ class Scanner:
                 self.on_tier_change(coin, prev_tier, best_tier)
             self._prev_tiers[coin] = best_tier
 
-        await state_store.set_d1_tier(coin, best_tier, best_score, tfs)
+        await state_store.set_d1_tier(coin, best_tier, best_score, tfs, best_direction)
 
     def _apply_confluence(self, symbol, signal):
         other_tfs = [tf for tf in TIMEFRAMES_HTF if tf != signal["engine"]]
@@ -328,7 +332,7 @@ class Scanner:
             # Apply confluence boost to composite_score so MTF agreement lifts score.
             base = signal.get("composite_score", 0)
             # Confluence boost is part of the 90-point ceiling.
-            signal["composite_score"] = min(base + 10, 90)
+            signal["composite_score"] = min(base + 10, 100)
 
         return signal
 
@@ -357,7 +361,7 @@ class Scanner:
 
         if reasons:
             base = signal.get("composite_score", 0)
-            signal["composite_score"] = min(base + boost, 90)
+            signal["composite_score"] = min(base + boost, 100)
             signal["boost_reasons"] = reasons
             signal["boost_total"] = boost
 

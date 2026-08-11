@@ -136,7 +136,7 @@ class LTFEngine:
             # Light refresh — just update age/price
             refreshed.append(sig)
 
-        # === PASS 2: Scan ALL symbols for 15M entry (D2 is independent of D1) ===
+        # === PASS 2: Scan for 15M entry (skip fully REJECTED by D1) ===
         new_signals = []
         scan_tasks = []
 
@@ -146,6 +146,9 @@ class LTFEngine:
                 continue
             # Skip if recently scanned
             if _was_recently_scanned(coin):
+                continue
+            # Skip if D1 is fully REJECTED across all TFs — no HTF structure at all
+            if state_store.is_all_watch(coin):
                 continue
 
             # Candidate filter: check 15M ATR before heavy pipeline
