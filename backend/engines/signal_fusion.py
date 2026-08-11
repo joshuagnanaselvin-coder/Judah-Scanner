@@ -28,6 +28,7 @@ from backend.state_store import state_store
 from backend.ws_hub import broadcast, get_initial_payload
 from backend.market_evolution import evaluate as me_evaluate, get_dashboard_stats
 from backend.market_evolution.history import history_store
+from backend.signal_history import signal_history
 
 logger = logging.getLogger("judah.fusion")
 
@@ -154,6 +155,46 @@ class FusionEngine:
                 logger.exception("[fusion] Scan error")
             await asyncio.sleep(2)
 
+    async def _archive_expired(self):
+        """Move D3 decisions whose D2 signal has expired into history.
+
+        D2 removes signals at 15-min TTL (ltf_engine PASS 1). D3 must catch
+        the orphaned decisions before they become stale in the live feed.
+
+        Expired decisions go to signal_history (2h retention) so the
+        frontend can render them in a "Recent History" section.
+        """
+        archived = []
+        signal_ids_to_remove = []
+        d2_coins = set(state_store.get_all_d2_signals().keys())
+
+        for coin, decision in list(state_store.d3_decisions.items()):
+            if coin not in d2_coins:
+                signal_id = decision.get("signal_id", "")
+                reason = "ttl_expired"
+                # Check if D1 also dropped this coin
+                d1 = state_store.get_d1_tier(coin)
+                if not d1:
+                    reason = "d1_dropped"
+                signal_history.add(decision, expiry_reason=reason)
+                signal_ids_to_remove.append(signal_id)
+                archived.append(coin)
+
+        # Remove from active D3 decisions AFTER collecting signal_ids
+        async with state_store._lock:
+            for coin in archived:
+                state_store.d3_decisions.pop(coin, None)
+
+        if archived:
+            logger.info(f"[fusion] Archived {len(archived)} expired decisions: "
+                        f"{', '.join(archived[:5])}{'...' if len(archived) > 5 else ''}")
+            # Notify frontend of removals
+            await broadcast({
+                "type": "REMOVE_SIGNALS",
+                "signal_ids": signal_ids_to_remove,
+                "moved_to_history": True,
+            })
+
     async def _check_and_fuse(self):
         """Check if D1 or D2 has new data, fuse all D2 signals (independent of D1)."""
         last_d1 = state_store.last_d1_scan
@@ -164,6 +205,9 @@ class FusionEngine:
 
         self._last_d1_scan = last_d1
         self._last_d2_scan = last_d2
+
+        # Archive any D3 decisions that lost their D2 signal
+        await self._archive_expired()
 
         # D2 scans ALL 529 pairs independently — fuse all D2 signals
         d2_all = state_store.get_all_d2_signals()

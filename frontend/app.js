@@ -5,6 +5,7 @@
 
 // ── State ──────────────────────────────────────────────────────────
 let allSignals = [];
+let historySignals = [];
 let ws = null;
 let filters = { direction: 'all', signalType: 'all' };
 const expandedCards = new Set();
@@ -424,6 +425,60 @@ function setActivity(prefix, ts) {
   status.textContent = age < 10 ? '● Live' : age < 30 ? '● Recent' : '○ ' + timeAgo(ts);
 }
 
+// ── History ────────────────────────────────────────────────────────
+let historyPollTimer = null;
+
+function renderHistory() {
+  const section = document.getElementById('historySection');
+  const grid = document.getElementById('historyGrid');
+  const meta = document.getElementById('historyMeta');
+  if (!section || !grid) return;
+
+  if (historySignals.length === 0) {
+    section.style.display = 'none';
+    return;
+  }
+
+  section.style.display = '';
+  meta.textContent = `${historySignals.length} signal${historySignals.length !== 1 ? 's' : ''} · last 2 hours`;
+
+  const now = Date.now();
+  grid.innerHTML = historySignals.map(s => {
+    const ageMs = now - new Date(s.expired_at).getTime();
+    const ageMin = Math.floor(ageMs / 60000);
+    const ageClass = ageMin < 30 ? 'age-recent' : 'age-old';
+    const tierColor = { SNIPER: '#eab308', OPPORTUNITY: '#22c55e', WATCH: '#3b82f6', WEAK: '#a855f7', REJECTED: '#6b7280' }[s.d2_tier] || '#6b7280';
+    const reasonLabel = { ttl_expired: 'Signal Expired', d1_dropped: 'D1 Dropped', setup_broken: 'Setup Broken' }[s.expiry_reason] || 'Expired';
+
+    return `<div class="history-card ${ageClass}" id="hist-${s.signal_id}">
+      <div class="card-header">
+        <span class="card-coin">${s.coin}</span>
+        <span class="card-tier-badge" style="background:${tierColor}22;color:${tierColor}">${s.d2_tier || '—'}</span>
+        <span class="expired-label">${ageMin}m ago</span>
+      </div>
+      <div class="history-detail">
+        Type <span>${s.signal_type || '—'}</span> · Score <span>${s.decayed_score ?? s.d2_score ?? 0}</span>
+        · Dir <span>${s.direction || '—'}</span>
+      </div>
+      <span class="expiry-reason">${reasonLabel}</span>
+    </div>`;
+  }).join('');
+}
+
+async function fetchHistory() {
+  try {
+    const resp = await fetch('/api/history');
+    const data = await resp.json();
+    historySignals = data.signals || [];
+    renderHistory();
+  } catch (e) { /* silent */ }
+}
+
+function startHistoryPoll() {
+  fetchHistory();
+  historyPollTimer = setInterval(fetchHistory, 5000);
+}
+
 // ── WebSocket ─────────────────────────────────────────────────────
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -473,6 +528,16 @@ function connectWS() {
       if (msg.type === 'TYPE_E_ALERT' && msg.data) {
         handleTypeEAlert(msg.data);
       }
+      if (msg.type === 'REMOVE_SIGNALS' && msg.signal_ids) {
+        // D3 archived expired signals — remove from active list
+        msg.signal_ids.forEach(id => {
+          const idx = allSignals.findIndex(x => x.signal_id === id);
+          if (idx >= 0) allSignals.splice(idx, 1);
+        });
+        renderSignals();
+        // Refresh history to show the just-archived items
+        fetchHistory();
+      }
     } catch (e) { console.error('[WS]', e); }
   };
 }
@@ -481,5 +546,6 @@ function connectWS() {
 document.addEventListener('DOMContentLoaded', () => {
   connectWS();
   initFilters();
+  startHistoryPoll();
   setInterval(checkHealth, 3000);
 });

@@ -19,6 +19,7 @@ from backend.performance_tracker import performance_tracker
 from backend.state_store import state_store
 from backend.engines.ltf_engine import ltf_engine
 from backend.engines.signal_fusion import fusion_engine
+from backend.signal_history import signal_history
 from backend import ws_hub
 from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE
 
@@ -134,6 +135,20 @@ async def get_fusion():
     except Exception as e:
         logger.error(f"[api/fusion] Error: {e}")
         return JSONResponse(status_code=500, content={"error": "Failed to fetch fusion data", "detail": str(e)})
+
+
+@app.get("/api/history")
+async def get_history():
+    """Return archived expired signals (recent history for the frontend)."""
+    try:
+        signal_history.prune()
+        return {
+            "count": signal_history.count,
+            "signals": signal_history.get_recent(),
+        }
+    except Exception as e:
+        logger.error(f"[api/history] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Failed to fetch history data", "detail": str(e)})
 
 
 @app.get("/api/pairs")
