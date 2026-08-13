@@ -2,17 +2,11 @@
 
 # === SCANNER ===
 SCAN_INTERVAL_SECONDS = 15        # Full D1 scan cycle (candidate filter + CRT/SMC pipeline)
-SIGNAL_TTL_MINUTES = 15        # Unified: D2 and D3 share 15 min expiry (was 30)
+SIGNAL_TTL_MINUTES = 15           # D1 signal expiry in state_store
 MAX_SIGNALS = 200
-BOOTSTRAP_CANDLES = 50     # Only need ~50 candles for indicator lookbacks (was 200)
+BOOTSTRAP_CANDLES = 50            # Only need ~50 candles for indicator lookbacks (was 200)
 SCAN_CONCURRENCY = 20             # Max parallel CRT+SMC scans per cycle
 D1_TTL_SECONDS = 120              # D1 signal expiry in state_store
-
-# === LOGGING (Excel/CSV) ===
-# Set to False to disable signal logging (production mode)
-# Set to True to log every signal to CSV (development/backtest mode)
-ENABLE_SIGNAL_LOGGING = False
-LOG_FILE = "signal_log.csv"
 
 # === CANDIDATE SELECTION ENGINE (formerly pre-filter) ===
 # Adaptive ATR threshold: each coin's threshold = 60% of its own 50-period rolling ATR baseline.

@@ -20,7 +20,6 @@ from backend.config import (
     SCAN_CONCURRENCY,
 )
 from backend.performance_tracker import performance_tracker
-from backend.signal_logger import log_signal
 
 logger = logging.getLogger("judah.scanner")
 
@@ -87,8 +86,6 @@ class Scanner:
                         new_sig = self._apply_boosts(new_sig, sig['engine'])
                     updated = signal_store.revalidate(sig, new_sig)
                     revalidated.append(updated)
-                    if updated.get("freshness_state") == "hot":
-                        log_signal(updated, action='revalidated')
                     continue
 
                 updated = signal_store.refresh(sig, candles[-1].close)
@@ -140,7 +137,6 @@ class Scanner:
 
             if signal_store.add(signal):
                 new_signals.append(signal)
-                log_signal(signal, action='new')
 
             signal_store.mark_scanned(symbol, tf)
 
@@ -272,7 +268,6 @@ class Scanner:
             print(f"[{signal['engine']}] {signal['symbol']}: {signal['tier']} "
                   f"score={signal['composite_score']} dir={signal['direction']} "
                   f"RR={signal['rr']:.1f}")
-            log_signal(signal, action='new')
             logger.info(f"[OUT] {symbol} {tf}: "
                         f"composite={signal.get('composite_score')} "
                         f"tier={signal.get('tier', '?')} dir={signal.get('direction')}")
@@ -376,12 +371,10 @@ class Scanner:
                 sig["outcome"] = "TIMEOUT"
                 expired.append(sig)
                 performance_tracker.record(sig)
-                log_signal(sig, action='expired')
                 del signal_store.signals[key]
             elif sig.get("freshness_state") == "EXPIRED":
                 expired.append(sig)
                 performance_tracker.record(sig)
-                log_signal(sig, action='expired')
                 del signal_store.signals[key]
         return expired
 

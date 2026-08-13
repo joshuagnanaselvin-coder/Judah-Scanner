@@ -19,7 +19,6 @@ from backend.performance_tracker import performance_tracker
 from backend.state_store import state_store
 from backend.engines.ltf_engine import ltf_engine
 from backend.engines.signal_fusion import fusion_engine
-from backend.signal_history import signal_history
 from backend import ws_hub
 from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE
 
@@ -137,20 +136,6 @@ async def get_fusion():
         return JSONResponse(status_code=500, content={"error": "Failed to fetch fusion data", "detail": str(e)})
 
 
-@app.get("/api/history")
-async def get_history():
-    """Return archived expired signals (recent history for the frontend)."""
-    try:
-        signal_history.prune()
-        return {
-            "count": signal_history.count,
-            "signals": signal_history.get_recent(),
-        }
-    except Exception as e:
-        logger.error(f"[api/history] Error: {e}")
-        return JSONResponse(status_code=500, content={"error": "Failed to fetch history data", "detail": str(e)})
-
-
 @app.get("/api/pairs")
 async def get_pairs():
     try:
@@ -167,16 +152,6 @@ async def get_stats():
     except Exception as e:
         logger.error(f"[api/stats] Error: {e}")
         return JSONResponse(status_code=500, content={"error": "Failed to fetch stats", "detail": str(e)})
-
-
-@app.get("/api/logs")
-async def get_logs(limit: int = 100):
-    try:
-        from backend.signal_logger import get_recent_logs
-        return get_recent_logs(limit)
-    except Exception as e:
-        logger.error(f"[api/logs] Error: {e}")
-        return JSONResponse(status_code=500, content={"error": "Failed to fetch logs", "detail": str(e)})
 
 
 @app.get("/api/debug-fusion")
@@ -233,13 +208,7 @@ async def debug_fusion():
 @app.get("/api/performance")
 async def get_performance():
     try:
-        from backend.performance_tracker import PerformanceTrackerCSV
-        tracker = PerformanceTrackerCSV()
-        tracker.load_from_csv()
-        return {
-            "summary": tracker.get_summary(),
-            "by_scenario": tracker.get_scenario_report(),
-        }
+        return performance_tracker.get_stats()
     except Exception as e:
         logger.error(f"[api/performance] Error: {e}")
         return JSONResponse(status_code=500, content={"error": "Failed to fetch performance data", "detail": str(e)})

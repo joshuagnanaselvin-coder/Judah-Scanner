@@ -4,8 +4,6 @@ Dimensions push messages here. Frontend connects via /ws-fusion in main.py.
 """
 from typing import Any
 
-from backend.signal_history import signal_history
-
 _clients: list = []
 
 
@@ -33,14 +31,9 @@ async def broadcast(message: dict):
 
 
 def get_initial_payload(store) -> dict:
-    """Build the initial snapshot sent on WebSocket connect.
-
-    Includes active decisions AND the 2-hour history for the
-    "Recent History" section.
-    """
+    """Build the initial snapshot sent on WebSocket connect."""
     return {
         "type": "INITIAL",
         "signals": list(store.get_all_decisions().values()),
         "stats": store.get_stats(),
-        "history": signal_history.get_recent(),
     }
