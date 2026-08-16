@@ -210,6 +210,10 @@ class LTFEngine:
               f"{len(d2_tiers_this_cycle)} D2 signals, "
               f"{len(scan_tasks)} candidates scanned")
 
+        # Pipeline stage breakdown (one-cycle counts)
+        from backend.engines.ltf_pipeline import _log_stage_summary
+        _log_stage_summary()
+
     def stop(self):
         self.running = False
         if self.scan_task:

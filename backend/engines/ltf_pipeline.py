@@ -34,6 +34,35 @@ logger = logging.getLogger("judah.ltf_pipeline")
 
 _FALLBACK_MIN_CONFIDENCE = 30  # weighted fallback threshold (was binary MSB + SMC≥15)
 
+# Stage counters for pipeline bottleneck analysis
+_stage_stats = {}
+
+
+def _count_stage(stage_name: str):
+    """Increment a stage counter (for pipeline bottleneck debugging)."""
+    _stage_stats[stage_name] = _stage_stats.get(stage_name, 0) + 1
+
+
+def _log_stage_summary():
+    """Log a summary of how many coins passed each stage (called from engine)."""
+    total = _stage_stats.get("candidate_pass", 0)
+    stages = [
+        ("candidate_pass", "candidates"),
+        ("flow_gate_pass", "flow_gate"),
+        ("crt_smc_pass", "crt_smc"),
+        ("fatal_flaw_pass", "fatal_flaws"),
+        ("scoring_pass", "scoring"),
+        ("final_signal", "final"),
+    ]
+    parts = [f"{_stage_stats.get(k, 0)}/{total} {label}" for k, label in stages]
+    logger.info(f"[ltf_pipeline] STAGE COUNTS: {' → '.join(parts)}")
+    _stage_stats.clear()
+
+
+def _reset_stage_stats():
+    _stage_stats.clear()
+
+
 # _synth_crt_score and _build_smc_only_context are in helpers/impulse_context.py
 
 
@@ -106,21 +135,20 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
     """
     candles = market_data.get_candles(symbol, timeframe)
     if not candles or len(candles) < 25:
-        logger.debug(f"[ltf_pipeline] SKIP {symbol} {timeframe}: insufficient candles")
         return None
 
     last_price = _get(candles[-1], 'close')
     atr_val = atr(candles)
     atr_pct = (atr_val / last_price * 100) if last_price > 0 else 0.0
     if atr_pct < MIN_ATR_PERCENT or atr_val < ADAPTIVE_ATR_MIN_ABSOLUTE:
-        logger.debug(f"[ltf_pipeline] SKIP {symbol} {timeframe}: ATR below threshold")
         return None
 
     env = calc_envelope(candles, 50)
     range_size = env.get('range_size', 0)
     if range_size < atr_val * MIN_RANGE_MULTIPLIER:
-        logger.debug(f"[ltf_pipeline] SKIP {symbol} {timeframe}: range too small")
         return None
+
+    _count_stage("candidate_pass")
 
     # FLOW GATE
     swings = detect_swing_points(candles[-30:])
@@ -129,38 +157,27 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
     fast = detect_fast_mover(candles, swings)
 
     if not flow["is_flowing"] and not fast["is_fast_mover"]:
-        logger.debug(f"[ltf_pipeline] SKIP {symbol} {timeframe}: no flow triggers")
         return None
 
-    logger.debug(f"[ltf_pipeline] FLOW {symbol} {timeframe}: boost=+{flow['boost']} "
-                 f"triggers={[t['name'] for t in flow['triggers']]} kz={flow['killzone']['zone']} "
-                 f"dir={flow['direction']} fast_mover={fast['is_fast_mover']}")
+    _count_stage("flow_gate_pass")
 
     # PRIMARY PATH: CRT + SMC
-    logger.debug(f"[ltf_pipeline] Running CRT for {symbol} {timeframe} ({len(candles)} candles)")
     crt = run_crt(candles)
 
     if crt:
-        logger.debug(f"[ltf_pipeline] CRT passed {symbol}: score={crt.get('crt_score',0)}")
         smc = run_smc(candles, crt)
         if not smc:
-            logger.debug(f"[ltf_pipeline] SKIP {symbol}: SMC returned None")
             return None
-        logger.debug(f"[ltf_pipeline] SMC passed {symbol}: score={smc.get('smc_score',0)}")
         path = "CRT+SMC"
     else:
         # FALLBACK: Weighted confidence for impulse coins
-        logger.debug(f"[ltf_pipeline] CRT missing for {symbol} — trying SMC-only fallback")
         fallback_crt = build_smc_only_context(candles)
         if not fallback_crt:
-            logger.debug(f"[ltf_pipeline] SKIP {symbol}: no CRT and no MSB direction")
             return None
         smc = run_smc(candles, fallback_crt)
         if not smc:
-            logger.debug(f"[ltf_pipeline] SKIP {symbol}: SMC-only fallback returned None")
             return None
 
-        # === WEIGHTED FALLBACK CONFIDENCE (no all-or-nothing gates) ===
         fallback_score = 0
         msb_confirmed = (smc.get("msb") or {}).get("confirmed", False)
         ob = smc.get("ob")
@@ -180,24 +197,39 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
         if fast.get("is_fast_mover") and fast.get("score", 0) > 15:
             fallback_score += 8
 
-        logger.debug(f"[ltf_pipeline] Fallback confidence: {fallback_score}/{_FALLBACK_MIN_CONFIDENCE} "
-                     f"(msb={8 if msb_confirmed else 0} ob={5 if ob and ob.get('strength',0)>=3 else 0} "
-                     f"fvg={4 if fvg and fvg.get('proximity',999)<=1.0 else 0} "
-                     f"liq={5 if liq_swept else 0} flow={8 if flow.get('boost',0)>18 else 0} "
-                     f"mom={8 if fast.get('is_fast_mover') and fast.get('score',0)>15 else 0})")
-
         if fallback_score < _FALLBACK_MIN_CONFIDENCE:
-            logger.debug(f"[ltf_pipeline] SKIP {symbol}: fallback confidence {fallback_score} < {_FALLBACK_MIN_CONFIDENCE}")
             return None
 
         crt = fallback_crt
         path = "SMC-ONLY"
 
+    _count_stage("crt_smc_pass")
+
     # D2 FATAL FLAW CHECK (auto-disqualify before scoring)
+    # Populate flow proximity flags from SMC data so the precision check is accurate
+    ob = smc.get("ob")
+    fvg_zone = smc.get("fvg")
+    last_price = _get(candles[-1], 'close') if candles else 0
+    if ob and last_price > 0:
+        ob_low = ob.get("low", 0)
+        ob_high = ob.get("high", 0)
+        if ob_low and ob_high:
+            ob_mid = (ob_low + ob_high) / 2
+            flow["ob_proximity"] = (ob_low <= last_price <= ob_high) or \
+                (abs(last_price - ob_mid) / ob_mid * 100 <= 1.5)
+    if fvg_zone and last_price > 0:
+        fvg_bot = fvg_zone.get("bottom", 0)
+        fvg_top = fvg_zone.get("top", 0)
+        if fvg_bot and fvg_top:
+            fvg_mid = (fvg_bot + fvg_top) / 2
+            flow["fvg_proximity"] = (fvg_bot <= last_price <= fvg_top) or \
+                (abs(last_price - fvg_mid) / fvg_mid * 100 <= 1.5)
+
     fatal_flaws = _check_d2_fatal_flaws(candles, smc, flow)
     if fatal_flaws:
-        logger.warning(f"[ltf_pipeline] D2 FATAL FLAW {symbol}: {fatal_flaws}")
         return None
+
+    _count_stage("fatal_flaw_pass")
 
     # === D2 100-POINT SCORING ===
     # D2: Entry Precision(20) + LTF Structure(20) + Flow(15) + Momentum(15)
@@ -208,7 +240,9 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
     flow_score = min(flow["boost"], D2_FLOW_SCORE_MAX)
     momentum_score = min(fm["score"] if fm["is_fast_mover"] else 0, 15)
 
-    # --- HTF Context (10 pts) ---
+    _count_stage("scoring_pass")
+
+    # HTF Context (10 pts)
     htf_context_score = _score_htf_context(symbol, crt, candles)
 
     # --- Nascent Move (15 pts) ---
@@ -297,6 +331,7 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
         signal["engine_path"] = path
         signal["flow_direction"] = flow["direction"]
         signal["killzone"] = flow["killzone"]
+        _count_stage("final_signal")
         logger.info(f"[ltf_pipeline] SIGNAL {symbol} {timeframe}: {signal['tier']} score={signal['composite_score']} "
                      f"dir={signal['direction']} rr={signal['rr']:.1f} path={path} "
                      f"crt={signal['crt_score']} smc={signal['smc_score']} flow={flow_score} mom={momentum_score} "
