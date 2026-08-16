@@ -29,6 +29,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger("judah")
 
+
+# ── Helpers ─────────────────────────────────────────────────────────
+
+def _safe(obj):
+    """Make objects JSON-serializable for WebSocket sends."""
+    if isinstance(obj, dict):
+        return {k: _safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_safe(v) for v in obj]
+    if hasattr(obj, "isoformat"):
+        return obj.isoformat()
+    if hasattr(obj, "timestamp"):
+        return obj.timestamp()
+    return obj
+
+
+def _now_ms() -> int:
+    """Current epoch timestamp in milliseconds."""
+    import time
+    return int(time.time() * 1000)
+
+
 app = FastAPI(title="Judah Scanner")
 
 # Serve frontend static files with NO caching

@@ -5,3 +5,4 @@ signal_log.csv
 signal_log.xlsx
 ~$signal_log.xlsx
 .env
+logs/

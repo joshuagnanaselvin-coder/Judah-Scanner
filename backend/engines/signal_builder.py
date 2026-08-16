@@ -80,6 +80,25 @@ def _detect_tick_size(price: float) -> float:
 # INSTITUTIONAL ENTRY
 # ──────────────────────────────────────────────────────────────────────────
 
+def _is_valid_entry_zone(entry_price: float, direction: str, crt: dict) -> bool:
+    """Check that entry_price is in the correct zone for the direction.
+
+    Zone discipline (hedge fund methodology):
+      BULLISH  → entry must be at or below range midpoint (DISCOUNT zone)
+      BEARISH  → entry must be at or above range midpoint (PREMIUM zone)
+
+    Falls back to True (no check) when range data is unavailable.
+    """
+    rng = crt.get("range") or {}
+    midpoint = rng.get("midpoint", 0)
+    if midpoint <= 0:
+        return True  # No valid range — skip check
+    if direction == "BULLISH":
+        return entry_price <= midpoint  # Must be at/below midpoint (discount)
+    else:
+        return entry_price >= midpoint  # Must be at/above midpoint (premium)
+
+
 def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, crt: dict) -> tuple:
     """Institutional limit-entry — liquidity-trap model (hedge fund / smart money).
 
@@ -104,6 +123,7 @@ def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, cr
 
     try:
         # Priority 1: LIQUIDITY SWEEP — enter AT the swept level (smart money entry)
+        # No zone check: hedge fund methodology enters at the sweep regardless of zone.
         if scenario == "LIQUIDITY_SWEEP" and smc.get("liquidity"):
             liq = smc["liquidity"]
             level = liq.get("level", 0)
@@ -117,6 +137,7 @@ def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, cr
                     return round(level, 8), "liquidity_sweep", round(dist, 3)
 
         # Priority 2: OTE (optimal retracement) — best R:R
+        # Zone check: bullish must be <= midpoint (discount), bearish must be > midpoint (premium)
         if scenario == "DISPLACEMENT_RETRACEMENT" and crt.get("displacement"):
             d = crt["displacement"]
             disp_low = d.get("low", 0)
@@ -126,11 +147,13 @@ def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, cr
                     ote = disp_low + (disp_high - disp_low) * 0.618
                 else:
                     ote = disp_high - (disp_high - disp_low) * 0.618
-                if ote > 0 and abs(ote - last) / last <= 0.02:
+                if ote > 0 and _is_valid_entry_zone(ote, direction, crt) \
+                        and abs(ote - last) / last <= 0.02:
                     dist = (ote - last) / last * 100 if last else 0
                     return round(ote, 8), "structural_ote", round(dist, 3)
 
         # Priority 3: OB edge
+        # Zone check: bullish OB must be <= midpoint, bearish OB must be > midpoint
         if scenario and "OB" in scenario and smc.get("ob"):
             ob = smc["ob"]
             ob_high = ob.get("high", 0)
@@ -140,11 +163,13 @@ def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, cr
                     entry_price = ob_low
                 else:
                     entry_price = ob_high
-                if entry_price > 0 and abs(entry_price - last) / last <= 0.02:
+                if entry_price > 0 and _is_valid_entry_zone(entry_price, direction, crt) \
+                        and abs(entry_price - last) / last <= 0.02:
                     dist = (entry_price - last) / last * 100 if last else 0
                     return round(entry_price, 8), "structural_ob", round(dist, 3)
 
         # Priority 4: FVG edge
+        # Zone check: bullish FVG must be <= midpoint, bearish FVG must be > midpoint
         if scenario and "FVG" in scenario and smc.get("fvg"):
             fvg = smc["fvg"]
             fvg_top = fvg.get("top", 0)
@@ -154,11 +179,13 @@ def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, cr
                     entry_price = fvg_bot
                 else:
                     entry_price = fvg_top
-                if entry_price > 0 and abs(entry_price - last) / last <= 0.02:
+                if entry_price > 0 and _is_valid_entry_zone(entry_price, direction, crt) \
+                        and abs(entry_price - last) / last <= 0.02:
                     dist = (entry_price - last) / last * 100 if last else 0
                     return round(entry_price, 8), "structural_fvg", round(dist, 3)
 
         # Priority 5: CRT range boundary
+        # Zone check: bullish range low is inherently <= midpoint, bearish range high > midpoint
         if scenario == "CRT_SETUP" and crt.get("range"):
             rng = crt["range"]
             rng_low = rng.get("low", 0)
@@ -169,21 +196,25 @@ def _calculate_entry(scenario: str, direction: str, candles: list, smc: dict, cr
                 entry_price = rng_high
             else:
                 entry_price = 0
-            if entry_price > 0 and abs(entry_price - last) / last <= 0.02:
+            if entry_price > 0 and _is_valid_entry_zone(entry_price, direction, crt) \
+                    and abs(entry_price - last) / last <= 0.02:
                 dist = (entry_price - last) / last * 100 if last else 0
                 return round(entry_price, 8), "structural_crt", round(dist, 3)
 
         # Priority 6: MSB retest
+        # Zone check: bullish retest must be <= midpoint, bearish retest must be > midpoint
         if scenario == "MSB_RETEST" and smc.get("msb"):
             msb = smc["msb"]
             level = msb.get("level", 0)
             if level and level > 0:
                 if direction == "BULLISH" and level < last:
-                    dist = (level - last) / last * 100 if last else 0
-                    return round(level, 8), "structural_msb", round(dist, 3)
+                    if _is_valid_entry_zone(level, direction, crt):
+                        dist = (level - last) / last * 100 if last else 0
+                        return round(level, 8), "structural_msb", round(dist, 3)
                 elif direction == "BEARISH" and level > last:
-                    dist = (level - last) / last * 100 if last else 0
-                    return round(level, 8), "structural_msb", round(dist, 3)
+                    if _is_valid_entry_zone(level, direction, crt):
+                        dist = (level - last) / last * 100 if last else 0
+                        return round(level, 8), "structural_msb", round(dist, 3)
 
     except Exception:
         pass

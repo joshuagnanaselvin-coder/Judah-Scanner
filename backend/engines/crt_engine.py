@@ -65,7 +65,7 @@ def run_crt(candles: list) -> Optional[dict]:
     session = get_session_at(candles[-1].time)
 
     # Range metrics (needed early for zone scoring)
-    rng = range_metrics(candles, 20)
+    rng = range_metrics(candles, 8)  # 8x 15M = 2-hour dealing range
 
     # STEP 1: Find consolidation
     consolidation = _find_consolidation(candles)
@@ -133,7 +133,7 @@ def run_crt(candles: list) -> Optional[dict]:
     except Exception:
         pass
 
-    rng = range_metrics(candles, 20)
+    rng = range_metrics(candles, 8)  # 8x 15M = 2-hour dealing range
     price_pct_in_range = 0.0
     premium_discount = "EQUILIBRIUM"
     if rng["range_size"] > 0:

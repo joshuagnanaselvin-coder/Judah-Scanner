@@ -198,7 +198,7 @@ TYPE_B_ENTRY_PRECISION_GATE = 16   # minimum Entry Precision sub-score out of 20
 
 # === D2 MINIMUM THRESHOLDS ===
 D2_MIN_ENTRY_PRECISION = 10        # min sub-score out of 20 (lowered from 12)
-D2_MIN_FLOW = 5                    # min sub-score (lowered from 8)
+D2_MIN_FLOW = 4                    # min sub-score (lowered from 8 — OFF_HOURS caps flow at ~5-6)
 D2_MIN_MOMENTUM = 5                # min sub-score (lowered from 8)
 
 # === ACCELERATION STATE ===

@@ -93,13 +93,14 @@ class StateStore:
 
         WATCH-tier coins flow to D2 for 15M resolution.
         Only coins where every TF is REJECTED are excluded.
+        Coins with no D1 data yet are NOT excluded — D2 scans independently.
         """
         entry = self.d1_tiers.get(coin)
         if not entry:
-            return True  # No D1 data = treat as REJECTED
+            return False  # No D1 data yet — don't block D2 scanning
         tfs = entry.get("timeframes", {})
         if not tfs:
-            return True
+            return False  # D1 has entry but no TF breakdown — don't block
         return all(v.get("tier") == "REJECTED" for v in tfs.values())
 
     # ── D2 Methods ──────────────────────────────────────────────────

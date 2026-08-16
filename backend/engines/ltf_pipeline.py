@@ -56,6 +56,14 @@ def _log_stage_summary():
     ]
     parts = [f"{_stage_stats.get(k, 0)}/{total} {label}" for k, label in stages]
     logger.info(f"[ltf_pipeline] STAGE COUNTS: {' → '.join(parts)}")
+
+    # Log specific fatal flaw kills
+    fatal_types = ["fatal_no_structure_no_precision", "fatal_delta_opposing",
+                   "fatal_low_volume_key_candle", "fatal_entry_far_from_ob"]
+    for ft in fatal_types:
+        count = _stage_stats.get(ft, 0)
+        if count > 0:
+            logger.info(f"[ltf_pipeline]   {ft.replace('fatal_', '')}: {count}")
     _stage_stats.clear()
 
 
@@ -100,7 +108,7 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
     if opp_count >= 2:
         flaws.append(f"delta_opposing_{opp_count}_candles")
 
-    # Flaw 3: Volume < 1.0x avg on key candle (skip incomplete candles)
+    # Flaw 3: Volume < 0.5x avg on key candle (was 1.0x — too strict for bursty crypto volume)
     if candles and len(candles) >= 3:
         # Use last CLOSED candle to avoid false rejections on incomplete forming candle
         closed = [c for c in candles if getattr(c, 'is_closed', True)]
@@ -108,7 +116,7 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
             closed = candles[:-1] if len(candles) >= 3 else candles
         vol_avg = sum(_get(c, 'volume') for c in closed[-20:]) / min(len(closed[-20:]), 20)
         last_vol = _get(closed[-1], 'volume')
-        if last_vol < vol_avg:
+        if last_vol < vol_avg * 0.5:
             flaws.append("low_volume_key_candle")
 
     # Flaw 4: Entry > 2% past OB/FVG zone
@@ -227,6 +235,9 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
 
     fatal_flaws = _check_d2_fatal_flaws(candles, smc, flow)
     if fatal_flaws:
+        for f in fatal_flaws:
+            _count_stage(f"fatal_{f}")
+        logger.info(f"[ltf_pipeline] FATAL FLAW {symbol}: {fatal_flaws}")
         return None
 
     _count_stage("fatal_flaw_pass")
