@@ -71,10 +71,14 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
     if opp_count >= 2:
         flaws.append(f"delta_opposing_{opp_count}_candles")
 
-    # Flaw 3: Volume < 1.0x avg on key candle (last 2)
-    if candles and len(candles) >= 2:
-        vol_avg = sum(_get(c, 'volume') for c in candles[-20:]) / min(len(candles[-20:]), 20)
-        last_vol = _get(candles[-1], 'volume')
+    # Flaw 3: Volume < 1.0x avg on key candle (skip incomplete candles)
+    if candles and len(candles) >= 3:
+        # Use last CLOSED candle to avoid false rejections on incomplete forming candle
+        closed = [c for c in candles if getattr(c, 'is_closed', True)]
+        if len(closed) < 2:
+            closed = candles[:-1] if len(candles) >= 3 else candles
+        vol_avg = sum(_get(c, 'volume') for c in closed[-20:]) / min(len(closed[-20:]), 20)
+        last_vol = _get(closed[-1], 'volume')
         if last_vol < vol_avg:
             flaws.append("low_volume_key_candle")
 
@@ -87,7 +91,7 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
         if ob_high > 0 and ob_low > 0:
             ob_mid = (ob_high + ob_low) / 2
             deviation = abs(last_price - ob_mid) / ob_mid * 100
-            if deviation > 2.0:
+            if deviation > 5.0:
                 flaws.append(f"entry_far_from_ob_{deviation:.1f}%")
 
     return flaws

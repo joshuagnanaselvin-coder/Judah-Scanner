@@ -197,9 +197,9 @@ TYPE_B_MIN_D2_SCORE = 72           # minimum total D2 score (was 65)
 TYPE_B_ENTRY_PRECISION_GATE = 16   # minimum Entry Precision sub-score out of 20 (was 18)
 
 # === D2 MINIMUM THRESHOLDS ===
-D2_MIN_ENTRY_PRECISION = 12        # min sub-score out of 20 (was 15)
-D2_MIN_FLOW = 8                    # min sub-score (was 5)
-D2_MIN_MOMENTUM = 8                # min sub-score (was 0)
+D2_MIN_ENTRY_PRECISION = 10        # min sub-score out of 20 (lowered from 12)
+D2_MIN_FLOW = 5                    # min sub-score (lowered from 8)
+D2_MIN_MOMENTUM = 5                # min sub-score (lowered from 8)
 
 # === ACCELERATION STATE ===
 ACCELERATION_NEW_ENTRY_MULT = 0.0  # 0x for new entries — take profits only

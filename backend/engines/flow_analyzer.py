@@ -448,7 +448,7 @@ def analyze_flow(symbol: str, candles: list, swings: dict,
         "boost": adjusted_boost,
         "triggers": triggers,
         "killzone": kz,
-        "is_flowing": adjusted_boost >= 6,  # at least one significant trigger
+        "is_flowing": adjusted_boost >= 5,  # at least one significant trigger (lowered from 6)
         "direction": direction,
         "buying_pressure_pct": buy_pct,
         "bullish_pts": bull_pts,

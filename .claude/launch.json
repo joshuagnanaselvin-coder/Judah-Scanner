@@ -5,8 +5,7 @@
       "name": "Judah Scanner",
       "runtimeExecutable": "C:\\Users\\josh-\\Desktop\\Judah Scanner\\scripts\\start.bat",
       "runtimeArgs": [],
-      "port": 8000,
-      "url": "http://localhost:8000"
+      "autoPort": true
     }
   ]
 }
