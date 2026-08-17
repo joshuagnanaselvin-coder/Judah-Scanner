@@ -31,7 +31,7 @@ function fmtPct(v) {
 
 function timeAgo(ts) {
   if (!ts) return '—';
-  const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  const s = Math.floor((Date.now() - new Date(ts * 1000).getTime()) / 1000);
   if (s < 60) return s + 's';
   if (s < 3600) return Math.floor(s / 60) + 'm';
   return Math.floor(s / 3600) + 'h';
@@ -39,7 +39,7 @@ function timeAgo(ts) {
 
 function fmtAge(ts) {
   if (!ts) return '';
-  const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000);
+  const s = Math.floor((Date.now() - new Date(ts * 1000).getTime()) / 1000);
   if (s < 5) return 'LIVE';
   if (s < 30) return 'NEW';
   if (s < 120) return Math.floor(s / 15) * 15 + 's';
@@ -420,7 +420,7 @@ async function checkHealth() {
 function setActivity(prefix, ts) {
   const status = document.getElementById(prefix + 'Status');
   if (!status || !ts || ts < 1000000) return;  // skip zero/uninitialized timestamps
-  const age = (Date.now() - new Date(ts).getTime()) / 1000;
+  const age = (Date.now() - new Date(ts * 1000).getTime()) / 1000;
   status.textContent = age < 10 ? '● Live' : age < 30 ? '● Recent' : '○ ' + timeAgo(ts);
 }
 
