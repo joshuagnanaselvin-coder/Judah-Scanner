@@ -412,14 +412,14 @@ async function checkHealth() {
       setActivity('actD2', stats.last_d2_scan);
       setActivity('actD3', stats.last_d3_fusion);
 
-      if (allSignals.length === 0) updateEmptyState('scanning');
+
     }
   } catch (e) { /* silent */ }
 }
 
 function setActivity(prefix, ts) {
   const status = document.getElementById(prefix + 'Status');
-  if (!status || !ts) return;
+  if (!status || !ts || ts < 1000000) return;  // skip zero/uninitialized timestamps
   const age = (Date.now() - new Date(ts).getTime()) / 1000;
   status.textContent = age < 10 ? '● Live' : age < 30 ? '● Recent' : '○ ' + timeAgo(ts);
 }
