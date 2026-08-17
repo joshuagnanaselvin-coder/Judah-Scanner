@@ -301,7 +301,7 @@ def calculate_entry_precision(candles: list, signal: dict, direction: str) -> fl
     return min(score, 25.0)
 
 
-def scan_entry(coin: str, d1_tier: str = "", d1_score: float = 0) -> Optional[dict]:
+async def scan_entry(coin: str, d1_tier: str = "", d1_score: float = 0) -> Optional[dict]:
     """Scan 15M for entry timing on a coin.
 
     Runs the D2 pipeline, adds nascent move detection and entry precision.
@@ -322,7 +322,7 @@ def scan_entry(coin: str, d1_tier: str = "", d1_score: float = 0) -> Optional[di
     # DEGRADED and INCOMPLETE still proceed — partial 15M data is acceptable
 
     # Run D2's own pipeline on 15M
-    raw = scan_ltf_pipeline(coin, "15M")
+    raw = await scan_ltf_pipeline(coin, "15M")
     if not raw:
         return None
 

@@ -132,7 +132,7 @@ class LTFEngine:
                 logger.info(f"[ltf] [revalidate] {coin} at {_age_minutes(sig):.0f}min...")
                 d1_tier = next((t for c, t, _ in d1_approved if c == coin), "")
                 d1_score = next((s for c, _, s in d1_approved if c == coin), 0)
-                raw = scan_entry(coin, d1_tier=d1_tier, d1_score=d1_score)
+                raw = await scan_entry(coin, d1_tier=d1_tier, d1_score=d1_score)
                 if raw:
                     await state_store.set_d2_signal(coin, raw)
                     revalidated.append(raw)
@@ -175,7 +175,7 @@ class LTFEngine:
         async def _scan_with_limit(coin):
             async with semaphore:
                 try:
-                    return scan_entry(coin)
+                    return await scan_entry(coin)
                 except Exception as e:
                     logger.warning(f"[ltf] Error {coin}: {e}")
                     return None

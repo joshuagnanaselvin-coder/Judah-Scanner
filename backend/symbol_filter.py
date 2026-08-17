@@ -2,9 +2,9 @@
 
 Blocks:
   - Stock tokens (AAPLUSDT, TSLAUSDT, etc.)
+  - B-stock tokens (AAPLBUSDT, TSLABUSDT, etc. — Binance stock wrappers)
   - Leveraged / inverse tokens (BTCUP, ETHDOWN, etc.)
   - Sports / celebrity / non-crypto tokens
-  - BUSD pairs (we only trade USDT-M)
   - Symbols ending in BEAR/UP/BULL/DOWN suffix
 
 Policy: Only clean, liquid crypto pairs on USDT-M futures.
@@ -27,6 +27,33 @@ logger = logging.getLogger("judah.symbol_filter")
 # A pair like "PEPEUSDT" has base "PEPE", which doesn't end with these → allowed.
 _LEVERAGED_SUFFIXES = ("UP", "DOWN", "BEAR", "BULL")
 
+# Known B-stock bases that are NOT in BLOCKED_SYMBOL_PREFIXES but must be blocked.
+# These are Binance stock wrappers like AAPLBUSDT, TSLABUSDT, MSFTBUSDT.
+# The 'B' suffix in the base asset (AAPLB, TSLAB) is the tell.
+_B_STOCK_BASES = frozenset({
+    "AAPLB", "TSLAB", "MSFTB", "NVDAB", "GOOGLB", "METAB", "AMZNB", "NFLXB",
+    "COINB", "MSTRB", "PYPLB", "PLTRB", "INTCB", "ARMB", "AVGOB", "DELLB",
+    "GSB", "HOODB", "SMCIB", "GMEB", "QQQB", "SPYB", "SOXLB", "SOXSB",
+    "SMHB", "SQB", "SHOPB", "WDCB", "SKHYB", "AOIB", "QNTB", "BABAB",
+    "RKLBB", "MUUB", "MVLLB", "BEB", "FLNCB", "AMATB", "AMDAB", "IRENB",
+    "ORCLB", "NOKB", "TSMB", "AEROB", "MRVLB",
+    # Below have base that equals a known stock ticker directly:
+    "META", "IBM",  # META→FB, IBM→IBM (already in blocklist, included for safety)
+    # Known B-stocks not caught by the strip-B heuristic:
+    "AAOIB", "ASMLB", "ASTLB", "BMNRB", "CRDOB",
+})
+
+# Known legit tokens ending in B — do NOT block these.
+_B_ENDING_WHITELIST = frozenset({
+    "COIN",   # COINBUSDT — legit crypto exchange token
+    "COINB",  # COINBUSDT base — "B" suffix on COIN, strip-B heuristic would block
+    "MSTR",   # MSTRBUSDT — legit crypto proxy token
+    "MSTRB",  # MSTRBUSDT base — same reason
+    "PYPL",   # PYPLBUSDT — legit fintech token
+    "PYPLB",  # PYPLBUSDT base — same reason
+    "DOGE",   # DOGEUSDT — meme coin (no B suffix, safety)
+})
+
 
 def is_valid_usdt_future(symbol: str) -> bool:
     """Return True if symbol is a clean USDT-M futures pair.
@@ -35,14 +62,16 @@ def is_valid_usdt_future(symbol: str) -> bool:
       1. Ends with exactly "USDT" (no BUSD, no other quote asset)
       2. Base asset is not in the blocked prefix list
       3. Base asset doesn't end with a leveraged token suffix
-      4. Base asset length is sane (2-15 chars)
+      4. B-stock variants are detected and blocked
+      5. Base asset starts with a letter (no numeric/symbol prefixes)
+      6. Base asset length is sane (2-15 chars)
     """
     if not symbol or not isinstance(symbol, str):
         return False
 
     sym = symbol.strip().upper()
 
-    # Must end with USDT, but not be just "USDT"
+    # Must end with exactly USDT (not BUSD, not bare "USDT")
     if not sym.endswith("USDT") or sym == "USDT":
         return False
 
@@ -59,6 +88,29 @@ def is_valid_usdt_future(symbol: str) -> bool:
         if base.endswith(suffix):
             logger.debug(f"[filter] Blocked suffix '{suffix}': {symbol}")
             return False
+
+    # B-stock tokens: AAPLBUSDT, TSLABUSDT, MSFTBUSDT, NVDABUSDT etc.
+    # These have a 'B' suffix on the base (AAPLB, TSLAB).
+    # Direct blocked-bases check first, then heuristic for unknown ones.
+    # Whitelist check first — COINB/MSTRB/PYPLB are legit crypto that happen to end in B
+    if base in _B_ENDING_WHITELIST:
+        pass  # allowed — skip B-stock blocking
+    elif base in _B_STOCK_BASES:
+        logger.debug(f"[filter] Blocked B-stock base: {symbol}")
+        return False
+
+    # Heuristic: if base ends with 'B' and stripping it gives a known stock ticker
+    if len(base) > 2 and base.endswith('B'):
+        stripped = base[:-1]
+        if stripped in BLOCKED_SYMBOL_PREFIXES and base not in _B_ENDING_WHITELIST:
+            logger.debug(f"[filter] Blocked B-stock (stripped '{stripped}'): {symbol}")
+            return False
+
+    # Synthetic tokens with numeric prefix: 1000SATSUSDT, 1MBABYDOGEUSDT, etc.
+    # Legitimate crypto base assets always start with a letter.
+    if not base or not base[0].isalpha():
+        logger.debug(f"[filter] Non-alpha prefix: {symbol}")
+        return False
 
     # Length sanity — real crypto pairs have base assets 2-15 chars
     if len(base) < 2 or len(base) > 15:
