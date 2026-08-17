@@ -7,7 +7,8 @@ import aiohttp
 from datetime import datetime, timezone
 from typing import Optional
 from backend.config import (
-    BINANCE_REST_BASE, BINANCE_WS_BASE, BINANCE_INTERVAL_MAP,
+    BINANCE_REST_BASE, BINANCE_WS_BASE, BINANCE_FUTURES_WS_BASE,
+    BINANCE_INTERVAL_MAP, BINANCE_FUTURES_BASE,
     WS_RECONNECT_DELAY_SEC, WS_MAX_STREAMS_PER_CONN,
     BOOTSTRAP_CANDLES, TIMEFRAMES_HTF, ALL_TIMEFRAMES,
 )
@@ -109,7 +110,8 @@ class MarketData:
     async def _fetch_klines(self, symbol, interval, limit):
         """Single-shot fetch (no retry). Used by LTF refresh."""
         binance_tf = _binance_interval(interval)
-        url = f"{BINANCE_REST_BASE}/klines?symbol={symbol}&interval={binance_tf}&limit={limit}"
+        # Use futures API for USDT-M pairs
+        url = f"{BINANCE_FUTURES_BASE}/klines?symbol={symbol}&interval={binance_tf}&limit={limit}"
         try:
             async with self.session.get(
                 url, timeout=aiohttp.ClientTimeout(total=15)
@@ -169,7 +171,7 @@ class MarketData:
 
     async def _ws_connection(self, conn_id, streams):
         """Runs one persistent WS connection with auto-reconnect."""
-        url = BINANCE_WS_BASE + "/".join(streams)
+        url = BINANCE_FUTURES_WS_BASE + "/".join(streams)
         delay = WS_RECONNECT_DELAY_SEC
         while True:
             try:

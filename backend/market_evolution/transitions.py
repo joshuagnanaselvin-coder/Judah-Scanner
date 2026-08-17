@@ -9,6 +9,7 @@ from .constants import EVOLUTION_LABELS
 # Generic order: roughly by quality/strength. Used only for delta direction.
 STATE_ORDER = [
     "Dormant",
+    "Consolidation",
     "Awakening",
     "LTF Spike",
     "Context Building",

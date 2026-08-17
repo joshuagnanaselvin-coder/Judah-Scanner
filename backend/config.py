@@ -67,10 +67,10 @@ SMC_SCORE_LIQUIDITY = 5
 
 # === TIERS (fixed — no sensitivity modes) ===
 # Same thresholds for D1 and D2 scoring.
-TIER_SNIPER_SCORE = 65       # SNIPER >= 65: highest probability (top 10%)
-TIER_OPPORTUNITY_SCORE = 48  # OPPORTUNITY >= 48: strong setups (top 30%)
-TIER_WATCH_SCORE = 30        # WATCH >= 30: partial confirmation
-TIER_WEAK_SCORE = 20         # WEAK >= 20: low conviction, shown with caution badge
+TIER_SNIPER_SCORE = 85       # SNIPER >= 85: highest probability (top 10%)
+TIER_OPPORTUNITY_SCORE = 65  # OPPORTUNITY >= 65: strong setups (top 30%)
+TIER_WATCH_SCORE = 40        # WATCH >= 40: partial confirmation
+TIER_WEAK_SCORE = 200        # WEAK unreachable (below WATCH → REJECTED)
 IGNORE_MIN_SCORE = 20        # Below this: not shown (was 60 — way too aggressive)
 MIN_RR = 1.5
 
@@ -215,9 +215,30 @@ TIMEFRAMES = TIMEFRAMES_HTF
 
 # === BINANCE ===
 BINANCE_REST_BASE = "https://api.binance.com/api/v3"
+BINANCE_FUTURES_BASE = "https://fapi.binance.com/fapi/v1"
 BINANCE_WS_BASE = "wss://stream.binance.com:9443/stream?streams="
+BINANCE_FUTURES_WS_BASE = "wss://fstream.binance.com/stream?streams="
 WS_RECONNECT_DELAY_SEC = 5
 WS_MAX_STREAMS_PER_CONN = 793
+
+# Blocked prefixes — stock tokens, leveraged tokens, sports tokens
+# We block: stock tickers, leveraged UP/DOWN tokens, sports/celebrity tokens
+# Legitimate crypto tokens (SHIB, PEPE, DOGE, etc.) are NOT blocked.
+BLOCKED_SYMBOL_PREFIXES = {
+    # US stock tokens (Binance stock tokens)
+    "AAPL", "TSLA", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "NFLX",
+    # Leveraged tokens (UP/DOWN variants)
+    "BCHUP", "BCHDOWN", "BTCUP", "BTCDOWN", "ETHUP", "ETHDOWN",
+    "COMPUP", "COMPDOWN", "SUSHIUP", "SUSHIDOWN", "DEFIUP", "DEFIDOWN",
+    "BNBDOWN", "BNBUP", "ADAUP", "ADADOWN", "DOTUP", "DOTDOWN",
+    "SOLUP", "SOLDOWN", "AVAXUP", "AVAXDOWN", "LINKUP", "LINKDOWN",
+    "EOSUP", "EOSDOWN", "ETCUP", "ETCDOWN", "LTCUP", "LTCDOWN",
+    "MATICUP", "MATICDOWN", "UNIUP", "UNIDOWN", "XRPUP", "XRPDOWN",
+    "XTZUP", "XTZDOWN", "YFIUP", "YFIDOWN", "NEARUP", "NEARDOWN",
+    # Sports / celebrity / fan tokens
+    "ALPINE", "LAZIO", "SANTOS", "PORTO", "CITY", "JUV", "ACM",
+    "BAR", "PSG", "ATM",
+}
 
 # Internal TF → Binance REST/WS interval (Binance uses lowercase)
 BINANCE_INTERVAL_MAP = {

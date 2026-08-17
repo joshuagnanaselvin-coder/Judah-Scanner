@@ -28,6 +28,9 @@ from backend.state_store import state_store
 from backend.ws_hub import broadcast, get_initial_payload
 from backend.market_evolution import evaluate as me_evaluate, get_dashboard_stats
 from backend.market_evolution.history import history_store
+from backend.alignment_engine import alignment_engine, AlignmentLevel
+from backend.trade_plan_authority import trade_plan_authority
+from backend.risk_authority import risk_authority
 
 logger = logging.getLogger("judah.fusion")
 
@@ -171,9 +174,8 @@ class FusionEngine:
                 archived.append(coin)
 
         # Remove from active D3 decisions AFTER collecting signal_ids
-        async with state_store._lock:
-            for coin in archived:
-                state_store.d3_decisions.pop(coin, None)
+        for coin in archived:
+            state_store.d3_decisions.pop(coin, None)
 
         if archived:
             logger.info(f"[fusion] Archived {len(archived)} expired decisions: "
@@ -328,7 +330,7 @@ class FusionEngine:
                 "score": data.get("score", 0),
             }
 
-        # ── D1 HTF Structure (from signal_store) ─────────────────────
+        # ── D1 HTF Structure (from best signal in signal_store) ──────
         from backend.config import TIMEFRAMES_HTF
         from backend.signal_store import signal_store as sig_store
 
@@ -340,9 +342,25 @@ class FusionEngine:
                 d1_best = d1_sig
                 d1_best_score = d1_sig.get("composite_score", 0)
 
-        # D1 structural summary
-        d1_structure = {}
-        if d1_best:
+        # Fallback: if signal_store is empty (cold start), use state_store tier
+        if not d1_best:
+            d1_snap = state_store.get_d1_tier(coin)
+            if d1_snap and d1_snap.get("tier") not in ("WATCH", "REJECTED"):
+                d1_structure = {
+                    "direction": d1_snap.get("direction", ""),
+                    "tier": d1_snap.get("tier", "WATCH"),
+                    "score": d1_snap.get("score", 0),
+                    "premium_discount": "EQUILIBRIUM",
+                    "ob_zone": "UNKNOWN", "ob_type": "",
+                    "ob_low": 0, "ob_high": 0, "ob_strength": 0,
+                    "msb_type": "", "msb_level": 0, "msb_direction": "",
+                    "fvg_type": "", "fvg_size_atr": 0, "fvg_filled_pct": 100,
+                    "liq_swept": False, "liq_level": 0, "liq_direction": "",
+                    "poc": 0, "va_high": 0, "va_low": 0,
+                    "session": "", "session_label": "",
+                }
+            else:
+                d1_structure = {}
             d1_ob = d1_best.get("ob", {})
             d1_liq = d1_best.get("liquidity", {})
             d1_msb = d1_best.get("msb", {})
@@ -420,8 +438,20 @@ class FusionEngine:
             "displacement_ratio": raw.get("displacement", {}).get("ratio", 0) if raw.get("displacement") else 0,
         }
 
-        # ── Alignment (D1 HTF vs D2 LTF) ──────────────────────────────
-        alignment = _compute_alignment(d1_structure, d2_structure, d1, d2)
+        # ── Alignment (D1 HTF vs D2 LTF) — explicit level ────────────
+        alignment_result = alignment_engine.evaluate(
+            d1_structure=d1_structure,
+            d2_structure=d2_structure,
+            d1_tier=d1_tier,
+            d2_tier=d2_tier_name,
+            d1_direction=d1_direction,
+            d2_direction=d2_direction,
+            d1_quality="VALID",
+            d2_quality="VALID",
+        )
+        alignment = alignment_result.to_dict()
+        alignment["alignment_score"] = int(alignment_result.score * 20)  # back-compat (0–20)
+        alignment_level = alignment_result.level.value
 
         # ── SSL/BSL levels ────────────────────────────────────────────
         liq_pools = raw.get("liquidity_pools", {}) or {}
@@ -450,7 +480,9 @@ class FusionEngine:
                     d2.rr2 = round(abs(d2.tp2 - d2_entry) / new_risk, 2)
 
         # ── Build package ─────────────────────────────────────────────
+        snap_id = state_store.last_snapshot_id or ""
         package = {
+            "snapshot_id": snap_id,
             "signal_id": getattr(d2, 'signal_id', ''),
             "coin": coin,
             "timeframe": "15M",
@@ -503,10 +535,58 @@ class FusionEngine:
             d1_tier, d1_score,
             d2_tier_name, d2_score,
             direction=package["direction"],
-            alignment_score=alignment.get("alignment_score", 0),
+            alignment_score=alignment_result.score,
             signal_type=sig_type or "",
         )
         package["marketEvolution"] = me_state.to_dict()
+
+        # ── TradePlan Authority (single source of truth for plan) ──────
+        d2_dir = getattr(d2, 'direction', 'BULLISH')
+        d2_entry = getattr(d2, 'entry', 0)
+        d2_sl = getattr(d2, 'sl', 0)
+        d2_atr = float(getattr(d2, 'atr', 0.0)) or (abs(d2_entry - d2_sl) * 2) if d2_entry and d2_sl else 0
+        d2_ob_low = d2_structure.get("ob_low", 0)
+        d2_ob_high = d2_structure.get("ob_high", 0)
+        d1_ob_low = d1_structure.get("ob_low", 0)
+        d1_ob_high = d1_structure.get("ob_high", 0)
+
+        confidence_score = round(alignment_result.score, 3)
+        if sig_type == "C":
+            confidence_score = min(1.0, confidence_score + 0.15)
+        elif sig_type == "A":
+            confidence_score = min(1.0, confidence_score + 0.10)
+        elif sig_type == "E":
+            confidence_score = max(0.0, confidence_score - 0.20)
+
+        plan = trade_plan_authority.propose(
+            symbol=coin,
+            direction=d2_dir,
+            entry=d2_entry,
+            atr=d2_atr if d2_atr > 0 else 0.0001,
+            d1_zone=d1_structure.get("premium_discount", "EQUILIBRIUM"),
+            d2_zone=d2_structure.get("premium_discount", "EQUILIBRIUM"),
+            ob_low=d2_ob_low or d1_ob_low,
+            ob_high=d2_ob_high or d1_ob_high,
+            signal_type=sig_type or "D",
+            confidence_score=confidence_score,
+            alignment_level=alignment_level,
+            signal_id=getattr(d2, 'signal_id', ''),
+            d1_sl=d1_ob_low if d2_dir == "BULLISH" else d1_ob_high,
+            d2_sl=d2_sl,
+        )
+
+        # ── Risk Authority (independent risk approval) ────────────────
+        risk_decision = risk_authority.review(plan, correlation_group=coin[:3])
+
+        package["trade_plan"] = plan.to_dict()
+        package["risk_decision"] = {
+            "verdict": risk_decision.verdict.value,
+            "approved_size": risk_decision.approved_size,
+            "portfolio_heat": round(risk_decision.portfolio_heat, 4),
+            "rationale": risk_decision.rationale,
+        }
+        package["alignment_level"] = alignment_level
+        package["tradeable"] = alignment_result.is_tradeable() and risk_decision.verdict.value == "APPROVED"
 
         await state_store.set_d3_decision(coin, package)
         await broadcast({"type": "signal", "data": package})
@@ -515,53 +595,6 @@ class FusionEngine:
                       f"D1={d1_tier}({d1_score:.0f}) D2={d2_score:.0f} "
                       f"dir={package['direction']} EV={expected_value_pct:.2f}%")
         return package
-
-
-def _compute_alignment(d1s: dict, d2s: dict, d1: dict, d2: Any) -> dict:
-    """Compute HTF/LTF alignment between D1 and D2 structures.
-
-    Returns alignment dict with score (0-20) and 4 boolean components.
-    """
-    components = {
-        "direction_agreement": False,
-        "htf_ob_alignment": False,
-        "htf_zone_alignment": False,
-        "htf_liquidity_proximity": False,
-    }
-    score = 0
-
-    # 1. Direction agreement (0-5 pts)
-    d1_dir = (d1.get("direction") or "").upper()
-    d2_dir = (getattr(d2, 'direction', '') or "").upper()
-    if d1_dir and d2_dir and d1_dir == d2_dir:
-        components["direction_agreement"] = True
-        score += 5
-
-    # 2. HTF OB alignment — D2 entry near D1 OB zone (0-5 pts)
-    d1_ob_zone = (d1s.get("ob_zone") or "").upper()
-    d2_ob_zone = (d2s.get("ob_zone") or "").upper()
-    if d1_ob_zone and d2_ob_zone and d1_ob_zone == d2_ob_zone:
-        components["htf_ob_alignment"] = True
-        score += 5
-
-    # 3. HTF zone alignment — both in same premium/discount zone (0-5 pts)
-    d1_pd = (d1s.get("premium_discount") or "").upper()
-    d2_pd = (d2s.get("premium_discount") or "").upper()
-    if d1_pd and d2_pd and d1_pd == d2_pd and d1_pd != "UNKNOWN":
-        components["htf_zone_alignment"] = True
-        score += 5
-
-    # 4. HTF liquidity proximity — D2 near D1 swept liquidity level (0-5 pts)
-    d1_liq_swept = d1s.get("liq_swept", False)
-    d2_liq_level = d2s.get("liq_level", 0)
-    if d1_liq_swept and d2_liq_level > 0:
-        components["htf_liquidity_proximity"] = True
-        score += 5
-
-    return {
-        "alignment_score": min(score, 20),
-        "components": components,
-    }
 
 
 def _extract_ssl(liq_pools: dict, direction: str) -> dict:

@@ -73,7 +73,7 @@ if os.path.exists(frontend_dir):
 @app.websocket("/ws-fusion")
 async def ws_fusion(ws: WebSocket):
     await ws.accept()
-    ws_hub.add_client(ws)
+    await ws_hub.add_client(ws)
     logger.info(f"[ws-fusion] Client connected ({len(ws_hub._clients)} total)")
 
     # Send current state immediately
@@ -88,7 +88,7 @@ async def ws_fusion(ws: WebSocket):
     except WebSocketDisconnect:
         logger.info("[ws-fusion] Client disconnected")
     finally:
-        ws_hub.remove_client(ws)
+        await ws_hub.remove_client(ws)
 
 
 # ---- D1 WEBSOCKET (for D1 signal stream) ----
@@ -267,23 +267,39 @@ async def health():
 
 
 async def _bootstrap():
-    """Runs in background — does not block the health endpoint."""
+    """Runs in background — does not block the health endpoint.
+
+    Fetches USDT-M futures from Binance Futures API and applies a strict
+    filter to exclude stock tokens, leveraged tokens, and BUSD pairs.
+    Only clean crypto USDT-M futures enter the scanner.
+    """
     import aiohttp
+    from backend.symbol_filter import filter_usdt_futures
+    from backend.config import BINANCE_FUTURES_BASE
+
     pairs = []
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.get(f"{BINANCE_REST_BASE}/exchangeInfo", timeout=aiohttp.ClientTimeout(total=30)) as resp:
+            async with s.get(
+                f"{BINANCE_FUTURES_BASE}/exchangeInfo",
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    pairs = [s["symbol"] for s in data.get("symbols", [])
-                             if s.get("status") == "TRADING" and s.get("quoteAsset") == "USDT"]
+                    raw = [
+                        sym["symbol"]
+                        for sym in data.get("symbols", [])
+                        if sym.get("status") == "TRADING"
+                        and sym.get("quoteAsset") == "USDT"
+                    ]
+                    pairs = filter_usdt_futures(raw)
                 else:
-                    logger.error(f"[server] Binance API returned {resp.status}")
+                    logger.error(f"[server] Binance Futures API returned {resp.status}")
     except Exception as e:
-        logger.error(f"[server] Failed to fetch pairs from Binance: {e}")
+        logger.error(f"[server] Failed to fetch pairs from Binance Futures: {e}")
 
     if not pairs:
-        logger.error("[server] No pairs found! Using fallback.")
+        logger.error("[server] No USDT-M futures pairs found! Using fallback.")
         pairs = ["BTCUSDT", "ETHUSDT"]
 
     scanner.symbols = pairs

@@ -20,6 +20,7 @@ from backend.config import (
     SCAN_CONCURRENCY,
 )
 from backend.performance_tracker import performance_tracker
+from backend.decision_snapshot import SnapshotBuilder
 
 logger = logging.getLogger("judah.scanner")
 
@@ -73,14 +74,27 @@ class Scanner:
         refreshed = []
         revalidated = []
 
+        # Build immutable snapshot for this cycle (Gate 1: Snapshot)
+        snap = SnapshotBuilder(market_data).build(self.symbols, TIMEFRAMES_HTF)
+        state_store.set_snapshot_info(snap.snapshot_id, snap.snapshot_timestamp)
+        logger.info(f"[scan] Snapshot {snap.snapshot_id[:8]} — "
+                    f"{sum(1 for v in snap.data_quality.values() if v == 'VALID')}/{len(snap.data_quality)} pairs VALID")
+
         # === PASS 1: Revalidate + refresh existing signals ===
         for key, sig in list(signal_store.signals.items()):
-            candles = market_data.get_candles(sig['symbol'], sig['engine'])
+            quality = snap.candle_quality(sig['symbol'], sig['engine'])
+            if quality in ("STALE", "INVALID", "GAPPED"):
+                logger.debug(f"[scan] Skip revalidate {sig['symbol']}: quality={quality}")
+                continue
+
+            candles = snap.get_candles(sig['symbol'], sig['engine'])
+            if not candles:
+                candles = market_data.get_candles(sig['symbol'], sig['engine'])
             if candles:
                 if signal_store.should_revalidate(sig):
                     logger.info(f"[revalidate] {sig['symbol']} {sig['engine']} "
                                 f"at {sig.get('age_minutes', 0)}min checkpoint...")
-                    new_sig = scan(sig['symbol'], sig['engine'])
+                    new_sig = await scan(sig['symbol'], sig['engine'])
                     if new_sig:
                         new_sig = self._apply_confluence(sig['symbol'], new_sig)
                         new_sig = self._apply_boosts(new_sig, sig['engine'])
@@ -99,6 +113,9 @@ class Scanner:
         for tf in TIMEFRAMES_HTF:
             candidates = get_candidates(self.symbols, tf)
             for symbol in candidates:
+                quality = snap.candle_quality(symbol, tf)
+                if quality in ("STALE", "INVALID", "GAPPED"):
+                    continue
                 # Skip if already scanned in this cycle
                 if signal_store.was_recently_scanned(symbol, tf, max_age_sec=SCAN_INTERVAL_SECONDS):
                     continue
@@ -250,7 +267,7 @@ class Scanner:
     async def _ws_scan_task(self, symbol: str, tf: str):
         """Async wrapper — runs scan() without blocking the WS read loop."""
         try:
-            signal = scan(symbol, tf)
+            signal = await scan(symbol, tf)
         except Exception as e:
             logger.warning(f"[ws_scan] {symbol} {tf}: scan raised {e}")
             return

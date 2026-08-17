@@ -36,7 +36,7 @@ logger = logging.getLogger("judah.engine")
 _FALLBACK_MIN_CONFIDENCE = 30  # weighted fallback threshold (replaces binary MSB + SMC≥15)
 
 
-def scan(symbol: str, timeframe: str) -> dict | None:
+async def scan(symbol: str, timeframe: str) -> dict | None:
     """Run full CRT -> SMC -> Signal pipeline for one coin on one timeframe.
 
     Falls back to SMC-only path if CRT returns None (impulse / fast-moving coins
@@ -46,6 +46,17 @@ def scan(symbol: str, timeframe: str) -> dict | None:
     if not candles or len(candles) < 25:
         logger.debug(f"[engine] SKIP {symbol} {timeframe}: no candles ({len(candles) if candles else 0})")
         return None
+
+    # ── Data Quality Gate ─────────────────────────────────────────────
+    from backend.data_quality_gate import validate_candles
+    quality = validate_candles(candles, timeframe)
+    if quality.state in ("INVALID", "GAPPED", "MISSING"):
+        logger.warning(f"[engine] BLOCK {symbol} {timeframe}: quality={quality.state} issues={quality.issues}")
+        return None
+    if quality.state == "STALE":
+        logger.debug(f"[engine] STALE {symbol} {timeframe}: last candle {quality.last_candle_age_sec:.0f}s old")
+        return None
+    # DEGRADED and INCOMPLETE still proceed (partial data is acceptable)
 
     last_price = _get(candles[-1], 'close')
 
@@ -68,6 +79,10 @@ def scan(symbol: str, timeframe: str) -> dict | None:
     # confirm that real money is moving.
     swings = detect_swing_points(candles[-30:])
     btc_candles = market_data.get_candles("BTCUSDT", timeframe)
+    if btc_candles:
+        btc_quality = validate_candles(btc_candles, timeframe)
+        if btc_quality.state == "INVALID":
+            btc_candles = None  # use None — flow analysis handles missing BTC gracefully
     flow = analyze_flow(symbol, candles, swings, timeframe, btc_candles)
     fast = detect_fast_mover(candles, swings)
 
@@ -222,6 +237,9 @@ def scan(symbol: str, timeframe: str) -> dict | None:
                      f"path={path} crt={signal['crt_score']} smc={signal['smc_score']} "
                      f"flow={flow_score} mom={momentum_score} "
                      f"triggers={[t['name'] for t in flow['triggers']]}")
+
+        # === EvidenceRecord: log structural findings (awaited — no fire-and-forget) ===
+        await _log_evidence_async(symbol, timeframe, signal, crt, smc, flow, path)
     else:
         logger.debug(f"[engine] SKIP {symbol} {timeframe}: build_signal returned None")
     return signal
@@ -451,3 +469,105 @@ def _check_fatal_flaws(signal: dict, flow: dict, smc: dict) -> bool:
 
     return False
 
+
+# ── EvidenceRecord Logger ──────────────────────────────────────────────
+
+async def _log_evidence_async(symbol: str, timeframe: str, signal: dict,
+                               crt: dict, smc: dict, flow: dict, path: str):
+    """Append EvidenceRecords for structural findings to evidence_store."""
+    from backend.evidence_store import evidence_store, next_evidence_id
+    from backend.evidence_record import EvidenceCategory, EvidenceStrength
+    from backend.state_store import state_store
+    from datetime import datetime, timezone
+    import asyncio
+
+    now = datetime.now(timezone.utc).timestamp()
+    snap_id = state_store.last_snapshot_id
+    direction = signal.get("direction", "NEUTRAL")
+    last_price = signal.get("entry", 0)
+
+    records: list = []
+
+    # MSB break evidence
+    msb = smc.get("msb", {})
+    if msb and msb.get("type", "NONE") != "NONE":
+        strength = EvidenceStrength.STRONG if msb.get("confirmed", False) else EvidenceStrength.MODERATE
+        records.append(EvidenceRecord(
+            evidence_id=next_evidence_id(symbol),
+            category=EvidenceCategory.MSB_BREAK,
+            symbol=symbol, timeframe=timeframe,
+            price=last_price, strength=strength,
+            direction=msb.get("type", direction).upper(),
+            confidence=0.8 if msb.get("confirmed") else 0.5,
+            candle_time=now, detected_at=now,
+            source="engine.crt", snapshot_id=snap_id,
+            details={"confirmed": msb.get("confirmed", False), "path": path},
+        ))
+
+    # OB evidence
+    ob = smc.get("ob", {})
+    if ob and ob.get("high", 0) > 0:
+        records.append(EvidenceRecord(
+            evidence_id=next_evidence_id(symbol),
+            category=EvidenceCategory.ORDER_BLOCK,
+            symbol=symbol, timeframe=timeframe,
+            price=(ob.get("high", 0) + ob.get("low", 0)) / 2,
+            strength=EvidenceStrength.STRONG if ob.get("strength", 0) >= 3 else EvidenceStrength.MODERATE,
+            direction=direction, confidence=min(ob.get("strength", 0) / 5, 1.0),
+            candle_time=now, detected_at=now,
+            source="engine.smc", snapshot_id=snap_id,
+            details={"ob_high": ob.get("high", 0), "ob_low": ob.get("low", 0),
+                     "strength": ob.get("strength", 0)},
+        ))
+
+    # FVG evidence
+    fvg = smc.get("fvg", {})
+    if fvg and fvg.get("top", 0) > 0:
+        records.append(EvidenceRecord(
+            evidence_id=next_evidence_id(symbol),
+            category=EvidenceCategory.FAIR_VALUE_GAP,
+            symbol=symbol, timeframe=timeframe,
+            price=(fvg.get("top", 0) + fvg.get("bottom", 0)) / 2,
+            strength=EvidenceStrength.STRONG if fvg.get("proximity", 999) <= 1.0 else EvidenceStrength.MODERATE,
+            direction=direction, confidence=0.7,
+            candle_time=now, detected_at=now,
+            source="engine.smc", snapshot_id=snap_id,
+            details={"top": fvg.get("top", 0), "bottom": fvg.get("bottom", 0),
+                     "proximity": fvg.get("proximity", 999)},
+        ))
+
+    # Liquidity sweep evidence
+    liq = smc.get("liquidity", {})
+    if liq and liq.get("swept", False):
+        records.append(EvidenceRecord(
+            evidence_id=next_evidence_id(symbol),
+            category=EvidenceCategory.LIQUIDITY_POOL,
+            symbol=symbol, timeframe=timeframe,
+            price=liq.get("level", last_price),
+            strength=EvidenceStrength.STRONG, direction=direction,
+            confidence=0.7, candle_time=now, detected_at=now,
+            source="engine.smc", snapshot_id=snap_id,
+            details={"swept": True, "level": liq.get("level", 0)},
+        ))
+
+    # Flow trigger evidence
+    for trigger in flow.get("trgers", flow.get("triggers", []))[:3]:
+        t_name = trigger.get("name", "unknown")
+        records.append(EvidenceRecord(
+            evidence_id=next_evidence_id(symbol),
+            category=EvidenceCategory.VOLUME_PROFILE,
+            symbol=symbol, timeframe=timeframe,
+            price=last_price, strength=EvidenceStrength.MODERATE,
+            direction=direction, confidence=0.6,
+            candle_time=now, detected_at=now,
+            source="engine.flow", snapshot_id=snap_id,
+            details={"trigger": t_name, "boost": trigger.get("boost", 0)},
+        ))
+
+    if records:
+        evidence_ids = []
+        for rec in records:
+            eid = await evidence_store.append(rec)
+            evidence_ids.append(eid)
+        signal["evidence_ids"] = evidence_ids
+        logger.debug(f"[engine] Logged {len(records)} evidence records for {symbol}")

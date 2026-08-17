@@ -36,6 +36,8 @@ from backend.candidate_selector import should_select
 
 logger = logging.getLogger("judah.ltf_engine")
 
+from backend.decision_snapshot import SnapshotBuilder
+
 
 class LTFEngine:
     def __init__(self):
@@ -84,6 +86,12 @@ class LTFEngine:
         if not scan_targets:
             logger.info("[ltf] No symbols configured, skipping cycle")
             return
+
+        # Build immutable snapshot (D2's primary timeframe is 15M)
+        snap = SnapshotBuilder(market_data).build(scan_targets, htf_timeframes=[], ltf_timeframes=["15M"])
+        state_store.set_snapshot_info(snap.snapshot_id, snap.snapshot_timestamp)
+        logger.info(f"[ltf] Snapshot {snap.snapshot_id[:8]} — "
+                    f"{sum(1 for v in snap.data_quality.values() if v == 'VALID')}/{len(snap.data_quality)} pairs VALID")
 
         d1_approved = []
         for coin in scan_targets:
@@ -149,6 +157,9 @@ class LTFEngine:
                 continue
             # Skip if D1 is fully REJECTED across all TFs — no HTF structure at all
             if state_store.is_all_watch(coin):
+                continue
+            # Gate 1: skip stale/invalid/gapped candle data (Snapshot quality)
+            if snap.candle_quality(coin, "15M") in ("STALE", "INVALID", "GAPPED"):
                 continue
 
             # Candidate filter: check 15M ATR before heavy pipeline
@@ -224,6 +235,9 @@ class LTFEngine:
 
 _REVALIDATE_AGE_MIN = 8  # Revalidate after 8 minutes (half of 15M TTL)
 _scanned_recently: dict = {}
+
+_PURGE_INTERVAL = 30  # Purge stale entries every 30 mark_scanned calls
+_purge_counter = 0
 
 
 def _age_minutes(sig: LTFSignal) -> float:

@@ -147,6 +147,10 @@ def get_d1_approved_coins() -> list[str]:
     return approved
 
 
+__all__ = ["LTFSignal", "scan_entry", "get_d1_approved_coins",
+           "detect_nascent_move", "calculate_entry_precision"]
+
+
 def detect_nascent_move(candles: list, direction: str, d1_direction: str = "") -> dict:
     """5-condition Nascent Move Detector — identifies LTF-first breakouts.
 
@@ -308,6 +312,14 @@ def scan_entry(coin: str, d1_tier: str = "", d1_score: float = 0) -> Optional[di
     if not candles or len(candles) < 25:
         logger.debug(f"[ltf] SKIP {coin}: insufficient 15M candles ({len(candles) if candles else 0})")
         return None
+
+    # ── Data Quality Gate (D2) ────────────────────────────────────────
+    from backend.data_quality_gate import validate_candles
+    quality = validate_candles(candles, "15M")
+    if quality.state in ("INVALID", "GAPPED", "MISSING", "STALE"):
+        logger.debug(f"[ltf] BLOCK {coin}: quality={quality.state} issues={quality.issues[:2]}")
+        return None
+    # DEGRADED and INCOMPLETE still proceed — partial 15M data is acceptable
 
     # Run D2's own pipeline on 15M
     raw = scan_ltf_pipeline(coin, "15M")

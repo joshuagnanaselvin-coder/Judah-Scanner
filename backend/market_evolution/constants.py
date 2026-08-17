@@ -109,6 +109,68 @@ MARKET_EVOLUTION_MATRIX: Dict[Tuple[str, str], dict] = {
         "reversal": False,
         "nextProbableState": "Context Building",
     },
+
+    # Row: D1 = WEAK (weak HTF structure — below WATCH threshold)
+    ("WEAK", "REJECT"): {
+        "name": "Dormant",
+        "description": "Dormant",
+        "spiral": "Neutral",
+        "tradeStyle": "Ignore",
+        "action": "Ignore",
+        "confidence": 5,
+        "risk": "Very High",
+        "trend": False,
+        "reversal": False,
+        "nextProbableState": "Dormant",
+    },
+    ("WEAK", "WEAK"): {
+        "name": "Dormant",
+        "description": "Dormant",
+        "spiral": "Neutral",
+        "tradeStyle": "Ignore",
+        "action": "Ignore",
+        "confidence": 5,
+        "risk": "Very High",
+        "trend": False,
+        "reversal": False,
+        "nextProbableState": "Dormant",
+    },
+    ("WEAK", "WATCH"): {
+        "name": "Context Building",
+        "description": "Weak HTF, LTF showing interest. Possible early institutional activity.",
+        "spiral": "Expansion",
+        "tradeStyle": "Observe",
+        "action": "Watch",
+        "confidence": 20,
+        "risk": "High",
+        "trend": False,
+        "reversal": False,
+        "nextProbableState": "Compression",
+    },
+    ("WEAK", "OPPORTUNITY"): {
+        "name": "Expansion Watch",
+        "description": "Weak HTF, LTF strong. Possible breakout — monitor for confirmation.",
+        "spiral": "Expansion",
+        "tradeStyle": "Observe",
+        "action": "Monitor",
+        "confidence": 30,
+        "risk": "Very High",
+        "trend": False,
+        "reversal": False,
+        "nextProbableState": "Expansion Setup",
+    },
+    ("WEAK", "SNIPER"): {
+        "name": "Trap Zone",
+        "description": "Weak HTF, LTF extreme. Likely counter-trend trap.",
+        "spiral": "Failure",
+        "tradeStyle": "Reversal",
+        "action": "Counter Trend",
+        "confidence": 15,
+        "risk": "Very High",
+        "trend": False,
+        "reversal": True,
+        "nextProbableState": "Dormant",
+    },
     ("WATCH", "OPPORTUNITY"): {
         "name": "Expansion Watch",
         "description": "HTF watching, LTF building. Prepare for breakout.",
@@ -287,7 +349,7 @@ SPIRALS = {
     "Neutral": {
         "color": "#6b7280",
         "description": "No actionable setup",
-        "states": ["Dormant"],
+        "states": ["Dormant", "Consolidation"],
     },
 }
 
@@ -327,7 +389,7 @@ INSTITUTIONAL_CATEGORIES = {
         "color": "#6b7280",
         "description": "No actionable setup. No trade.",
         "filter_label": "Dormant",
-        "states": ["Dormant"],
+        "states": ["Dormant", "Consolidation"],
     },
 }
 
@@ -348,6 +410,7 @@ TRADING_DECISIONS = {
     "Momentum Cooling":     "Prepare Pullback Entry",
     "Institutional Flow":   "Trade With Trend",
     "Institutional Entry":  "Trade With Trend",
+    "Consolidation":       "No Edge",
     "Dormant":              "No Edge",
 }
 

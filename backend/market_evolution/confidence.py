@@ -6,12 +6,17 @@ into a single Evolution Confidence (0-100).
 V5.3: Bayesian posterior updating — confidence adjusts based on actual
 signal outcomes using Beta distribution.
 
+V5.4: Evidence quality/freshness and evolution stability.
+
 Formula:
   1. Base = matrix confidence (0-95)
   2. D1/D2 boost = (D1_score + D2_score) * 0.1  (capped at +10)
   3. Alignment boost = alignment_score * 0.1     (capped at +2)
-  4. Bayesian adjustment = posterior_mean - 0.5  (centered, capped at +-5)
-  5. Final = clamp(base + d1d2_boost + alignment_boost + bayesian_adj, 0, 100)
+  4. Evidence quality boost = CRITICAL/STRONG ratio (capped at +3)
+  5. Evidence freshness boost = fresh evidence ratio (capped at +2)
+  6. Evolution stability boost = same-state-cycle credit (capped at +3)
+  7. Bayesian adjustment = posterior_mean - 0.5  (centered, capped at +-5)
+  8. Final = clamp(base + all boosts + bayesian_adj, 0, 100)
 """
 import logging
 from collections import defaultdict
@@ -78,24 +83,64 @@ def get_confidence(d1_tier: str, d2_tier: str,
                    d1_score: float = 0.0, d2_score: float = 0.0,
                    alignment_score: int = 0,
                    state_name: str = "",
-                   signal_type: str = "") -> int:
-    """Return blended confidence for a state (0-100)."""
+                   signal_type: str = "",
+                   evidence_strengths: list = None,
+                   evidence_fresh_ratio: float = 1.0,
+                   evolution_stability: int = 0) -> int:
+    """Return blended confidence for a state (0-100).
+
+    Args:
+        d1_tier, d2_tier: scanner tier classifications
+        d1_score, d2_score: raw scanner scores (0-100)
+        alignment_score: D1/D2 convergence score (0-20)
+        state_name: current market evolution state name
+        signal_type: A/B/C/D classification
+        evidence_strengths: list of EvidenceStrength enum values
+        evidence_fresh_ratio: fraction of evidence that is fresh (0.0-1.0)
+        evolution_stability: consecutive same-state cycles (0+)
+
+    Returns:
+        Confidence as int 0-100.
+    """
     key = (d1_tier.upper(), d2_tier.upper())
     entry = MARKET_EVOLUTION_MATRIX.get(key)
     base = entry.get("confidence", 0) if entry else 0
 
-    # D1/D2 score boost (0-10)
+    # Component 1: D1/D2 score boost (0-10)
     d1d2_boost = min((float(d1_score) + float(d2_score)) * 0.1, 10.0)
 
-    # Alignment boost (0-2)
+    # Component 2: Alignment boost (0-2)
     alignment_boost = min(float(alignment_score) * 0.1, 2.0)
 
-    # Bayesian adjustment from historical outcomes (-5 to +5)
+    # Component 3: Evidence quality boost — reward CRITICAL/STRONG evidence (0-3)
+    evidence_quality_boost = 0.0
+    if evidence_strengths:
+        _STRENGTH_VALUE = {"CRITICAL": 3.0, "STRONG": 2.0,
+                           "MODERATE": 1.0, "WEAK": 0.0}
+        values = [_STRENGTH_VALUE.get(s.name if hasattr(s, "name") else str(s), 0.0)
+                  for s in evidence_strengths]
+        if values:
+            avg_quality = sum(values) / len(values)
+            # avg quality / max(3.0) -> ratio, scaled to 0-3
+            evidence_quality_boost = min(avg_quality, 3.0)
+
+    # Component 4: Evidence freshness boost — reward fresh evidence (0-2)
+    evidence_freshness_boost = min(float(evidence_fresh_ratio) * 2.0, 2.0)
+
+    # Component 5: Evolution stability boost — reward persistent states (0-3)
+    # Same state for 3+ cycles is stable; credit tapers after that.
+    evolution_stability_boost = 0.0
+    if evolution_stability >= 3:
+        evolution_stability_boost = min(evolution_stability * 0.5, 3.0)
+
+    # Component 6: Bayesian adjustment from historical outcomes (-5 to +5)
     bayesian_adj = 0.0
     if state_name and signal_type:
         bayesian_adj = get_bayesian_adjustment(state_name, signal_type)
 
-    return int(max(0, min(100, base + d1d2_boost + alignment_boost + bayesian_adj)))
+    return int(max(0, min(100, base + d1d2_boost + alignment_boost
+                           + evidence_quality_boost + evidence_freshness_boost
+                           + evolution_stability_boost + bayesian_adj)))
 
 
 def get_institutional_category(state_name: str) -> str:

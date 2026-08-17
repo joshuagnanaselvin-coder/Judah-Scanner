@@ -18,7 +18,8 @@ from backend.engines.flow_analyzer import analyze_flow
 from backend.market_data import market_data
 from backend.helpers.impulse_context import synth_crt_score, build_smc_only_context
 from backend.helpers.candle_math import atr, calc_envelope, _get
-from backend.vsp_helpers import detect_swing_points, detect_fvg
+from backend.engines.ltf_scanner import detect_nascent_move, calculate_entry_precision
+from backend.vsp_helpers import detect_swing_points
 from backend.config import (
     MIN_ATR_PERCENT, ADAPTIVE_ATR_MIN_ABSOLUTE, MIN_RANGE_MULTIPLIER,
     TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE, TIER_WEAK_SCORE,
@@ -108,16 +109,14 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
     if opp_count >= 2:
         flaws.append(f"delta_opposing_{opp_count}_candles")
 
-    # Flaw 3: Volume < 0.5x avg on key candle (was 1.0x — too strict for bursty crypto volume)
+    # Flaw 3: Volume < 1.0x avg on key candle = disqualified
     if candles and len(candles) >= 3:
-        # Use last CLOSED candle to avoid false rejections on incomplete forming candle
-        closed = [c for c in candles if getattr(c, 'is_closed', True)]
-        if len(closed) < 2:
-            closed = candles[:-1] if len(candles) >= 3 else candles
-        vol_avg = sum(_get(c, 'volume') for c in closed[-20:]) / min(len(closed[-20:]), 20)
-        last_vol = _get(closed[-1], 'volume')
-        if last_vol < vol_avg * 0.5:
-            flaws.append("low_volume_key_candle")
+        closed = candles  # Use all candles (dict-based in tests, object-based in production)
+        if len(closed) >= 2:
+            vol_avg = sum(_get(c, 'volume') for c in closed[-20:]) / min(len(closed[-20:]), 20)
+            last_vol = _get(closed[-1], 'volume')
+            if last_vol < vol_avg * 1.0:
+                flaws.append("low_volume_key_candle")
 
     # Flaw 4: Entry > 2% past OB/FVG zone
     last_price = _get(candles[-1], 'close') if candles else 0
@@ -135,7 +134,7 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
 
 
 
-def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
+async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
     """D2's own 4-layer pipeline — independent from D1.
 
     Flow → CRT → SMC → Momentum → Signal Builder
@@ -144,6 +143,13 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
     candles = market_data.get_candles(symbol, timeframe)
     if not candles or len(candles) < 25:
         return None
+
+    # ── Data Quality Gate (D2 pipeline) ──────────────────────────────
+    from backend.data_quality_gate import validate_candles
+    quality = validate_candles(candles, timeframe)
+    if quality.state in ("INVALID", "GAPPED", "MISSING", "STALE"):
+        return None
+    # DEGRADED and INCOMPLETE still proceed — partial 15M data is acceptable
 
     last_price = _get(candles[-1], 'close')
     atr_val = atr(candles)
@@ -347,9 +353,126 @@ def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
                      f"dir={signal['direction']} rr={signal['rr']:.1f} path={path} "
                      f"crt={signal['crt_score']} smc={signal['smc_score']} flow={flow_score} mom={momentum_score} "
                      f"EP={entry_precision:.0f}/{D2_MIN_ENTRY_PRECISION} nascent={nascent.get('conditions_met',0)}/5")
+
+        # === EvidenceRecord: log D2 structural findings ===
+        _log_ltf_evidence(symbol, timeframe, signal, crt, smc, flow, nascent, path)
     else:
         logger.debug(f"[ltf_pipeline] SKIP {symbol}: build_signal returned None")
     return signal
+
+
+# ── EvidenceRecord Logger ──────────────────────────────────────────────
+
+async def _log_ltf_evidence_async(symbol: str, timeframe: str, signal: dict,
+                                   crt: dict, smc: dict, flow: dict, nascent: dict, path: str):
+    """Append EvidenceRecords for D2 structural findings to evidence_store."""
+    from backend.evidence_store import evidence_store, next_evidence_id
+    from backend.evidence_record import EvidenceCategory, EvidenceStrength
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc).timestamp()
+    snap_id = state_store.last_snapshot_id
+    direction = signal.get("direction", "NEUTRAL")
+    last_price = signal.get("entry", 0)
+    records: list = []
+
+    # MSB break evidence
+    msb = crt.get("msb", smc.get("msb", {}))
+    if msb and msb.get("type", "NONE") != "NONE":
+        strength = EvidenceStrength.STRONG if msb.get("confirmed", False) else EvidenceStrength.MODERATE
+        records.append(EvidenceRecord(
+            evidence_id=next_evidence_id(symbol),
+            category=EvidenceCategory.MSB_BREAK,
+            symbol=symbol, timeframe=timeframe,
+            price=last_price, strength=strength,
+            direction=msb.get("type", direction).upper(),
+            confidence=0.8 if msb.get("confirmed") else 0.5,
+            candle_time=now, detected_at=now,
+            source="ltf_pipeline.crt", snapshot_id=snap_id,
+            details={"confirmed": msb.get("confirmed", False), "path": path},
+        ))
+
+    # OB evidence
+    ob = smc.get("ob", {})
+    if ob and ob.get("high", 0) > 0:
+        records.append(EvidenceRecord(
+            evidence_id=next_evidence_id(symbol),
+            category=EvidenceCategory.ORDER_BLOCK,
+            symbol=symbol, timeframe=timeframe,
+            price=(ob.get("high", 0) + ob.get("low", 0)) / 2,
+            strength=EvidenceStrength.STRONG if ob.get("strength", 0) >= 3 else EvidenceStrength.MODERATE,
+            direction=direction, confidence=min(ob.get("strength", 0) / 5, 1.0),
+            candle_time=now, detected_at=now,
+            source="ltf_pipeline.smc", snapshot_id=snap_id,
+            details={"ob_high": ob.get("high", 0), "ob_low": ob.get("low", 0),
+                     "strength": ob.get("strength", 0)},
+        ))
+
+    # FVG evidence
+    fvg = smc.get("fvg", {})
+    if fvg and fvg.get("top", 0) > 0:
+        records.append(EvidenceRecord(
+            evidence_id=next_evidence_id(symbol),
+            category=EvidenceCategory.FAIR_VALUE_GAP,
+            symbol=symbol, timeframe=timeframe,
+            price=(fvg.get("top", 0) + fvg.get("bottom", 0)) / 2,
+            strength=EvidenceStrength.STRONG if fvg.get("proximity", 999) <= 1.0 else EvidenceStrength.MODERATE,
+            direction=direction, confidence=0.7,
+            candle_time=now, detected_at=now,
+            source="ltf_pipeline.smc", snapshot_id=snap_id,
+            details={"top": fvg.get("top", 0), "bottom": fvg.get("bottom", 0),
+                     "proximity": fvg.get("proximity", 999)},
+        ))
+
+    # Nascent move evidence
+    if nascent.get("nascent_move"):
+        records.append(EvidenceRecord(
+            evidence_id=next_evidence_id(symbol),
+            category=EvidenceCategory.CANDLE_PATTERN,
+            symbol=symbol, timeframe=timeframe,
+            price=last_price,
+            strength=EvidenceStrength.STRONG if nascent.get("conditions_met", 0) >= 4 else EvidenceStrength.MODERATE,
+            direction=direction,
+            confidence=min(nascent.get("conditions_met", 0) / 5, 1.0),
+            candle_time=now, detected_at=now,
+            source="ltf_pipeline.nascent", snapshot_id=snap_id,
+            details={"conditions_met": nascent.get("conditions_met", 0),
+                     "partial": nascent.get("partial", False)},
+        ))
+
+    # Flow trigger evidence
+    for trigger in flow.get("trgers", flow.get("triggers", []))[:3]:
+        records.append(EvidenceRecord(
+            evidence_id=next_evidence_id(symbol),
+            category=EvidenceCategory.VOLUME_PROFILE,
+            symbol=symbol, timeframe=timeframe,
+            price=last_price, strength=EvidenceStrength.MODERATE,
+            direction=direction, confidence=0.6,
+            candle_time=now, detected_at=now,
+            source="ltf_pipeline.flow", snapshot_id=snap_id,
+            details={"trigger": trigger.get("name", "unknown"),
+                     "boost": trigger.get("boost", 0)},
+        ))
+
+    if records:
+        evidence_ids = []
+        for rec in records:
+            eid = await evidence_store.append(rec)
+            evidence_ids.append(eid)
+        signal["evidence_ids"] = evidence_ids
+        logger.debug(f"[ltf_pipeline] Logged {len(records)} evidence records for {symbol}")
+
+
+def _log_ltf_evidence(symbol: str, timeframe: str, signal: dict,
+                       crt: dict, smc: dict, flow: dict, nascent: dict, path: str):
+    """Fire-and-forget evidence logging (async, non-blocking for scan())."""
+    try:
+        import asyncio
+        loop = asyncio.get_running_loop()
+        loop.create_task(_log_ltf_evidence_async(symbol, timeframe, signal,
+                                                  crt, smc, flow, nascent, path))
+    except RuntimeError:
+        pass
 
 
 # ── D2 Scoring Helpers ──────────────────────────────────────────────────
@@ -394,88 +517,6 @@ def _get_d1_direction(symbol: str) -> str:
     return ""
 
 
-def detect_nascent_move(candles: list, direction: str, d1_direction: str = "") -> dict:
-    """5-condition Nascent Move Detector — identifies LTF-first breakouts.
-
-    Conditions (all pass/fail):
-    1. 15M structure break (close above/below swing point with >= 1.5x volume)
-    2. OB interaction (retesting impulse OB within 15-30 min of break)
-    3. Volume + Delta (breakout candle >= 2x avg volume AND delta >= 60% aligned)
-    4. Liquidity sweep (stop-loss cluster taken out within last 2h, >= 0.5% of price)
-    5. No opposing HTF structure (1H/4H have no DIRECT opposing signal)
-
-    Returns:
-        dict with "nascent_move" (bool), "conditions_met" (int), "partial" (bool)
-    """
-    if not candles or len(candles) < 25:
-        return {"nascent_move": False, "conditions_met": 0, "partial": False}
-
-    conditions_met = 0
-    last = candles[-1]
-    last_price = last.close
-
-    # Condition 1: 15M structure break with volume
-    swings = detect_swing_points(candles[-30:])
-    if direction == "BULLISH":
-        recent_highs = swings.get("swing_highs", [])
-        if recent_highs:
-            swing_high = recent_highs[-1].get("price", 0) if isinstance(recent_highs[-1], dict) else recent_highs[-1]
-            if last.close > swing_high and swing_high > 0:
-                avg_vol = sum(c.volume for c in candles[-10:-1]) / max(len(candles[-10:-1]), 1)
-                if last.volume >= avg_vol * 1.5:
-                    conditions_met += 1
-    else:
-        recent_lows = swings.get("swing_lows", [])
-        if recent_lows:
-            swing_low = recent_lows[-1].get("price", 0) if isinstance(recent_lows[-1], dict) else recent_lows[-1]
-            if last.close < swing_low and swing_low > 0:
-                avg_vol = sum(c.volume for c in candles[-10:-1]) / max(len(candles[-10:-1]), 1)
-                if last.volume >= avg_vol * 1.5:
-                    conditions_met += 1
-
-    # Condition 2: OB interaction
-    fvgs = detect_fvg(candles) or []
-    for fvg in fvgs:
-        fvg_type = fvg.get("type", "")
-        fvg_top = fvg.get("top", 0)
-        fvg_bot = fvg.get("bottom", 0)
-        if direction == "BULLISH" and fvg_type == "BULLISH":
-            if fvg_bot <= last_price <= fvg_top:
-                conditions_met += 1
-                break
-        elif direction == "BEARISH" and fvg_type == "BEARISH":
-            if fvg_bot <= last_price <= fvg_top:
-                conditions_met += 1
-                break
-
-    # Condition 3: Volume + Delta (breakout candle)
-    avg_vol_20 = sum(c.volume for c in candles[-20:]) / max(len(candles[-20:]), 1)
-    if last.volume >= avg_vol_20 * 2.0:
-        # Delta check: close vs open alignment
-        body = abs(last.close - last.open)
-        total_range = last.high - last.low
-        if total_range > 0 and (body / total_range) >= 0.6:
-            conditions_met += 1
-
-    # Condition 4: Liquidity sweep (check if recent swing was swept)
-    from backend.liquidity_map import detect_liquidity_pools
-    liq_pools = detect_liquidity_pools(swings) if swings else {"pools": []}
-    for pool in liq_pools.get("pools", []):
-        level = pool.get("level", 0)
-        if level > 0 and abs(last_price - level) / last_price * 100 >= 0.5:
-            if pool.get("swept", False):
-                conditions_met += 1
-                break
-
-    # Condition 5: No opposing HTF structure
-    if d1_direction and d1_direction == direction:
-        conditions_met += 1
-    elif not d1_direction:
-        # No D1 data — give partial credit
-        conditions_met += 1
-
-    return {"nascent_move": conditions_met >= 3, "conditions_met": conditions_met,
-            "partial": conditions_met == 3}
 
 
 def _score_nascent_move(nascent: dict) -> int:
@@ -542,64 +583,3 @@ def _confluence_bonus_d2(crt_score: int, smc_score: int, flow_score: int,
         factors += 1
 
     return min(factors, CONFLUENCE_MAX)
-
-
-def calculate_entry_precision(candles: list, signal: dict, direction: str) -> float:
-    """Entry Precision sub-scorer — max 25 points.
-
-    Components:
-    - OB retest: 0-10 pts (in OB zone = 10, near OB = 5, far = 0)
-    - FVG fill: 0-8 pts (in FVG = 8, near FVG = 4, far = 0)
-    - Wick rejection: 0-7 pts (upper wick for bearish, lower wick for bullish)
-
-    Also checks D2 minimum thresholds from config:
-    - Entry Precision >= 15 (D2_MIN_ENTRY_PRECISION)
-    - Flow >= 8 (D2_MIN_FLOW)
-    - Momentum >= 8 (D2_MIN_MOMENTUM)
-    """
-    if not candles or len(candles) < 5:
-        return 0.0
-
-    last = candles[-1]
-    last_price = last.close
-    score = 0.0
-
-    # OB retest (0-10)
-    ob = signal.get("ob", {})
-    if ob:
-        ob_high = ob.get("high", 0)
-        ob_low = ob.get("low", 0)
-        if ob_low and ob_high and ob_low <= last_price <= ob_high:
-            score += 10.0  # Inside OB
-        elif ob_low and ob_high and abs(last_price - (ob_low + ob_high) / 2) / last_price * 100 <= 1.0:
-            score += 5.0  # Within 1% of OB center
-
-    # FVG fill (0-8)
-    fvg = signal.get("fvg", {})
-    if fvg:
-        fvg_top = fvg.get("top", 0)
-        fvg_bot = fvg.get("bottom", 0)
-        if fvg_bot and fvg_top and fvg_bot <= last_price <= fvg_top:
-            score += 8.0  # Inside FVG
-        elif fvg_bot and fvg_top and abs(last_price - (fvg_bot + fvg_top) / 2) / last_price * 100 <= 1.0:
-            score += 4.0  # Near FVG
-
-    # Wick rejection (0-7)
-    total_range = last.high - last.low
-    if total_range > 0:
-        if direction == "BULLISH":
-            lower_wick = last.close - last.low
-            wick_ratio = lower_wick / total_range
-            if wick_ratio >= 0.5:
-                score += 7.0  # Strong lower wick rejection
-            elif wick_ratio >= 0.3:
-                score += 4.0  # Moderate wick
-        else:
-            upper_wick = last.high - last.close
-            wick_ratio = upper_wick / total_range
-            if wick_ratio >= 0.5:
-                score += 7.0  # Strong upper wick rejection
-            elif wick_ratio >= 0.3:
-                score += 4.0  # Moderate wick
-
-    return min(score, 25.0)

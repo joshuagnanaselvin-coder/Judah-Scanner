@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from backend.config import (
     SIGNAL_TTL_MINUTES, MAX_SIGNALS, SCAN_INTERVAL_SECONDS,
 )
+from collections import defaultdict
+from backend.performance_tracker import performance_tracker
 
 logger = logging.getLogger("judah.signal_store")
 
@@ -186,6 +188,11 @@ class SignalStore:
     def mark_scanned(self, symbol, engine):
         key = f"{symbol}_{engine}"
         self.scanned_recently[key] = datetime.now(timezone.utc).timestamp()
+        # Periodic purge — remove entries older than 5 minutes (memory safety)
+        cutoff = datetime.now(timezone.utc).timestamp() - 300
+        stale = [k for k, v in self.scanned_recently.items() if v < cutoff]
+        for k in stale:
+            del self.scanned_recently[k]
 
     def was_recently_scanned(self, symbol, engine, max_age_sec=30) -> bool:
         key = f"{symbol}_{engine}"
@@ -217,7 +224,11 @@ class SignalStore:
 
         if len(candles) > 100:
             cutoff = len(candles) - 100
-            self.fvg_ledger[key] = [f for f in existing if f["candle_index"] >= cutoff]
+            self.fvg_ledger[key] = [f for f in existing if f.get("candle_index", 0) >= cutoff]
+
+        # Cap FVG ledger per symbol (max 20 entries)
+        if len(self.fvg_ledger[key]) > 20:
+            self.fvg_ledger[key] = self.fvg_ledger[key][-20:]
 
 
 def _recalc_tier(score, rr):

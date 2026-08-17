@@ -52,6 +52,10 @@ class StateStore:
         self.last_d3_fusion: float = 0.0
         self.last_regime_update: float = 0.0
 
+        # Latest DecisionSnapshot provenance (Phase 1 of Top 1% plan)
+        self.last_snapshot_id: str = ""
+        self.last_snapshot_ts: float = 0.0
+
     async def set_timestamp(self, field: str, ts: float = None):
         """Thread-safe timestamp setter for last_d1_scan / last_d2_scan / last_d3_fusion."""
         if ts is None:
@@ -59,6 +63,14 @@ class StateStore:
         async with self._lock:
             if hasattr(self, field):
                 setattr(self, field, ts)
+
+    def set_snapshot_info(self, snapshot_id: str, snapshot_ts: float):
+        """Record the latest DecisionSnapshot ID for provenance.
+
+        D3 reads this to know which snapshot its decisions were derived from.
+        """
+        self.last_snapshot_id = snapshot_id
+        self.last_snapshot_ts = snapshot_ts
 
     # ── D1 Methods ──────────────────────────────────────────────────
 
@@ -158,10 +170,18 @@ class StateStore:
         """Get all open positions."""
         return dict(self.positions)
 
-    async def close_position(self, coin: str):
-        """Remove position after close."""
+    async def close_position(self, coin: str, pnl_pct: float = 0.0):
+        """Remove position after close and notify risk authority."""
         async with self._lock:
-            self.positions.pop(coin, None)
+            pos = self.positions.pop(coin, None)
+
+        if pos is not None:
+            try:
+                from backend.risk_authority import risk_authority
+                risk_authority.close_position(coin, pnl_pct)
+                logger.info(f"[state_store] Closed position on {coin} (pnl_pct={pnl_pct:.2%})")
+            except Exception as exc:
+                logger.warning(f"[state_store] risk_authority notify failed for {coin}: {exc}")
 
     # ── Regime Tracking ─────────────────────────────────────────────
 
