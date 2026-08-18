@@ -13,9 +13,9 @@ Key differences from D1:
   - Uses LTFSignal objects (not plain dicts)
   - Stores to state_store.d2_signals (not signal_store)
   - Writes state_store timestamp — D3 watches for changes
-  - Scoped to D1-approved coins only
+  - Scans ALL coins regardless of D1 tier (REJECTED D1 → D2 Type B play)
 
-Input: all D1 coins (SNIPER, OPPORTUNITY, WATCH — REJECTED are skipped).
+Input: all D1 coins (SNIPER, OPPORTUNITY, WATCH, REJECTED — all flow to D2).
 Dimensions work independently during the process.
 """
 from backend.config import (
@@ -96,7 +96,7 @@ class LTFEngine:
         d1_approved = []
         for coin in scan_targets:
             d1 = state_store.get_d1_tier(coin)
-            if d1 and d1.get("tier") in ("SNIPER", "OPPORTUNITY", "WATCH"):
+            if d1 and d1.get("tier") in ("SNIPER", "OPPORTUNITY", "WATCH", "REJECTED"):
                 d1_approved.append((coin, d1.get("tier", ""), d1.get("score", 0)))
 
         logger.info(f"[ltf] Scanning {len(scan_targets)} coins on 15M "
@@ -144,7 +144,7 @@ class LTFEngine:
             # Light refresh — just update age/price
             refreshed.append(sig)
 
-        # === PASS 2: Scan for 15M entry (skip fully REJECTED by D1) ===
+        # === PASS 2: Scan for 15M entry (all coins regardless of D1 tier) ===
         new_signals = []
         scan_tasks = []
 
@@ -154,9 +154,6 @@ class LTFEngine:
                 continue
             # Skip if recently scanned
             if _was_recently_scanned(coin):
-                continue
-            # Skip if D1 is fully REJECTED across all TFs — no HTF structure at all
-            if state_store.is_all_watch(coin):
                 continue
             # Gate 1: skip stale/invalid/gapped candle data (Snapshot quality)
             if snap.candle_quality(coin, "15M") in ("STALE", "INVALID", "GAPPED"):

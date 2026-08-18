@@ -79,13 +79,16 @@ def classify_signal_type(d1_tier: str, d1_score: float, d2_tier: str, d2_score: 
                           nascent_move: bool = False, entry_precision: float = 0.0) -> str | None:
     """Decision Layer: classify signal into Type A/B/C/D/E or None.
 
+    REJECTED D1 and D2 tiers are not blocked — they reach D3 and can produce
+    Type B (D2-only LTF momentum plays) when the D2 signal is strong enough.
+
     Classification order (first match wins):
     1. Type C: D1 SNIPER (>=85) AND D2 SNIPER (>=85) AND directions align
-    2. Type A: D1 >= 70 AND D2 >= 50 AND directions align
-    3. Type B: D1 NOT approved AND D2 >= 72 AND nascent_move AND Entry Precision >= 18
-    4. Type D: D1 >= 70 AND D2 not aligned
-    5. Type E: Both valid but opposing directions
-    6. None: everything else
+    2. Type A: D1 approved (SNIPER/OPPORTUNITY) AND D2 >= 50 AND directions align
+    3. Type B: D1 NOT approved (REJECTED/WATCH) AND D2 >= 72 AND nascent_move AND EP >= 18
+    4. Type E: D1 approved AND D2 strong BUT opposing directions
+    5. Type D: D1 >= 70 AND D2 not aligned
+    6. None: everything else (e.g. both REJECTED, or weak D2 without nascent move)
     """
     d1_approved = d1_tier in ("SNIPER", "OPPORTUNITY")
     d1_sniper = d1_score >= 85
