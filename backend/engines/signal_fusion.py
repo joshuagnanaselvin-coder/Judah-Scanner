@@ -492,16 +492,24 @@ class FusionEngine:
         # ── Phase 12: Signal Provenance — collect D1/D2 evidence IDs ─────
         snap_id = state_store.last_snapshot_id or ""
         from backend.decision_snapshot import _CODE_VERSION, _CONFIG_HASH
-        d1_evidence_ids = [
-            r.evidence_id for r in
-            __import__("backend.evidence_store", fromlist=["evidence_store"]).evidence_store
-            .get_d1_evidence(snap_id, coin)
-        ]
-        d2_evidence_ids = [
-            r.evidence_id for r in
-            __import__("backend.evidence_store", fromlist=["evidence_store"]).evidence_store
-            .get_d2_evidence(snap_id, coin)
-        ]
+        try:
+            evidence = __import__("backend.evidence_store", fromlist=["evidence_store"]).evidence_store
+            all_evidence = evidence.get_for_snapshot_sync(snap_id) if snap_id else {}
+            d1_evidence_ids = [
+                r.evidence_id
+                for by_cat in all_evidence.get(coin, {}).values()
+                for r in by_cat
+                if r.timeframe in ("1H", "4H", "1D")
+            ]
+            d2_evidence_ids = [
+                r.evidence_id
+                for by_cat in all_evidence.get(coin, {}).values()
+                for r in by_cat
+                if r.timeframe == "15M"
+            ]
+        except Exception:
+            d1_evidence_ids = []
+            d2_evidence_ids = []
         alignment_id = f"aln-{snap_id[:8]}-{coin[:6]}" if snap_id else ""
 
         # ── SSL/BSL levels ────────────────────────────────────────────
