@@ -191,6 +191,7 @@ STALE_SCORE_FACTOR = 0.75
 D2_TIMEFRAME = "15M"
 D2_SIGNAL_TTL_MINUTES = 15
 D2_SCAN_INTERVAL_SECONDS = 5
+MAX_D2_SIGNALS = 200              # Cap D2 signal store (matches D1 cap)
 
 # === TYPE B MINIMUMS ===
 TYPE_B_MIN_D2_SCORE = 72           # minimum total D2 score (was 65)

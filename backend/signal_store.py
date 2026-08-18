@@ -11,6 +11,19 @@ logger = logging.getLogger("judah.signal_store")
 
 
 class SignalStore:
+    """D1 signal storage — owned by D1 scanner (backend/scanner.py).
+
+    Ownership:
+      Writes:  Scanner.add(), Scanner._run_batch_scan(), Scanner.revalidate()
+      Reads:    Scanner, API endpoints, ws_hub, performance_tracker
+      Valid:    After bootstrap completes. Expires: SIGNAL_TTL_MINUTES (15min).
+      Restart:  Signals wiped on /api/restart, otherwise survive.
+
+    Limits:
+      MAX_SIGNALS = 200 (from config)
+      TTL = 15 minutes (from config)
+      FVG ledger: max 20 entries per symbol, capped at 100 candles of history
+    """
     def __init__(self):
         self.signals: dict = {}
         self.fvg_ledger: dict = {}
@@ -121,6 +134,15 @@ class SignalStore:
             signal["composite_score"] = 0
             signal["invalidation_reason"] = "setup_broken"
             logger.info(f"[revalidate] {signal['id']} INVALIDATED — setup no longer valid")
+            return signal
+
+        # Phase 21 fix: tier gate — filter WEAK/REJECTED on revalidation too
+        new_tier = new_signal.get("tier", "")
+        if new_tier in ("WEAK", "REJECTED"):
+            signal["freshness_state"] = "INVALIDATED"
+            signal["composite_score"] = 0
+            signal["invalidation_reason"] = f"tier_gate_{new_tier.lower()}"
+            logger.debug(f"[revalidate] {signal['id']} FILTERED — tier={new_tier}")
             return signal
 
         # Setup still valid — reset to fresh

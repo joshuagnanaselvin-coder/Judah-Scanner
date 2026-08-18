@@ -3,9 +3,8 @@
   "configurations": [
     {
       "name": "Judah Scanner",
-      "runtimeExecutable": "C:\\Users\\josh-\\Desktop\\Judah Scanner\\scripts\\start.bat",
-      "runtimeArgs": [],
-      "autoPort": true
+      "url": "http://localhost:8001/",
+      "port": 8001
     }
   ]
 }

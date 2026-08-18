@@ -24,6 +24,9 @@ from .constants import MARKET_EVOLUTION_MATRIX, STATE_TO_CATEGORY
 
 logger = logging.getLogger("judah.confidence")
 
+# Phase 16: Memory safety — max Bayesian entries
+_BAYES_MAX_ENTRIES = 500
+
 # ── Bayesian Posterior Tracker ───────────────────────────────────────────────
 # Each (state_name, signal_type) pair gets a Beta(alpha, beta) posterior.
 # Prior: Beta(1, 1) — uniform (no prior belief).
@@ -35,6 +38,16 @@ logger = logging.getLogger("judah.confidence")
 _bayes_tracker: dict[str, dict[str, dict]] = defaultdict(lambda: {"alpha": 1.0, "beta": 1.0})
 
 
+def _trim_bayes_tracker():
+    """Phase 16: Enforce MAX cap on Bayesian tracker entries."""
+    if len(_bayes_tracker) <= _BAYES_MAX_ENTRIES:
+        return
+    excess = len(_bayes_tracker) - _BAYES_MAX_ENTRIES
+    for key in sorted(_bayes_tracker.keys())[:excess]:
+        del _bayes_tracker[key]
+    logger.debug(f"[bayes] Trimmed {excess} entries (cap {_BAYES_MAX_ENTRIES})")
+
+
 def _get_bayes_key(state_name: str, signal_type: str) -> str:
     return f"{state_name}:{signal_type}"
 
@@ -43,6 +56,8 @@ def record_outcome(state_name: str, signal_type: str, won: bool) -> None:
     """Record a trade outcome for Bayesian updating."""
     key = _get_bayes_key(state_name, signal_type)
     _bayes_tracker[key]["alpha" if won else "beta"] += 1.0
+    # Phase 16: trim if over cap
+    _trim_bayes_tracker()
     logger.debug(f"[bayes] {key} → a={_bayes_tracker[key]['alpha']:.0f} "
                  f"b={_bayes_tracker[key]['beta']:.0f}")
 

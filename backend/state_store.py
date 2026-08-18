@@ -118,11 +118,23 @@ class StateStore:
     # ── D2 Methods ──────────────────────────────────────────────────
 
     async def set_d2_signal(self, coin: str, signal: Any):
-        """Update D2 signal for a coin. Pass None to remove."""
+        """Update D2 signal for a coin. Pass None to remove.
+
+        Owner: LTF engine (backend/engines/ltf_engine.py)
+        Readers: D3 fusion engine (backend/engines/signal_fusion.py), API
+        Eviction: FIFO when MAX_D2_SIGNALS cap reached (weakest scores dropped first)
+        """
+        from backend.config import MAX_D2_SIGNALS
         async with self._lock:
             if signal is None:
                 self.d2_signals.pop(coin, None)
             else:
+                # Enforce cap — evict weakest signal if at limit
+                if len(self.d2_signals) >= MAX_D2_SIGNALS:
+                    weakest = min(self.d2_signals.items(),
+                                  key=lambda x: float(getattr(x[1], 'score', 0)))
+                    del self.d2_signals[weakest[0]]
+                    logger.debug(f"[state] Evicted D2 signal {weakest[0]} (cap {MAX_D2_SIGNALS})")
                 self.d2_signals[coin] = signal
             self.last_d2_scan = datetime.now(timezone.utc).timestamp()
 
@@ -137,7 +149,12 @@ class StateStore:
     # ── D3 Decision Layer ───────────────────────────────────────────
 
     async def set_d3_decision(self, coin: str, decision: dict):
-        """Update D3 decision for a coin (signal type, position sizing, action)."""
+        """Update D3 decision for a coin (signal type, position sizing, action).
+
+        Owner: D3 fusion engine (backend/engines/signal_fusion.py)
+        Readers: API endpoints, ws_hub (broadcasts to /ws-fusion)
+        Eviction: Cleared by fusion engine on signal expiry or signal type=None
+        """
         async with self._lock:
             self.d3_decisions[coin] = {
                 **decision,

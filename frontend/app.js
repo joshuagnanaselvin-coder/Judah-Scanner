@@ -278,9 +278,14 @@ function renderTypeEAlerts() {
 }
 
 // ── Filtering ────────────────────────────────────────────────────
+// Only display OPPORTUNITY and SNIPER tier coins — WATCH/WEAK/REJECTED filtered out
+const DISPLAY_TIERS = new Set(["OPPORTUNITY", "SNIPER"]);
+
 function applyFilters() {
   return allSignals.filter(s => {
     if (filters.direction !== 'all' && s.direction !== filters.direction) return false;
+    const d2Tier = (s.d2_tier || '').toUpperCase();
+    if (!DISPLAY_TIERS.has(d2Tier)) return false;
     return true;
   });
 }

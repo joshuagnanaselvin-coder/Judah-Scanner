@@ -372,6 +372,14 @@ async def scan_entry(coin: str, d1_tier: str = "", d1_score: float = 0) -> Optio
     raw["tier"] = tier
     raw["score"] = composite
 
+    # ── Tier gate: filter WEAK/REJECTED at source ──
+    # These tiers can never produce valid signal types in D3
+    # (classify_signal_type returns None for insufficient scores).
+    # Filtering here prevents them from entering the D2 store and D3 fusion.
+    if tier in ("WEAK", "REJECTED"):
+        logger.debug(f"[ltf] {coin}: score={composite:.1f} tier={tier} — filtered out")
+        return None
+
     score = composite
     logger.info(f"[ltf] {coin}: score={score:.1f} tier={tier} "
                 f"dir={direction} nascent={raw['nascent_move']} "

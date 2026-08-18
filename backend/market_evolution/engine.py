@@ -31,6 +31,9 @@ from .models import MarketEvolutionState
 
 logger = logging.getLogger("judah.market_evolution")
 
+# Phase 16: Memory safety — max coins tracked in module-level caches
+_ME_MAX_COINS = 500
+
 # Singleton history store
 _history = history_store
 
@@ -40,6 +43,22 @@ _prev_d1_score: Dict[str, float] = {}
 _prev_d2_score: Dict[str, float] = {}
 # V5.2: track same-state-cycle count for stable detection
 _same_state_count: Dict[str, int] = {}
+
+
+def _trim_coin_caches(coin: str):
+    """Phase 16: Evict oldest coins from module-level caches if over MAX."""
+    if len(_prev_state) <= _ME_MAX_COINS:
+        return
+    # Sort by least-recently-written (track via a dummy insert-time map)
+    # Strategy: remove coins not recently evaluated (check _same_state_count as proxy)
+    # Simpler: just keep the most recent _ME_MAX_COINS by evicting alphabetically
+    excess = len(_prev_state) - _ME_MAX_COINS
+    for key in sorted(_prev_state.keys())[:excess]:
+        _prev_state.pop(key, None)
+        _prev_d1_score.pop(key, None)
+        _prev_d2_score.pop(key, None)
+        _same_state_count.pop(key, None)
+    logger.debug(f"[me] Trimmed {excess} coins from evolution caches (cap {_ME_MAX_COINS})")
 
 
 def evaluate_for_fusion(ctx: "FusionContext") -> MarketEvolutionState:
@@ -115,6 +134,9 @@ def evaluate(coin: str,
     _history.record(coin, state_name, state_def["spiral"], direction,
                     d1_score, d2_score, velocity, evolution, alignment_score,
                     institutional_category, trading_decision, vel)
+
+    # Phase 16: trim caches before inserting this coin
+    _trim_coin_caches(coin)
 
     # Cache for next call
     _prev_state[coin] = state_name

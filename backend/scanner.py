@@ -10,6 +10,25 @@ import asyncio
 import logging
 import time as _time_module
 from datetime import datetime, timezone
+
+# Phase 21: Observability — cycle ID for D1
+_D1_cycle_count = 0
+_D1_cycle_ids: dict[int, str] = {}
+
+
+def _get_d1_cycle_id() -> str:
+    global _D1_cycle_count
+    try:
+        task = asyncio.current_task()
+        key = id(task) if task else 0
+        if key not in _D1_cycle_ids:
+            _D1_cycle_count += 1
+            _D1_cycle_ids[key] = f"D1-{_D1_cycle_count:04d}"
+        return _D1_cycle_ids[key]
+    except RuntimeError:
+        return "D1-????"
+
+
 from backend.market_data import market_data
 from backend.signal_store import signal_store
 from backend.engines.engine import scan
@@ -26,7 +45,17 @@ logger = logging.getLogger("judah.scanner")
 
 
 class Scanner:
+    """Phase 21: Observability — each scanner instance carries a stable cycle ID."""
+    _scanner_count = 0
+    _ids: dict[int, str] = {}
+
     def __init__(self):
+        Scanner._scanner_count += 1
+        key = id(self)
+        if key not in Scanner._ids:
+            Scanner._ids[key] = f"D1-{Scanner._scanner_count:04d}"
+        self.cycle_id: str = Scanner._ids[key]
+
         self.symbols: list = []
         self.running: bool = False
         self.scan_task = None
@@ -41,28 +70,29 @@ class Scanner:
         self.running = True
         self._scan_semaphore = asyncio.Semaphore(20)
 
-        print(f"[scanner] Bootstrapping {len(symbols)} coins...")
+        print(f"[scanner] [{self.cycle_id}] Bootstrapping {len(symbols)} coins...")
         count = await market_data.bootstrap(symbols)
-        print(f"[scanner] Bootstrapped {count} candle sets")
+        print(f"[scanner] [{self.cycle_id}] Bootstrapped {count} candle sets")
 
         market_data.connect_websocket(symbols)
         market_data.on_candle_close = self._on_candle_close
 
         self.scan_task = asyncio.create_task(self._scan_loop())
-        print(f"[scanner] Live - {len(symbols)} coins x {len(TIMEFRAMES_HTF)} TFs")
+        print(f"[scanner] [{self.cycle_id}] Live - {len(symbols)} coins x {len(TIMEFRAMES_HTF)} TFs")
 
     async def _scan_loop(self):
         """Main scan cycle: 15s timer + WS event drain."""
         while self.running:
             try:
                 t0 = _time_module.time()
+                logger.info(f"[scan] [{self.cycle_id}] Cycle starting")
                 await self._run_batch_scan()
                 elapsed = _time_module.time() - t0
-                logger.info(f"[scan] Cycle complete in {elapsed:.1f}s")
+                logger.info(f"[scan] [{self.cycle_id}] Cycle complete in {elapsed:.1f}s")
             except asyncio.CancelledError:
                 break
             except Exception:
-                logger.exception("[scanner] Scan error")
+                logger.exception(f"[scan] [{self.cycle_id}] Scan error")
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
 
     async def _run_batch_scan(self):
@@ -77,7 +107,7 @@ class Scanner:
         # Build immutable snapshot for this cycle (Gate 1: Snapshot)
         snap = SnapshotBuilder(market_data).build(self.symbols, TIMEFRAMES_HTF)
         state_store.set_snapshot_info(snap.snapshot_id, snap.snapshot_timestamp)
-        logger.info(f"[scan] Snapshot {snap.snapshot_id[:8]} — "
+        logger.info(f"[scan] [{self.cycle_id}] Snapshot {snap.snapshot_id[:8]} — "
                     f"{sum(1 for v in snap.data_quality.values() if v == 'VALID')}/{len(snap.data_quality)} pairs VALID")
 
         # === PASS 1: Revalidate + refresh existing signals ===
@@ -92,7 +122,7 @@ class Scanner:
                 candles = market_data.get_candles(sig['symbol'], sig['engine'])
             if candles:
                 if signal_store.should_revalidate(sig):
-                    logger.info(f"[revalidate] {sig['symbol']} {sig['engine']} "
+                    logger.info(f"[revalidate] [{self.cycle_id}] {sig['symbol']} {sig['engine']} "
                                 f"at {sig.get('age_minutes', 0)}min checkpoint...")
                     new_sig = await scan(sig['symbol'], sig['engine'])
                     if new_sig:
@@ -149,6 +179,15 @@ class Scanner:
                 signal = self._apply_boosts(signal, tf)
             except Exception as e:
                 logger.warning(f"[confluence] Failed for {symbol} {tf}: {e}")
+                signal_store.mark_scanned(symbol, tf)
+                continue
+
+            # Tier gate: filter WEAK/REJECTED D1 signals at source
+            # These tiers can never produce valid signal types in D3
+            tier = signal.get("tier", "")
+            if tier in ("WEAK", "REJECTED"):
+                logger.debug(f"[scan] {symbol} {tf}: score={signal.get('composite_score', 0):.1f} "
+                             f"tier={tier} — filtered out")
                 signal_store.mark_scanned(symbol, tf)
                 continue
 

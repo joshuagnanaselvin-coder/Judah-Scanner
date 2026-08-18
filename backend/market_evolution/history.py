@@ -46,7 +46,13 @@ class CoinHistory:
 
 
 class HistoryStore:
-    """Holds CoinHistory for all tracked coins."""
+    """Holds CoinHistory for all tracked coins.
+
+    Phase 16: MAX_COINS cap prevents unbounded growth.
+    When cap is reached, the oldest coin (alphabetical sort) is evicted.
+    """
+
+    MAX_COINS = 500
 
     def __init__(self):
         self._store: dict[str, CoinHistory] = {}
@@ -54,6 +60,13 @@ class HistoryStore:
 
     def get_or_create(self, coin: str) -> CoinHistory:
         if coin not in self._store:
+            # Phase 16: enforce MAX_COINS before creating new entry
+            if len(self._store) >= HistoryStore.MAX_COINS:
+                # Evict oldest (alphabetical sort as deterministic proxy)
+                oldest = sorted(self._store.keys())[0]
+                del self._store[oldest]
+                self._last_state.pop(oldest, None)
+                logger.debug(f"[history] Evicted {oldest} (cap {HistoryStore.MAX_COINS})")
             self._store[coin] = CoinHistory(coin)
         return self._store[coin]
 

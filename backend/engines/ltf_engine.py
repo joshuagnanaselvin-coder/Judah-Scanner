@@ -19,7 +19,7 @@ Input: all D1 coins (SNIPER, OPPORTUNITY, WATCH, REJECTED — all flow to D2).
 Dimensions work independently during the process.
 """
 from backend.config import (
-    D2_SCAN_INTERVAL_SECONDS, D2_SIGNAL_TTL_MINUTES,
+    D2_SCAN_INTERVAL_SECONDS, D2_SIGNAL_TTL_MINUTES, MAX_D2_SIGNALS,
     TIMEFRAMES_LTF,
     SCAN_CONCURRENCY,
 )
@@ -28,6 +28,26 @@ import asyncio
 import time as _time_module
 from datetime import datetime, timezone
 from typing import Any
+
+# Phase 21: Observability — per-task cycle ID tracking
+_cycle_counter = 0
+_cycle_ids: dict[int, str] = {}
+
+
+def _get_cycle_id() -> str:
+    """Return a short cycle ID for the current asyncio task."""
+    global _cycle_counter
+    try:
+        task = asyncio.current_task()
+        key = id(task) if task else 0
+        if key not in _cycle_ids:
+            _cycle_counter += 1
+            _cycle_ids[key] = f"D2-{_cycle_counter:04d}"
+        return _cycle_ids[key]
+    except RuntimeError:
+        return "D2-????"
+
+
 from backend.engines.ltf_scanner import LTFSignal
 from backend.market_data import market_data
 from backend.state_store import state_store
@@ -40,7 +60,18 @@ from backend.decision_snapshot import SnapshotBuilder
 
 
 class LTFEngine:
+    """Phase 21: Observability — each engine instance carries a stable cycle ID."""
+
+    _engine_count = 0
+    _ids: dict[int, str] = {}
+
     def __init__(self):
+        LTFEngine._engine_count += 1
+        self._id_key = id(self)
+        if self._id_key not in LTFEngine._ids:
+            LTFEngine._ids[self._id_key] = f"D2-{LTFEngine._engine_count:04d}"
+        self.cycle_id: str = LTFEngine._ids[self._id_key]
+
         self.symbols: list = []
         self.running: bool = False
         self.scan_task = None
@@ -53,22 +84,23 @@ class LTFEngine:
         self.running = True
         self._scan_semaphore = asyncio.Semaphore(SCAN_CONCURRENCY)
 
-        print(f"[ltf] Starting D2 engine — {len(symbols)} coins on 15M")
+        print(f"[ltf] [{self.cycle_id}] Starting D2 engine — {len(symbols)} coins on 15M")
         self.scan_task = asyncio.create_task(self._scan_loop())
-        print(f"[ltf] Live — {len(symbols)} coins x 15M (SNIPER/OPPORTUNITY/WATCH)")
+        print(f"[ltf] [{self.cycle_id}] Live — {len(symbols)} coins x 15M (SNIPER/OPPORTUNITY/WATCH)")
 
     async def _scan_loop(self):
         """Main scan cycle: timer + WS event drain."""
         while self.running:
             try:
                 t0 = _time_module.time()
+                logger.info(f"[ltf] [{self.cycle_id}] Cycle starting")
                 await self._run_batch_scan()
                 elapsed = _time_module.time() - t0
-                logger.info(f"[ltf] Cycle complete in {elapsed:.1f}s")
+                logger.info(f"[ltf] [{self.cycle_id}] Cycle complete in {elapsed:.1f}s")
             except asyncio.CancelledError:
                 break
             except Exception:
-                logger.exception("[ltf] Scan error")
+                logger.exception(f"[ltf] [{self.cycle_id}] Scan error")
             await asyncio.sleep(D2_SCAN_INTERVAL_SECONDS)
 
     async def _run_batch_scan(self):
@@ -236,6 +268,10 @@ _scanned_recently: dict = {}
 _PURGE_INTERVAL = 30  # Purge stale entries every 30 mark_scanned calls
 _purge_counter = 0
 
+# Phase 16: Memory safety — max entries and TTL for _scanned_recently
+_SCANNED_RECENTLY_MAX = 500       # Max entries in the recently-scanned dict
+_SCANNED_RECENTLY_TTL_SEC = 300   # 5 minutes TTL
+
 
 def _age_minutes(sig: LTFSignal) -> float:
     return (datetime.now(timezone.utc) - sig.born_at).total_seconds() / 60
@@ -246,12 +282,44 @@ def _should_revalidate(sig: LTFSignal) -> bool:
 
 
 def _mark_scanned(coin: str):
+    """Phase 16: Track recently-scanned coins with TTL + MAX eviction."""
+    global _purge_counter
     _scanned_recently[coin] = datetime.now(timezone.utc).timestamp()
+    _purge_counter += 1
+
+    # Periodic purge of expired entries
+    if _purge_counter >= _PURGE_INTERVAL:
+        _purge_counter = 0
+        _purge_scanned_recently()
+
+
+def _purge_scanned_recently():
+    """Remove expired entries and enforce MAX cap."""
+    cutoff = datetime.now(timezone.utc).timestamp() - _SCANNED_RECENTLY_TTL_SEC
+    # Remove expired
+    expired = [k for k, v in _scanned_recently.items() if v < cutoff]
+    for k in expired:
+        del _scanned_recently[k]
+    # Enforce MAX cap — evict oldest if over limit
+    if len(_scanned_recently) > _SCANNED_RECENTLY_MAX:
+        # Sort by timestamp, drop oldest
+        oldest = sorted(_scanned_recently.items(), key=lambda x: x[1])[:len(_scanned_recently) - _SCANNED_RECENTLY_MAX]
+        for k, _ in oldest:
+            del _scanned_recently[k]
+        logger.debug(f"[ltf] Purged {len(oldest)} from _scanned_recently (cap {_SCANNED_RECENTLY_MAX})")
 
 
 def _was_recently_scanned(coin: str, max_age_sec: int = D2_SCAN_INTERVAL_SECONDS) -> bool:
-    last = _scanned_recently.get(coin, 0)
-    return (datetime.now(timezone.utc).timestamp() - last) < max_age_sec
+    """Phase 16: Lazy TTL eviction on every read."""
+    last = _scanned_recently.get(coin)
+    if last is None:
+        return False
+    now = datetime.now(timezone.utc).timestamp()
+    # Evict if past TTL
+    if now - last > _SCANNED_RECENTLY_TTL_SEC:
+        del _scanned_recently[coin]
+        return False
+    return (now - last) < max_age_sec
 
 
 # Module-level singleton
