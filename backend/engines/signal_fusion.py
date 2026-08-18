@@ -267,6 +267,13 @@ class FusionEngine:
             d1_direction, d2_direction, nascent_move, entry_precision
         )
 
+        # No valid signal type (e.g. both REJECTED, or weak D2 without nascent move)
+        # — skip this coin, don't pollute D3 output
+        if sig_type is None:
+            logger.debug(f"[fusion] {coin}: no signal type (d1={d1_tier}/{d1_score:.0f} "
+                        f"d2={d2_tier_name}/{d2_score:.0f}) — skipping")
+            return None
+
         # Type E conflict alert (sent to frontend + logged)
         if sig_type == "E" and type_e_alerts is not None:
             alert = {
