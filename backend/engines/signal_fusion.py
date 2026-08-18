@@ -361,43 +361,45 @@ class FusionEngine:
                 }
             else:
                 d1_structure = {}
-            d1_ob = d1_best.get("ob", {})
-            d1_liq = d1_best.get("liquidity", {})
-            d1_msb = d1_best.get("msb", {})
-            d1_fvg = d1_best.get("fvg", {})
-            d1_vp = d1_best.get("volume_profile", {})
 
-            d1_structure = {
-                "direction": d1_best.get("direction", ""),
-                "tier": d1_best.get("tier", "WATCH"),
-                "score": d1_best.get("composite_score", 0),
-                # OB
-                "ob_type": d1_ob.get("type", "") if d1_ob else "",
-                "ob_zone": d1_ob.get("zone", "UNKNOWN") if d1_ob else "UNKNOWN",
-                "ob_low": d1_ob.get("low", 0) if d1_ob else 0,
-                "ob_high": d1_ob.get("high", 0) if d1_ob else 0,
-                "ob_strength": d1_ob.get("strength", 0) if d1_ob else 0,
-                # MSB
-                "msb_type": d1_msb.get("type", "") if d1_msb else "",
-                "msb_level": d1_msb.get("level", 0) if d1_msb else 0,
-                "msb_direction": d1_msb.get("direction", "") if d1_msb else "",
-                # FVG
-                "fvg_type": d1_fvg.get("type", "") if d1_fvg else "",
-                "fvg_size_atr": d1_fvg.get("size_atr", 0) if d1_fvg else 0,
-                "fvg_filled_pct": d1_fvg.get("filled_pct", 100) if d1_fvg else 100,
-                # Liquidity
-                "liq_swept": d1_liq.get("swept", False) if d1_liq else False,
-                "liq_level": d1_liq.get("level", 0) if d1_liq else 0,
-                "liq_direction": d1_liq.get("direction", "") if d1_liq else "",
-                # Volume profile
-                "poc": d1_vp.get("poc_price", 0) if d1_vp else 0,
-                "va_high": d1_vp.get("va_high", 0) if d1_vp else 0,
-                "va_low": d1_vp.get("va_low", 0) if d1_vp else 0,
-                # CRT
-                "premium_discount": d1_best.get("premium_discount", "EQUILIBRIUM"),
-                "session": d1_best.get("session", ""),
-                "session_label": d1_best.get("session_label", d1_best.get("session", "")),
-            }
+            if d1_best:
+                d1_ob = d1_best.get("ob", {})
+                d1_liq = d1_best.get("liquidity", {})
+                d1_msb = d1_best.get("msb", {})
+                d1_fvg = d1_best.get("fvg", {})
+                d1_vp = d1_best.get("volume_profile", {})
+
+                d1_structure = {
+                    "direction": d1_best.get("direction", ""),
+                    "tier": d1_best.get("tier", "WATCH"),
+                    "score": d1_best.get("composite_score", 0),
+                    # OB
+                    "ob_type": d1_ob.get("type", "") if d1_ob else "",
+                    "ob_zone": d1_ob.get("zone", "UNKNOWN") if d1_ob else "UNKNOWN",
+                    "ob_low": d1_ob.get("low", 0) if d1_ob else 0,
+                    "ob_high": d1_ob.get("high", 0) if d1_ob else 0,
+                    "ob_strength": d1_ob.get("strength", 0) if d1_ob else 0,
+                    # MSB
+                    "msb_type": d1_msb.get("type", "") if d1_msb else "",
+                    "msb_level": d1_msb.get("level", 0) if d1_msb else 0,
+                    "msb_direction": d1_msb.get("direction", "") if d1_msb else "",
+                    # FVG
+                    "fvg_type": d1_fvg.get("type", "") if d1_fvg else "",
+                    "fvg_size_atr": d1_fvg.get("size_atr", 0) if d1_fvg else 0,
+                    "fvg_filled_pct": d1_fvg.get("filled_pct", 100) if d1_fvg else 100,
+                    # Liquidity
+                    "liq_swept": d1_liq.get("swept", False) if d1_liq else False,
+                    "liq_level": d1_liq.get("level", 0) if d1_liq else 0,
+                    "liq_direction": d1_liq.get("direction", "") if d1_liq else "",
+                    # Volume profile
+                    "poc": d1_vp.get("poc_price", 0) if d1_vp else 0,
+                    "va_high": d1_vp.get("va_high", 0) if d1_vp else 0,
+                    "va_low": d1_vp.get("va_low", 0) if d1_vp else 0,
+                    # CRT
+                    "premium_discount": d1_best.get("premium_discount", "EQUILIBRIUM"),
+                    "session": d1_best.get("session", ""),
+                    "session_label": d1_best.get("session_label", d1_best.get("session", "")),
+                }
 
         # ── D2 15M Structure (from raw_signal) ────────────────────────
         raw = getattr(d2, 'raw_signal', {}) or {}

@@ -70,7 +70,7 @@ SMC_SCORE_LIQUIDITY = 5
 TIER_SNIPER_SCORE = 85       # SNIPER >= 85: highest probability (top 10%)
 TIER_OPPORTUNITY_SCORE = 65  # OPPORTUNITY >= 65: strong setups (top 30%)
 TIER_WATCH_SCORE = 40        # WATCH >= 40: partial confirmation
-TIER_WEAK_SCORE = 200        # WEAK unreachable (below WATCH → REJECTED)
+TIER_WEAK_SCORE = 10        # WEAK >= 10: low-confidence but viable setups
 IGNORE_MIN_SCORE = 20        # Below this: not shown (was 60 — way too aggressive)
 MIN_RR = 1.5
 
@@ -248,4 +248,4 @@ BINANCE_INTERVAL_MAP = {
 
 # === SERVER ===
 HOST = "0.0.0.0"
-PORT = 8000
+PORT = 8001

@@ -234,13 +234,15 @@ class SignalStore:
 def _recalc_tier(score, rr):
     """Tier driven by score alone (locked to base_score, never downgraded by age).
     RR is stored and displayed as a risk indicator but does not gate tier."""
-    from backend.config import TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE
+    from backend.config import TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE, TIER_WEAK_SCORE
     if score >= TIER_SNIPER_SCORE:
         return "SNIPER"
     if score >= TIER_OPPORTUNITY_SCORE:
         return "OPPORTUNITY"
     if score >= TIER_WATCH_SCORE:
         return "WATCH"
+    if score >= TIER_WEAK_SCORE:
+        return "WEAK"
     return "REJECTED"
 
 

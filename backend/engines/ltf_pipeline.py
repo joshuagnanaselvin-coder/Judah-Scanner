@@ -115,7 +115,7 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
         if len(closed) >= 2:
             vol_avg = sum(_get(c, 'volume') for c in closed[-20:]) / min(len(closed[-20:]), 20)
             last_vol = _get(closed[-1], 'volume')
-            if last_vol < vol_avg * 1.0:
+            if last_vol < vol_avg * 0.5:
                 flaws.append("low_volume_key_candle")
 
     # Flaw 4: Entry > 2% past OB/FVG zone

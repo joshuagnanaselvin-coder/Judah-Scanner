@@ -438,24 +438,34 @@ def _check_fatal_flaws(signal: dict, flow: dict, smc: dict) -> bool:
         return True
 
     # 1. R:R < 1.5:1 — insufficient reward for risk
-    if signal.get("rr", 0) < MIN_RR:
+    rr = signal.get("rr", 0)
+    if rr < MIN_RR:
+        logger.info(f"[engine] FATAL FLAW {signal.get('symbol')} {signal.get('engine')}: RR={rr} < {MIN_RR}")
         return True
 
     # 2. No structural stop defined
     sl = signal.get("stop_loss", 0)
     entry = signal.get("entry", 0)
     if sl <= 0 or entry <= 0:
+        logger.info(f"[engine] FATAL FLAW {signal.get('symbol')} {signal.get('engine')}: SL={sl} entry={entry} invalid")
         return True
 
-    # 3. Sweep reversal opposing signal direction — if flow detected a sweep
-    #    in the OPPOSITE direction of the proposed signal, that's a fatal conflict.
+    # 3. Flow trigger opposing signal direction.
+    #    Only "sweep_reversal_*" triggers represent genuine directional conflict
+    #    — e.g. a bullish sweep opposing a BEARISH signal. Relative-extreme
+    #    triggers (rs_extreme_bearish in a BULLISH signal) are actually
+    #    CONFLUENT because extreme bearish RSI = bullish reversal setup.
     triggers = flow.get("triggers", [])
     signal_dir = signal.get("direction", "")
     for trigger in triggers:
         t_name = trigger.get("name", "").lower()
+        if "sweep_reversal" not in t_name:
+            continue
         if signal_dir == "BULLISH" and "bearish" in t_name:
+            logger.info(f"[engine] FATAL FLAW {signal.get('symbol')}: sweep_reversal_bearish opposes BULLISH signal")
             return True
         if signal_dir == "BEARISH" and "bullish" in t_name:
+            logger.info(f"[engine] FATAL FLAW {signal.get('symbol')}: sweep_reversal_bullish opposes BEARISH signal")
             return True
 
     # 4. MSB (Market Structure Break) opposing signal direction
@@ -463,8 +473,10 @@ def _check_fatal_flaws(signal: dict, flow: dict, smc: dict) -> bool:
     msb_type = msb.get("type", "NONE")
     if msb_type != "NONE":
         if msb_type == "BEARISH" and signal_dir == "BULLISH":
+            logger.info(f"[engine] FATAL FLAW {signal.get('symbol')}: BEARISH MSB opposes BULLISH signal")
             return True
         if msb_type == "BULLISH" and signal_dir == "BEARISH":
+            logger.info(f"[engine] FATAL FLAW {signal.get('symbol')}: BULLISH MSB opposes BEARISH signal")
             return True
 
     return False
@@ -476,7 +488,7 @@ async def _log_evidence_async(symbol: str, timeframe: str, signal: dict,
                                crt: dict, smc: dict, flow: dict, path: str):
     """Append EvidenceRecords for structural findings to evidence_store."""
     from backend.evidence_store import evidence_store, next_evidence_id
-    from backend.evidence_record import EvidenceCategory, EvidenceStrength
+    from backend.evidence_record import EvidenceCategory, EvidenceRecord, EvidenceStrength
     from backend.state_store import state_store
     from datetime import datetime, timezone
     import asyncio
