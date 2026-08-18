@@ -56,7 +56,7 @@ _B_ENDING_WHITELIST = frozenset({
 
 
 def is_valid_usdt_future(symbol: str) -> bool:
-    """Return True if symbol is a clean USDT-M futures pair.
+    """Return True if symbol is a clean USDT-M perpetual futures pair.
 
     Criteria:
       1. Ends with exactly "USDT" (no BUSD, no other quote asset)
@@ -65,6 +65,9 @@ def is_valid_usdt_future(symbol: str) -> bool:
       4. B-stock variants are detected and blocked
       5. Base asset starts with a letter (no numeric/symbol prefixes)
       6. Base asset length is sane (2-15 chars)
+
+    Note: contractType=="PERPETUAL" filtering is done at the bootstrap level
+    in main.py before passing symbols here.
     """
     if not symbol or not isinstance(symbol, str):
         return False
@@ -106,13 +109,12 @@ def is_valid_usdt_future(symbol: str) -> bool:
             logger.debug(f"[filter] Blocked B-stock (stripped '{stripped}'): {symbol}")
             return False
 
-    # Synthetic tokens with numeric prefix: 1000SATSUSDT, 1MBABYDOGEUSDT, etc.
-    # Legitimate crypto base assets always start with a letter.
     if not base or not base[0].isalpha():
         logger.debug(f"[filter] Non-alpha prefix: {symbol}")
         return False
 
     # Length sanity — real crypto pairs have base assets 2-15 chars
+    # Also blocks the bare "USDT" entry that Binance sometimes returns
     if len(base) < 2 or len(base) > 15:
         logger.debug(f"[filter] Suspicious base length: {symbol}")
         return False

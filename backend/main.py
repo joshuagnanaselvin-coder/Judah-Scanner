@@ -291,6 +291,7 @@ async def _bootstrap():
                         for sym in data.get("symbols", [])
                         if sym.get("status") == "TRADING"
                         and sym.get("quoteAsset") == "USDT"
+                        and sym.get("contractType") == "PERPETUAL"
                     ]
                     pairs = filter_usdt_futures(raw)
                 else:
