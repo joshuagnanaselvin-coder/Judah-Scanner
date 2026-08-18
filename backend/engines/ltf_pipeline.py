@@ -113,11 +113,13 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
     if candles and len(candles) >= 3:
         closed = candles  # Use all candles (dict-based in tests, object-based in production)
         if len(closed) >= 2:
+            # Use min of last 3 completed candles to avoid false positives from
+            # a single partial 15M candle (still-forming candle has low volume by nature)
             vol_avg = sum(_get(c, 'volume') for c in closed[-20:]) / min(len(closed[-20:]), 20)
-            last_vol = _get(closed[-1], 'volume')
+            key_vol = min(_get(c, 'volume') for c in closed[-3:])
             # Volume must be at least 0.3x avg on key candle.
             # Below 30% avg = low conviction entry (was <1.0x = way too strict, blocking all signals)
-            if vol_avg > 0 and last_vol < vol_avg * 0.3:
+            if vol_avg > 0 and key_vol < vol_avg * 0.3:
                 flaws.append("low_volume_key_candle")
 
     # Flaw 4: Entry > 2% past OB/FVG zone
