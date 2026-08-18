@@ -211,17 +211,25 @@ class LTFEngine:
 
         results = await asyncio.gather(
             *[_scan_with_limit(c) for c in scan_tasks],
-            return_exceptions=True
         )
 
+        failed_coins = []
         for coin, result in zip(scan_tasks, results):
             if isinstance(result, Exception) or not result:
+                failed_coins.append(coin)
                 _mark_scanned(coin)
                 continue
 
             await state_store.set_d2_signal(coin, result)
             new_signals.append(result)
             _mark_scanned(coin)
+
+        # Phase 11: No Silent Failures — propagate DEGRADED if any scans failed
+        if failed_coins:
+            await state_store.set_d2_status(
+                "DEGRADED",
+                reason=f"{len(failed_coins)}_scans_failed: {','.join(failed_coins[:5])}"
+            )
 
         # === PASS 3: Build D2 tiers, update state_store ===
         d2_tiers_this_cycle = {}

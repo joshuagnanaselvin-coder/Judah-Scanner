@@ -92,7 +92,9 @@ class Scanner:
             except asyncio.CancelledError:
                 break
             except Exception:
+                # Phase 11: No Silent Failures — propagate DEGRADED state
                 logger.exception(f"[scan] [{self.cycle_id}] Scan error")
+                state_store.set_d1_status("DEGRADED", reason="scan_cycle_failed")
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
 
     async def _run_batch_scan(self):
@@ -153,20 +155,23 @@ class Scanner:
 
         logger.debug(f"[scan] Batch: {len(scan_tasks)} candidate pairs to scan")
 
-        # Run scans with bounded concurrency (20 parallel)
-        semaphore = self._scan_semaphore or asyncio.Semaphore(20)
+        # Phase 11 (No Silent Failures): run scans concurrently WITHOUT
+        # return_exceptions=True.  Each individual scan catches its own
+        # exceptions.  If a scan task raises, asyncio.gather will propagate
+        # it — the outer try/except in _scan_loop() handles it.
+        from backend.config import SCAN_CONCURRENCY
+        _scan_sem = self._scan_semaphore or asyncio.Semaphore(SCAN_CONCURRENCY)
 
         async def _scan_with_limit(symbol, tf):
-            async with semaphore:
+            async with _scan_sem:
                 try:
                     return await scan(symbol, tf)
                 except Exception as e:
-                    logger.warning(f"[scan] Error {symbol} {tf}: {e}")
+                    logger.warning(f"[scan] {symbol} {tf}: scan raised {e}")
                     return None
 
         results = await asyncio.gather(
             *[_scan_with_limit(sym, tf) for sym, tf in scan_tasks],
-            return_exceptions=True
         )
 
         for (symbol, tf), result in zip(scan_tasks, results):
@@ -190,6 +195,20 @@ class Scanner:
                              f"tier={tier} — filtered out")
                 signal_store.mark_scanned(symbol, tf)
                 continue
+
+            # Phase 12 (Signal Provenance): attach lineage fields.
+            # These link the signal to the DecisionSnapshot and config that
+            # produced it, enabling full reconstruction later.
+            snap_id = state_store.last_snapshot_id
+            from backend.decision_snapshot import _CODE_VERSION, _CONFIG_HASH
+            signal["snapshot_id"] = snap_id
+            signal["code_version"] = _CODE_VERSION
+            signal["config_hash"] = _CONFIG_HASH
+            signal["d1_evidence_ids"] = []
+            signal["alignment_id"] = ""
+            signal["trade_plan_id"] = ""
+            signal["risk_decision_id"] = ""
+            signal["created_at"] = datetime.now(timezone.utc).isoformat()
 
             if signal_store.add(signal):
                 new_signals.append(signal)
@@ -461,7 +480,19 @@ class Scanner:
         signal_store.signals.clear()
         signal_store.fvg_ledger.clear()
         signal_store.scanned_recently.clear()
-        logger.info(f"[restart] Cleared {cleared_signals} signals + FVG ledger + scan cache")
+
+        # Phase 20: Restart/Recovery — also clear StateStore tiers + evidence
+        from backend.state_store import state_store
+        from backend.evidence_store import evidence_store
+        await state_store.clear(preserve_snapshot_id=False)
+        # Evidence is regenerated each cycle — wipe to prevent stale cross-snapshot evidence
+        ev_stats = evidence_store.get_stats()
+        if ev_stats["total_records"] > 0:
+            logger.info(f"[restart] Evidence store had {ev_stats['total_records']} records — clearing")
+            evidence_store._records.clear()
+            evidence_store._snapshot_timestamps.clear()
+
+        logger.info(f"[restart] Cleared {cleared_signals} signals + FVG ledger + scan cache + state_store + evidence")
 
         # 3. Cancel WS connections and close session
         ws_tasks = getattr(market_data, "_ws_tasks", [])

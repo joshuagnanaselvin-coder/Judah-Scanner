@@ -465,6 +465,21 @@ class FusionEngine:
         alignment["alignment_score"] = int(alignment_result.score * 20)  # back-compat (0–20)
         alignment_level = alignment_result.level.value
 
+        # ── Phase 12: Signal Provenance — collect D1/D2 evidence IDs ─────
+        snap_id = state_store.last_snapshot_id or ""
+        from backend.decision_snapshot import _CODE_VERSION, _CONFIG_HASH
+        d1_evidence_ids = [
+            r.evidence_id for r in
+            __import__("backend.evidence_store", fromlist=["evidence_store"]).evidence_store
+            .get_d1_evidence(snap_id, coin)
+        ]
+        d2_evidence_ids = [
+            r.evidence_id for r in
+            __import__("backend.evidence_store", fromlist=["evidence_store"]).evidence_store
+            .get_d2_evidence(snap_id, coin)
+        ]
+        alignment_id = f"aln-{snap_id[:8]}-{coin[:6]}" if snap_id else ""
+
         # ── SSL/BSL levels ────────────────────────────────────────────
         liq_pools = raw.get("liquidity_pools", {}) or {}
         d2_structure["ssl"] = _extract_ssl(liq_pools, getattr(d2, 'direction', 'BULLISH'))
@@ -492,10 +507,17 @@ class FusionEngine:
                     d2.rr2 = round(abs(d2.tp2 - d2_entry) / new_risk, 2)
 
         # ── Build package ─────────────────────────────────────────────
-        snap_id = state_store.last_snapshot_id or ""
         package = {
             "snapshot_id": snap_id,
             "signal_id": getattr(d2, 'signal_id', ''),
+            # Phase 12: Signal Provenance chain
+            "code_version": _CODE_VERSION,
+            "config_hash": _CONFIG_HASH,
+            "d1_evidence_ids": d1_evidence_ids,
+            "d2_evidence_ids": d2_evidence_ids,
+            "alignment_id": alignment_id,
+            "trade_plan_id": "",    # populated after trade_plan_authority.propose()
+            "risk_decision_id": "", # populated after risk_authority.review()
             "coin": coin,
             "timeframe": "15M",
             "direction": getattr(d2, 'direction', 'BULLISH'),
@@ -590,7 +612,13 @@ class FusionEngine:
         # ── Risk Authority (independent risk approval) ────────────────
         risk_decision = risk_authority.review(plan, correlation_group=coin[:3])
 
+        # Phase 12: Wire plan/risk decision IDs back into provenance chain
+        plan_id = getattr(plan, 'plan_id', '') or f"plan-{snap_id[:8]}-{coin[:6]}"
+        risk_id = getattr(risk_decision, 'decision_id', '') or f"risk-{snap_id[:8]}-{coin[:6]}"
+
         package["trade_plan"] = plan.to_dict()
+        package["trade_plan_id"] = plan_id
+        package["risk_decision_id"] = risk_id
         package["risk_decision"] = {
             "verdict": risk_decision.verdict.value,
             "approved_size": risk_decision.approved_size,
