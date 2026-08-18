@@ -23,6 +23,11 @@ from backend.config import (
     TYPE_B_MIN_D2_SCORE,
     TYPE_B_ENTRY_PRECISION_GATE,
     IGNORE_MIN_SCORE,
+    D3_D1_SNIPER_THRESHOLD,
+    D3_D2_SNIPER_THRESHOLD,
+    D3_D1_APPROVED_THRESHOLD,
+    D3_D2_MODERATE_THRESHOLD,
+    D3_TYPE_D_D1_THRESHOLD,
 )
 from backend.state_store import state_store
 from backend.ws_hub import broadcast, get_initial_payload
