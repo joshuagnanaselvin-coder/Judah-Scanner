@@ -371,6 +371,7 @@ async def _log_ltf_evidence_async(symbol: str, timeframe: str, signal: dict,
     """Append EvidenceRecords for D2 structural findings to evidence_store."""
     from backend.evidence_store import evidence_store, next_evidence_id
     from backend.evidence_record import EvidenceCategory, EvidenceStrength
+    from backend.state_store import state_store
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc).timestamp()
