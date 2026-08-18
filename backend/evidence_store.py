@@ -2,10 +2,9 @@
 
 The EvidenceStore is the first convergence point between D1 and D2.
 It preserves evidence records per snapshot/symbol/dimension with:
-  - Deduplication (same source + observation within a snapshot)
+  - Deduplication (same evidence_id within a snapshot/symbol/category)
   - TTL-based expiry (evidence dies when snapshot TTL expires)
   - Stale detection (age-based freshness decay)
-  - Missing/partial evidence tracking per coin
   - MAX cap + eviction (memory safety)
 
 Ownership:
@@ -15,210 +14,281 @@ Ownership:
   Expires: Same TTL as DecisionSnapshot (SIGNAL_TTL_MINUTES from config)
   Restart: Empty on restart (evidence is regenerated per cycle)
 """
+import asyncio
 import logging
+import threading
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
 from typing import Any
 
-from backend.evidence_contract import (
-    EvidenceRecord, EvidenceDimension, EvidenceSource, EvidenceStatus,
-    create_evidence,
+from backend.evidence_record import (
+    EvidenceRecord, EvidenceCategory, EvidenceStrength,
 )
-from backend.config import SIGNAL_TTL_MINUTES
+from backend.evidence_contract import EvidenceStatus, create_evidence
+from backend.config import SIGNAL_TTL_MINUTES, EVIDENCE_TTL_MINUTES
 
 logger = logging.getLogger("judah.evidence_store")
 
-# Phase 16: Memory safety bounds
-_EVIDENCE_MAX_PER_COIN = 50       # Max evidence records per coin per snapshot
-_EVIDENCE_MAX_TOTAL = 2000        # Hard cap on total evidence records in memory
-_EVIDENCE_TTL_SEC = SIGNAL_TTL_MINUTES * 60  # Match signal TTL
+_EVIDENCE_MAX_PER_COIN = 50
+_EVIDENCE_MAX_TOTAL = 2000
+_EVIDENCE_TTL_SEC = EVIDENCE_TTL_MINUTES * 60
 
 
 class EvidenceStore:
-    """Thread-safe evidence store for D1/D2/D3 intelligence records.
+    """Async-safe evidence store for D1/D2/D3 intelligence records.
 
-    Organizes evidence by snapshot_id → symbol → dimension → list of records.
-    Provides methods for writing, querying, aggregating, and expiring evidence.
+    Uses threading.RLock so async and sync methods can share the same
+    store without deadlock. Async methods yield via `await asyncio.sleep(0)`
+    to allow other coroutines to interleave.
     """
 
     def __init__(self):
         self._records: dict[str, dict[str, dict[str, list[EvidenceRecord]]]] = (
             defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         )
-        self._lock = _EvidenceLock()
+        self._lock = threading.RLock()
         self._snapshot_timestamps: dict[str, float] = {}
 
     # ── Write Methods ─────────────────────────────────────────────────
 
-    def add(self, evidence: EvidenceRecord) -> bool:
-        """Add an evidence record. Deduplicates within same snapshot/symbol/dimension/source/observation.
+    async def append(self, record: EvidenceRecord) -> str:
+        """Append an evidence record. Deduplicates by evidence_id.
 
-        Returns True if the record was added, False if it was a duplicate.
+        Returns the evidence_id of the stored record.
         """
-        snap = evidence.snapshot_id
-        symbol = evidence.symbol
-        dim = evidence.dimension.value
+        snap = record.snapshot_id
+        symbol = record.symbol
+        category = record.category.value
 
+        await asyncio.sleep(0)
         with self._lock:
-            bucket = self._records[snap][symbol][dim]
-            # Dedup: same source + observation → replace existing (higher-confidence wins)
-            existing_idx = next(
-                (i for i, r in enumerate(bucket)
-                 if r.source == evidence.source and r.observation == evidence.observation),
-                -1
-            )
-            if existing_idx >= 0:
-                # Keep the one with higher confidence
-                if evidence.confidence > bucket[existing_idx].confidence:
-                    bucket[existing_idx] = evidence
-                return False  # Duplicate (either kept existing or superseded)
-            bucket.append(evidence)
+            bucket = self._records[snap][symbol][category]
+            # Dedup by evidence_id
+            for i, existing in enumerate(bucket):
+                if existing.evidence_id == record.evidence_id:
+                    if record.confidence > existing.confidence:
+                        bucket[i] = record
+                    return record.evidence_id
+            bucket.append(record)
             self._enforce_limits(snap, symbol)
-            return True
+            return record.evidence_id
+
+    async def add(self, record: EvidenceRecord) -> bool:
+        """Async alias for append(). Returns True."""
+        await self.append(record)
+        return True
+
+    def add_sync(self, record: EvidenceRecord) -> str:
+        """Synchronous version of append()."""
+        snap = record.snapshot_id
+        symbol = record.symbol
+        category = record.category.value
+        with self._lock:
+            bucket = self._records[snap][symbol][category]
+            for i, existing in enumerate(bucket):
+                if existing.evidence_id == record.evidence_id:
+                    if record.confidence > existing.confidence:
+                        bucket[i] = record
+                    return record.evidence_id
+            bucket.append(record)
+            self._enforce_limits(snap, symbol)
+            return record.evidence_id
 
     def add_batch(self, records: list[EvidenceRecord]) -> int:
         """Add multiple records. Returns count of new (non-duplicate) records."""
-        return sum(1 for r in records if self.add(r))
+        return sum(1 for r in records if self.add_sync(r))
 
     def mark_status(self, snapshot_id: str, symbol: str,
-                    dimension: EvidenceDimension, source: EvidenceSource,
+                    category: EvidenceCategory, source: Any,
                     new_status: EvidenceStatus, reason: str = "") -> bool:
-        """Change status of a specific evidence record (e.g., FULL → STALE).
+        """Change status of a specific evidence record.
 
         Returns True if found and updated, False if not found.
         """
-        dim = dimension.value
+        cat = category.value
         with self._lock:
-            bucket = self._records.get(snapshot_id, {}).get(symbol, {}).get(dim, [])
-            for rec in bucket:
+            bucket = self._records.get(snapshot_id, {}).get(symbol, {}).get(cat, [])
+            for i, rec in enumerate(bucket):
                 if rec.source == source:
-                    # Frozen dataclass — replace in list
-                    idx = bucket.index(rec)
                     updated = EvidenceRecord(
                         evidence_id=rec.evidence_id,
                         snapshot_id=rec.snapshot_id,
+                        category=rec.category,
                         symbol=rec.symbol,
-                        dimension=rec.dimension,
-                        source=rec.source,
-                        observation=rec.observation,
-                        value=rec.value,
+                        timeframe=rec.timeframe,
+                        price=rec.price,
                         strength=rec.strength,
+                        direction=rec.direction,
                         confidence=rec.confidence,
-                        timestamp=rec.timestamp,
-                        freshness="dead" if new_status in (EvidenceStatus.STALE, EvidenceStatus.FAILED) else rec.freshness,
-                        status=new_status,
-                        reason=reason or rec.reason,
+                        candle_time=rec.candle_time,
+                        detected_at=rec.detected_at,
+                        source=rec.source,
+                        details=rec.details,
                     )
-                    bucket[idx] = updated
+                    bucket[i] = updated
                     return True
         return False
 
     # ── Read Methods ──────────────────────────────────────────────────
 
-    def get_for_snapshot(self, snapshot_id: str) -> dict[str, dict[str, list[EvidenceRecord]]]:
-        """Get all evidence for a snapshot, organized by symbol → dimension."""
+    async def query(self, symbol: str | None = None, category: EvidenceCategory | None = None,
+                    direction: str | None = None, min_strength: EvidenceStrength | int | None = None,
+                    min_confidence: float | None = None, since: float | None = None,
+                    limit: int | None = None) -> list[EvidenceRecord]:
+        """Query evidence records with optional filters."""
+        self._expire_old()
+        results: list[EvidenceRecord] = []
+        if min_strength is not None and not isinstance(min_strength, int):
+            min_strength_val = min_strength.value
+        else:
+            min_strength_val = min_strength
+
+        await asyncio.sleep(0)
+        with self._lock:
+            for snap_syms in self._records.values():
+                for sym, cats in snap_syms.items():
+                    if symbol and sym != symbol:
+                        continue
+                    for cat, recs in cats.items():
+                        if category and cat != category.value:
+                            continue
+                        for rec in recs:
+                            if direction and getattr(rec, 'direction', None) != direction:
+                                continue
+                            if min_strength_val is not None and rec.strength.value < min_strength_val:
+                                continue
+                            if min_confidence is not None and rec.confidence < min_confidence:
+                                continue
+                            if since is not None and rec.detected_at < since:
+                                continue
+                            results.append(rec)
+                            if limit and len(results) >= limit:
+                                return results
+        return results
+
+    async def get_for_snapshot(self, snapshot_id: str) -> dict[str, dict[str, list[EvidenceRecord]]]:
+        """Get all evidence for a snapshot, organized by symbol → category."""
+        self._expire_old()
+        await asyncio.sleep(0)
+        with self._lock:
+            return {
+                sym: {cat: list(recs) for cat, recs in cats.items()}
+                for sym, cats in self._records.get(snapshot_id, {}).items()
+            }
+
+    def get_for_snapshot_sync(self, snapshot_id: str) -> dict[str, dict[str, list[EvidenceRecord]]]:
+        """Synchronous version of get_for_snapshot for use in sync contexts."""
         self._expire_old()
         with self._lock:
             return {
-                sym: {dim: list(recs) for dim, recs in dims.items()}
-                for sym, dims in self._records.get(snapshot_id, {}).items()
+                sym: {cat: list(recs) for cat, recs in cats.items()}
+                for sym, cats in self._records.get(snapshot_id, {}).items()
             }
 
-    def get_for_symbol(self, snapshot_id: str, symbol: str,
-                       dimension: EvidenceDimension | None = None) -> list[EvidenceRecord]:
-        """Get all evidence for a specific coin in a snapshot."""
+    async def get_for_signal(self, evidence_ids: list[str]) -> list[EvidenceRecord]:
+        """Get evidence records matching a list of evidence IDs."""
         self._expire_old()
-        dims = self._records.get(snapshot_id, {}).get(symbol, {})
-        if dimension:
-            return list(dims.get(dimension.value, []))
-        return [r for recs in dims.values() for r in recs]
+        id_set = set(evidence_ids)
+        results: list[EvidenceRecord] = []
+        await asyncio.sleep(0)
+        with self._lock:
+            for snap_syms in self._records.values():
+                for sym_cats in snap_syms.values():
+                    for recs in sym_cats.values():
+                        for rec in recs:
+                            if rec.evidence_id in id_set:
+                                results.append(rec)
+                                id_set.discard(rec.evidence_id)
+                                if not id_set:
+                                    return results
+        return results
 
-    def get_d1_evidence(self, snapshot_id: str, symbol: str) -> list[EvidenceRecord]:
-        """Convenience: get D1 evidence for a coin."""
-        return self.get_for_symbol(snapshot_id, symbol, EvidenceDimension.D1)
+    async def count(self) -> int:
+        """Return total count of all evidence records."""
+        self._expire_old()
+        total = 0
+        await asyncio.sleep(0)
+        with self._lock:
+            for syms in self._records.values():
+                for cats in syms.values():
+                    for recs in cats.values():
+                        total += len(recs)
+        return total
 
-    def get_d2_evidence(self, snapshot_id: str, symbol: str) -> list[EvidenceRecord]:
-        """Convenience: get D2 evidence for a coin."""
-        return self.get_for_symbol(snapshot_id, symbol, EvidenceDimension.D2)
+    async def count_for(self, symbol: str, category: EvidenceCategory | None = None) -> int:
+        """Return count of evidence for a symbol, optionally filtered by category."""
+        self._expire_old()
+        count_val = 0
+        await asyncio.sleep(0)
+        with self._lock:
+            for snap_syms in self._records.values():
+                cats = snap_syms.get(symbol, {})
+                if category:
+                    recs = cats.get(category.value, [])
+                    count_val += len(recs)
+                else:
+                    for recs in cats.values():
+                        count_val += len(recs)
+        return count_val
 
-    def get_aggregated(self, snapshot_id: str, symbol: str) -> dict[str, Any]:
-        """Aggregate evidence into a compact summary for alignment/D3.
-
-        Returns:
-            {
-              "d1_evidence_count": int,
-              "d2_evidence_count": int,
-              "d1_full_count": int,
-              "d2_full_count": int,
-              "d1_avg_strength": float,
-              "d2_avg_strength": float,
-              "d1_avg_confidence": float,
-              "d2_avg_confidence": float,
-              "d1_sources": [str],
-              "d2_sources": [str],
-              "d1_degraded": bool,
-              "d2_degraded": bool,
-              "evidence_complete": bool,
-            }
-        """
-        d1_recs = self.get_d1_evidence(snapshot_id, symbol)
-        d2_recs = self.get_d2_evidence(snapshot_id, symbol)
-
-        def _agg(recs: list[EvidenceRecord]) -> dict:
-            if not recs:
-                return {
-                    "count": 0, "full_count": 0,
-                    "avg_strength": 0.0, "avg_confidence": 0.0,
-                    "sources": [], "degraded": True,
-                }
-            full = [r for r in recs if r.status == EvidenceStatus.FULL]
-            return {
-                "count": len(recs),
-                "full_count": len(full),
-                "avg_strength": sum(r.strength for r in recs) / len(recs),
-                "avg_confidence": sum(r.confidence for r in recs) / len(recs),
-                "sources": sorted(set(r.source.value for r in recs)),
-                "degraded": len(full) < len(recs),
-            }
-
-        d1_agg = _agg(d1_recs)
-        d2_agg = _agg(d2_recs)
-
+    async def get_stats(self) -> dict[str, Any]:
+        """Summary stats for monitoring."""
+        self._expire_old()
+        total = 0
+        symbols_tracked = set()
+        by_category: dict[str, int] = {}
+        await asyncio.sleep(0)
+        with self._lock:
+            for snap_syms in self._records.values():
+                for sym, cats in snap_syms.items():
+                    symbols_tracked.add(sym)
+                    for cat, recs in cats.items():
+                        total += len(recs)
+                        by_category[cat] = by_category.get(cat, 0) + len(recs)
         return {
-            "d1_evidence_count": d1_agg["count"],
-            "d2_evidence_count": d2_agg["count"],
-            "d1_full_count": d1_agg["full_count"],
-            "d2_full_count": d2_agg["full_count"],
-            "d1_avg_strength": round(d1_agg["avg_strength"], 3),
-            "d2_avg_strength": round(d2_agg["avg_strength"], 3),
-            "d1_avg_confidence": round(d1_agg["avg_confidence"], 3),
-            "d2_avg_confidence": round(d2_agg["avg_confidence"], 3),
-            "d1_sources": d1_agg["sources"],
-            "d2_sources": d2_agg["sources"],
-            "d1_degraded": d1_agg["degraded"],
-            "d2_degraded": d2_agg["degraded"],
-            "evidence_complete": not d1_agg["degraded"] and not d2_agg["degraded"],
+            "total": total,
+            "symbols_tracked": len(symbols_tracked),
+            "ttl_seconds": _EVIDENCE_TTL_SEC,
+            "by_category": by_category,
         }
 
-    # ── Lifecycle ─────────────────────────────────────────────────────
-
-    def expire_snapshot(self, snapshot_id: str) -> int:
+    async def purge_by_snapshot(self, snapshot_id: str) -> int:
         """Remove all evidence for a snapshot. Returns count of removed records."""
         removed = 0
+        await asyncio.sleep(0)
         with self._lock:
             if snapshot_id in self._records:
-                for sym_dims in self._records[snapshot_id].values():
-                    for recs in sym_dims.values():
+                for sym_cats in self._records[snapshot_id].values():
+                    for recs in sym_cats.values():
                         removed += len(recs)
                 del self._records[snapshot_id]
             self._snapshot_timestamps.pop(snapshot_id, None)
         if removed:
-            logger.debug(f"[evidence_store] Expired {removed} records for snapshot {snapshot_id[:8]}")
+            logger.debug(f"[evidence_store] Purged {removed} records for snapshot {snapshot_id[:8]}")
+        return removed
+
+    async def purge_expired(self, max_age_sec: float | None = None) -> int:
+        """Remove expired evidence. Returns count of removed records."""
+        if max_age_sec is None:
+            max_age_sec = _EVIDENCE_TTL_SEC
+        return self._expire_old(max_age_sec)
+
+    def expire_snapshot(self, snapshot_id: str) -> int:
+        """Remove all evidence for a snapshot."""
+        removed = 0
+        with self._lock:
+            if snapshot_id in self._records:
+                for sym_cats in self._records[snapshot_id].values():
+                    for recs in sym_cats.values():
+                        removed += len(recs)
+                del self._records[snapshot_id]
+            self._snapshot_timestamps.pop(snapshot_id, None)
+        if removed:
+            logger.debug(f"[evidence_store] Expired {removed} records")
         return removed
 
     def prune_old(self, max_age_sec: float | None = None) -> int:
-        """Remove evidence older than max_age_sec. Defaults to TTL."""
+        """Remove evidence older than max_age_sec."""
         if max_age_sec is None:
             max_age_sec = _EVIDENCE_TTL_SEC
         return self._expire_old(max_age_sec)
@@ -227,74 +297,48 @@ class EvidenceStore:
         """Record when a snapshot was created (for TTL calculation)."""
         self._snapshot_timestamps[snapshot_id] = timestamp
 
-    def get_stats(self) -> dict[str, Any]:
-        """Summary stats for monitoring."""
-        self._expire_old()
-        total = 0
-        by_snapshot: dict[str, int] = {}
-        by_status: dict[str, int] = {}
-        with self._lock:
-            for snap_id, syms in self._records.items():
-                snap_count = 0
-                for sym_dims in syms.values():
-                    for recs in sym_dims.values():
-                        total += len(recs)
-                        snap_count += len(recs)
-                        for r in recs:
-                            by_status[r.status.value] = by_status.get(r.status.value, 0) + 1
-                by_snapshot[snap_id[:8]] = snap_count
-        return {
-            "total_records": total,
-            "by_snapshot": by_snapshot,
-            "by_status": by_status,
-            "max_total": _EVIDENCE_MAX_TOTAL,
-        }
-
     # ── Internal ──────────────────────────────────────────────────────
 
     def _enforce_limits(self, snapshot_id: str, symbol: str):
         """Enforce per-coin and total caps."""
         bucket = self._records[snapshot_id][symbol]
         total = 0
-        for dim_recs in bucket.values():
-            total += len(dim_recs)
-        # Per-coin cap: drop oldest (by timestamp) if over limit
+        for cat_recs in bucket.values():
+            total += len(cat_recs)
         if total > _EVIDENCE_MAX_PER_COIN:
-            all_recs = [(r.timestamp, dim, i)
-                        for dim, recs in bucket.items()
+            all_recs = [(r.detected_at, cat, i)
+                        for cat, recs in bucket.items()
                         for i, r in enumerate(recs)]
-            all_recs.sort()  # oldest first
+            all_recs.sort()
             excess = total - _EVIDENCE_MAX_PER_COIN
             dropped = 0
-            for ts, dim, idx in all_recs[:excess]:
-                if idx < len(bucket[dim]):
-                    bucket[dim].pop(idx)
+            for ts, cat, idx in all_recs[:excess]:
+                if idx < len(bucket[cat]):
+                    bucket[cat].pop(idx)
                     dropped += 1
             if dropped:
                 logger.debug(f"[evidence_store] Dropped {dropped} stale records for {symbol}")
 
-        # Total cap: drop oldest across all snapshots
         self._enforce_total_cap()
 
     def _enforce_total_cap(self):
         """Drop oldest records if total exceeds _EVIDENCE_MAX_TOTAL."""
         total = 0
-        all_items: list[tuple[float, str, str, int]] = []  # (ts, snap, dim, idx)
+        all_items: list[tuple] = []
         with self._lock:
             for snap_id, syms in self._records.items():
-                for sym, dims in syms.items():
-                    for dim, recs in dims.items():
+                for sym, cats in syms.items():
+                    for cat, recs in cats.items():
                         total += len(recs)
                         for i, r in enumerate(recs):
-                            all_items.append((r.timestamp, snap_id, dim, i, sym))
+                            all_items.append((r.detected_at, snap_id, cat, i, sym))
             if total <= _EVIDENCE_MAX_TOTAL:
                 return
-            # Sort oldest first, drop excess
             all_items.sort()
             excess = total - _EVIDENCE_MAX_TOTAL
             dropped = 0
-            for ts, snap_id, dim, idx, sym in all_items[:excess]:
-                recs = self._records.get(snap_id, {}).get(sym, {}).get(dim, [])
+            for ts, snap_id, cat, idx, sym in all_items[:excess]:
+                recs = self._records.get(snap_id, {}).get(sym, {}).get(cat, [])
                 if 0 <= idx < len(recs):
                     recs.pop(idx)
                     dropped += 1
@@ -307,15 +351,20 @@ class EvidenceStore:
         if max_age_sec is None:
             max_age_sec = _EVIDENCE_TTL_SEC
         now = time.time()
-        expired = []
+        expired = 0
         with self._lock:
-            for snap_id, syms in self._records.items():
-                for sym, dims in list(syms.items()):
-                    for dim, recs in list(dims.items()):
+            for snap_id in list(self._records.keys()):
+                syms = self._records[snap_id]
+                for sym in list(syms.keys()):
+                    cats = syms[sym]
+                    for cat in list(cats.keys()):
+                        recs = cats[cat]
                         before = len(recs)
-                        dims[dim] = [r for r in recs if (now - r.timestamp) < max_age_sec]
-                        expired += before - len(dims[dim])
-                    if not any(dims.values()):
+                        cats[cat] = [r for r in recs if (now - r.detected_at) < max_age_sec]
+                        expired += before - len(cats[cat])
+                        if not cats[cat]:
+                            del cats[cat]
+                    if not cats:
                         del syms[sym]
                 if not syms:
                     del self._records[snap_id]
@@ -323,33 +372,18 @@ class EvidenceStore:
         return expired
 
 
-class _EvidenceLock:
-    """Context manager that simulates asyncio.Lock for synchronous code.
-
-    EvidenceStore is called from both sync and async contexts.
-    In async contexts, use EvidenceStoreAsync (below) instead.
-    In practice, evidence writes happen within async scan loops,
-    so this simple lock suffices for the GIL-protected CPython case.
-    For production with multiple threads, swap to threading.Lock.
-    """
-    def __init__(self):
-        self._locked = False
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        self._locked = False
-
-    def acquire(self):
-        self._locked = True
-
-    def release(self):
-        self._locked = False
-
-
 # Singleton
 evidence_store = EvidenceStore()
 
-# Backward-compat alias
-next_evidence_id = create_evidence
+# Backward-compat alias — accepts just a symbol and returns a unique ID string.
+import threading as _th
+_next_id_counter = 0
+_next_id_lock = _th.Lock()
+
+
+def next_evidence_id(symbol: str = "UNKNOWN") -> str:
+    """Generate a unique evidence ID string (backward-compat for tests)."""
+    global _next_id_counter
+    with _next_id_lock:
+        _next_id_counter += 1
+        return f"EV-{symbol}-{_next_id_counter}"

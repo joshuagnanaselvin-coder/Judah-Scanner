@@ -3,8 +3,10 @@
   "configurations": [
     {
       "name": "Judah Scanner",
-      "url": "http://localhost:8001/",
-      "port": 8001
+      "runtimeExecutable": "venv/Scripts/uvicorn.exe",
+      "runtimeArgs": ["backend.main:app", "--host", "0.0.0.0", "--port", "8001"],
+      "port": 8001,
+      "url": "http://localhost:8001/"
     }
   ]
 }

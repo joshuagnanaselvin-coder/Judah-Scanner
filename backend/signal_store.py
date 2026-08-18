@@ -1,4 +1,16 @@
-"""Signal storage with freshness tracking, FVG ledger, TTL cleanup, and revalidation."""
+"""Signal storage with freshness tracking, FVG ledger, TTL cleanup, and revalidation.
+
+Phase 15 — State Ownership
+===========================
+Ownership:
+  Writer:  D1 scanner (backend/scanner.py) — _run_batch_scan(), revalidate()
+  Reader:  D3 fusion (signal_fusion.py), API endpoints, ws_hub, performance_tracker
+  Valid:   After each D1 scan cycle. TTL = SIGNAL_TTL_MINUTES (15min).
+  Expires: Signal TTL — expired signals become TIMEOUT outcomes.
+  Restart: Wiped on /api/restart, otherwise survive across cycles.
+  Max:     MAX_SIGNALS = 200 per symbol_engine key.
+           FVG ledger: 20 entries per symbol, 100 candle history max.
+"""
 import logging
 from datetime import datetime, timezone
 from backend.config import (

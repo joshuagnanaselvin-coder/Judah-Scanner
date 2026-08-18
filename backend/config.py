@@ -3,6 +3,7 @@
 # === SCANNER ===
 SCAN_INTERVAL_SECONDS = 15        # Full D1 scan cycle (candidate filter + CRT/SMC pipeline)
 SIGNAL_TTL_MINUTES = 15           # D1 signal expiry in state_store
+EVIDENCE_TTL_MINUTES = 240        # Evidence expiry in evidence_store (4 hours)
 MAX_SIGNALS = 200
 BOOTSTRAP_CANDLES = 50            # Only need ~50 candles for indicator lookbacks (was 200)
 SCAN_CONCURRENCY = 20             # Max parallel CRT+SMC scans per cycle
