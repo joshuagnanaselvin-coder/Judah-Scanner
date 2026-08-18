@@ -68,11 +68,12 @@ SMC_SCORE_LIQUIDITY = 5
 
 # === TIERS (fixed — no sensitivity modes) ===
 # Same thresholds for D1 and D2 scoring.
-TIER_SNIPER_SCORE = 85       # SNIPER >= 85: highest probability (top 10%)
-TIER_OPPORTUNITY_SCORE = 65  # OPPORTUNITY >= 65: strong setups (top 30%)
-TIER_WATCH_SCORE = 40        # WATCH >= 40: partial confirmation
+# Lowered to match realistic scoring ranges (CRT 10-20, SMC 0-20, Flow 0-15, Momentum 0-15 = 45-70 base)
+TIER_SNIPER_SCORE = 55       # SNIPER >= 55: highest probability (strong setups)
+TIER_OPPORTUNITY_SCORE = 38  # OPPORTUNITY >= 38: strong setups (solid confirmation)
+TIER_WATCH_SCORE = 22        # WATCH >= 22: partial confirmation
 TIER_WEAK_SCORE = 10        # WEAK >= 10: low-confidence but viable setups
-IGNORE_MIN_SCORE = 20        # Below this: not shown (was 60 — way too aggressive)
+IGNORE_MIN_SCORE = 10        # Below this: not shown (was 60 — way too aggressive)
 MIN_RR = 1.5
 
 # === 100-POINT SCORING WEIGHTS ===
@@ -194,9 +195,19 @@ D2_SIGNAL_TTL_MINUTES = 15
 D2_SCAN_INTERVAL_SECONDS = 5
 MAX_D2_SIGNALS = 200              # Cap D2 signal store (matches D1 cap)
 
+# === D3 FUSION THRESHOLDS ===
+# Used by signal_fusion.classify_signal_type for D1/D2 classification.
+# Tier thresholds (TIER_SNIPER_SCORE etc.) are the floor values;
+# these add margin for cross-dimension signal classification.
+D3_D1_SNIPER_THRESHOLD = 55       # D1 score >= this → SNIPER tier for Type C
+D3_D2_SNIPER_THRESHOLD = 55       # D2 score >= this → SNIPER tier for Type C
+D3_D1_APPROVED_THRESHOLD = 38     # D1 score >= this → approved (SNIPER/OPP) for Type A
+D3_D2_MODERATE_THRESHOLD = 22     # D2 score >= this → moderate confirmation for Type A
+D3_TYPE_D_D1_THRESHOLD = 38       # D1 score >= this for Type D (D1 approved, D2 not aligned)
+
 # === TYPE B MINIMUMS ===
-TYPE_B_MIN_D2_SCORE = 72           # minimum total D2 score (was 65)
-TYPE_B_ENTRY_PRECISION_GATE = 16   # minimum Entry Precision sub-score out of 20 (was 18)
+TYPE_B_MIN_D2_SCORE = 22          # minimum total D2 score (lowered from 38 — catches WATCH D2)
+TYPE_B_ENTRY_PRECISION_GATE = 10   # minimum Entry Precision sub-score out of 20 (was 16)
 
 # === D2 MINIMUM THRESHOLDS ===
 D2_MIN_ENTRY_PRECISION = 10        # min sub-score out of 20 (lowered from 12)

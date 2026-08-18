@@ -109,15 +109,15 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
     if opp_count >= 2:
         flaws.append(f"delta_opposing_{opp_count}_candles")
 
-    # Flaw 3: Volume < 1.0x avg on key candle = disqualified
+    # Flaw 3: Volume < 0.3x avg on key candle = low conviction
     if candles and len(candles) >= 3:
         closed = candles  # Use all candles (dict-based in tests, object-based in production)
         if len(closed) >= 2:
             vol_avg = sum(_get(c, 'volume') for c in closed[-20:]) / min(len(closed[-20:]), 20)
             last_vol = _get(closed[-1], 'volume')
-            # Volume must be at least 1.0x avg on key candle.
-            # Threshold tightened to <1.0x to catch low-conviction entries.
-            if vol_avg > 0 and last_vol < vol_avg:
+            # Volume must be at least 0.3x avg on key candle.
+            # Below 30% avg = low conviction entry (was <1.0x = way too strict, blocking all signals)
+            if vol_avg > 0 and last_vol < vol_avg * 0.3:
                 flaws.append("low_volume_key_candle")
 
     # Flaw 4: Entry > 2% past OB/FVG zone
@@ -305,6 +305,7 @@ async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
 
         # Entry precision (CRT score serves as the entry timing component)
         entry_precision = crt.get("crt_score", 0)
+        signal["entry_precision"] = entry_precision
         signal["entry_precision_raw"] = entry_precision
 
         # Enforce minimum sub-score gates

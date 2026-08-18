@@ -51,10 +51,10 @@ class TestSignalTypeClassification:
         assert sig == "C", f"Expected C, got {sig}"
 
     def test_type_a_d1_approved_d2_moderate_aligned(self):
-        """Type A: D1 >= 65 AND D2 >= 50 + aligned."""
+        """Type A: D1 approved (>=38) AND D2 >= 22 + aligned."""
         sig = classify_signal_type(
-            d1_tier="SNIPER", d1_score=72,
-            d2_tier="OPPORTUNITY", d2_score=60,
+            d1_tier="OPPORTUNITY", d1_score=60,
+            d2_tier="WATCH", d2_score=50,
             d1_direction="BULLISH", d2_direction="BULLISH",
         )
         assert sig == "A", f"Expected A, got {sig}"
@@ -70,22 +70,22 @@ class TestSignalTypeClassification:
         assert sig == "B", f"Expected B, got {sig}"
 
     def test_type_b_blocks_when_nascent_false(self):
-        """Type B must have nascent_move=True."""
+        """Type B for WATCH-tier D2 (score < 38) must have nascent_move=True."""
         sig = classify_signal_type(
             d1_tier="REJECTED", d1_score=25,
-            d2_tier="SNIPER", d2_score=82,
+            d2_tier="WATCH", d2_score=30,  # Below OPPORTUNITY (38)
             d1_direction="", d2_direction="BULLISH",
             nascent_move=False, entry_precision=20.0,
         )
-        assert sig is None, f"Expected None (nascent gate), got {sig}"
+        assert sig is None, f"Expected None (WATCH D2 + no nascent), got {sig}"
 
     def test_type_b_blocks_when_ep_too_low(self):
-        """Type B must have entry_precision >= 18."""
+        """Type B must have entry_precision >= TYPE_B_ENTRY_PRECISION_GATE (10)."""
         sig = classify_signal_type(
             d1_tier="REJECTED", d1_score=25,
             d2_tier="SNIPER", d2_score=82,
             d1_direction="", d2_direction="BULLISH",
-            nascent_move=True, entry_precision=15.0,
+            nascent_move=True, entry_precision=5.0,
         )
         assert sig is None, f"Expected None (EP gate), got {sig}"
 
@@ -144,20 +144,20 @@ class TestPositionSizing:
 
 class TestTierClassification:
     def test_sniper(self):
-        assert classify_tier(85) == "SNIPER"
+        assert classify_tier(55) == "SNIPER"
         assert classify_tier(95) == "SNIPER"
 
     def test_opportunity(self):
-        assert classify_tier(65) == "OPPORTUNITY"
-        assert classify_tier(84) == "OPPORTUNITY"
+        assert classify_tier(38) == "OPPORTUNITY"
+        assert classify_tier(54) == "OPPORTUNITY"
 
     def test_watch(self):
-        assert classify_tier(40) == "WATCH"
-        assert classify_tier(64) == "WATCH"
+        assert classify_tier(22) == "WATCH"
+        assert classify_tier(37) == "WATCH"
 
     def test_rejected(self):
-        assert classify_tier(25) == "REJECTED"
-        assert classify_tier(39) == "REJECTED"
+        assert classify_tier(10) == "REJECTED"
+        assert classify_tier(21) == "REJECTED"
 
 
 # ========================================================================
@@ -188,11 +188,11 @@ class TestD2FatalFlaws:
         assert any("delta_opposing" in f for f in flaws)
 
     def test_flaw_3_low_volume(self):
-        """Volume < 1.0x avg on key candle = disqualified."""
+        """Volume < 0.3x avg on key candle = disqualified."""
         candles = []
         for _ in range(19):
             candles.append({'close': 100, 'high': 102, 'low': 98, 'volume': 1000, 'open': 99})
-        candles.append({'close': 100, 'high': 102, 'low': 98, 'volume': 500, 'open': 99})  # last = low volume
+        candles.append({'close': 100, 'high': 102, 'low': 98, 'volume': 200, 'open': 99})  # last = 20% of avg
         flaws = _check_d2_fatal_flaws(
             candles=candles,
             smc={'ob': {'low': 97, 'high': 101, 'strength': 3}, 'msb': {'confirmed': True}},
@@ -360,16 +360,16 @@ class TestD2Independence:
         assert TYPE_POSITION_MULT["B"] == 0.35
 
     def test_d2_signal_without_d1_no_nascent(self):
-        """D2 SNIPER with no D1 and no nascent = None (no signal)."""
+        """D2 WATCH with no D1 and no nascent = None (no signal)."""
         d1 = {"tier": "REJECTED", "score": 0, "direction": ""}
 
         sig_type = classify_signal_type(
             d1_tier=d1["tier"], d1_score=d1["score"],
-            d2_tier="SNIPER", d2_score=85,
+            d2_tier="WATCH", d2_score=30,  # Below OPPORTUNITY (38)
             d1_direction=d1["direction"], d2_direction="BULLISH",
-            nascent_move=False, entry_precision=16.0,
+            nascent_move=False, entry_precision=20.0,
         )
-        assert sig_type is None, "Should be None when nascent_move=False"
+        assert sig_type is None, "Should be None when WATCH D2 + no nascent + d2_score < 38"
 
     def test_fusion_engine_has_required_imports(self):
         """Verify the fusion engine module has all required dependencies."""
@@ -401,20 +401,22 @@ class TestTypeBNascentGate:
         assert sig == "B"
 
     def test_type_b_nascent_false(self):
+        """Type B for WATCH D2 (score < 38) without nascent = None."""
         sig = classify_signal_type(
             d1_tier="REJECTED", d1_score=25,
-            d2_tier="SNIPER", d2_score=85,
+            d2_tier="WATCH", d2_score=30,  # Below OPPORTUNITY (38)
             d1_direction="", d2_direction="BULLISH",
             nascent_move=False, entry_precision=18.0,
         )
         assert sig is None
 
-    def test_type_b_ep_below_16(self):
+    def test_type_b_ep_below_gate(self):
+        """Type B must have entry_precision >= TYPE_B_ENTRY_PRECISION_GATE (10)."""
         sig = classify_signal_type(
             d1_tier="REJECTED", d1_score=25,
             d2_tier="SNIPER", d2_score=85,
             d1_direction="", d2_direction="BULLISH",
-            nascent_move=True, entry_precision=14.0,
+            nascent_move=True, entry_precision=5.0,
         )
         assert sig is None
 

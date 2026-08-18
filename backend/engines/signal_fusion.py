@@ -58,15 +58,11 @@ DECAY_TYPE_C = 0.98
 def classify_tier(score: float) -> str:
     """Classify a score into SNIPER / OPPORTUNITY / WATCH / REJECTED.
 
-    Test contract:
-      SNIPER      >= 85
-      OPPORTUNITY >= 65
-      WATCH       >= 40
-      REJECTED    <  40
-
-    TIER_WEAK_SCORE is kept in config for internal scoring logic,
-    but classify_tier collapses WEAK into WATCH so the numeric test contract
-    is clean.
+    Uses thresholds from config.py:
+      SNIPER      >= TIER_SNIPER_SCORE (55)
+      OPPORTUNITY >= TIER_OPPORTUNITY_SCORE (38)
+      WATCH       >= TIER_WATCH_SCORE (22)
+      REJECTED    <  TIER_WATCH_SCORE
     """
     if score >= TIER_SNIPER_SCORE:
         return "SNIPER"
@@ -91,18 +87,27 @@ def classify_signal_type(d1_tier: str, d1_score: float, d2_tier: str, d2_score: 
     REJECTED D1 and D2 tiers are not blocked — they reach D3 and can produce
     Type B (D2-only LTF momentum plays) when the D2 signal is strong enough.
 
+    Uses config thresholds (D3_D1_SNIPER_THRESHOLD etc.) for consistency
+    with the scoring system.
+
     Classification order (first match wins):
-    1. Type C: D1 SNIPER (>=85) AND D2 SNIPER (>=85) AND directions align
-    2. Type A: D1 approved (SNIPER/OPPORTUNITY) AND D2 >= 50 AND directions align
-    3. Type B: D1 NOT approved (REJECTED/WATCH) AND D2 >= 72 AND nascent_move AND EP >= 18
+    1. Type C: D1 SNIPER (>= D3_D1_SNIPER_THRESHOLD) AND D2 SNIPER (>= D3_D2_SNIPER_THRESHOLD) AND directions align
+    2. Type A: D1 approved (SNIPER/OPPORTUNITY) AND D2 >= D3_D2_MODERATE_THRESHOLD AND directions align
+    3. Type B: D1 NOT approved AND D2 >= TYPE_B_MIN_D2_SCORE AND nascent_move AND EP >= TYPE_B_ENTRY_PRECISION_GATE
     4. Type E: D1 approved AND D2 strong BUT opposing directions
-    5. Type D: D1 >= 70 AND D2 not aligned
+    5. Type D: D1 >= D3_TYPE_D_D1_THRESHOLD AND D2 not aligned
     6. None: everything else (e.g. both REJECTED, or weak D2 without nascent move)
     """
+    from backend.config import (
+        D3_D1_SNIPER_THRESHOLD, D3_D2_SNIPER_THRESHOLD,
+        D3_D1_APPROVED_THRESHOLD, D3_D2_MODERATE_THRESHOLD,
+        D3_TYPE_D_D1_THRESHOLD, TYPE_B_MIN_D2_SCORE,
+        TYPE_B_ENTRY_PRECISION_GATE,
+    )
     d1_approved = d1_tier in ("SNIPER", "OPPORTUNITY")
-    d1_sniper = d1_score >= 85
-    d2_sniper = d2_score >= 85
-    d1_opp_or_above = d1_score >= 70
+    d1_sniper = d1_score >= D3_D1_SNIPER_THRESHOLD
+    d2_sniper = d2_score >= D3_D2_SNIPER_THRESHOLD
+    d1_opp_or_above = d1_score >= D3_D1_APPROVED_THRESHOLD
     d2_min_b = d2_score >= TYPE_B_MIN_D2_SCORE
     directions_align = d1_direction == d2_direction and d1_direction != ""
     ep_gate = entry_precision >= TYPE_B_ENTRY_PRECISION_GATE
@@ -112,19 +117,24 @@ def classify_signal_type(d1_tier: str, d1_score: float, d2_tier: str, d2_score: 
         return "C"
 
     # Type A: D1 approved + D2 moderate confirmation
-    if d1_approved and d2_score >= 50 and directions_align:
+    if d1_approved and d2_score >= D3_D2_MODERATE_THRESHOLD and directions_align:
         return "A"
 
     # Type B: D1 not approved, D2 LTF momentum play
-    if not d1_approved and d2_min_b and nascent_move and ep_gate:
+    # nascent_move gate: required for weak D2 (WATCH), waived for strong D2 (OPP+)
+    # Rationale: a D2 score at OPPORTUNITY+ already implies genuine momentum;
+    # nascent_move adds confidence but should not block high-quality D2 signals.
+    type_b_nascent_ok = nascent_move or d2_score >= D3_D1_APPROVED_THRESHOLD
+    if not d1_approved and d2_min_b and type_b_nascent_ok and ep_gate:
         return "B"
 
     # Type E: both valid but opposing directions (check before Type D — more specific)
     if d1_approved and d2_tier in ("SNIPER", "OPPORTUNITY") and not directions_align:
         return "E"
 
-    # Type D: D1 approved but D2 not aligned (general case)
-    if d1_opp_or_above and not directions_align and d2_tier != "REJECTED":
+    # Type D: D1 has signal data and D2 not aligned (HTF warning with LTF mismatch)
+    d2_not_rejected = d2_tier != "REJECTED"
+    if d1_opp_or_above and not directions_align and d2_not_rejected:
         return "D"
 
     # No signal
@@ -323,12 +333,12 @@ class FusionEngine:
         raw_signal = getattr(d2, 'raw_signal', {}) or {}
         rr = getattr(d2, 'rr', 1.0)
         # Estimate win rate from score: higher score → higher win rate
-        # SNIPER(85+) = 75%, OPPORTUNITY(65+) = 60%, WATCH(40+) = 45%
-        if d2_score >= 85:
+        # SNIPER(+) = 75%, OPPORTUNITY(+) = 60%, WATCH(+) = 45%
+        if d2_score >= D3_D2_SNIPER_THRESHOLD:
             estimated_win_rate = 0.75
-        elif d2_score >= 65:
+        elif d2_score >= D3_D2_MODERATE_THRESHOLD:
             estimated_win_rate = 0.60
-        elif d2_score >= 40:
+        elif d2_score >= TIER_WATCH_SCORE:
             estimated_win_rate = 0.45
         else:
             estimated_win_rate = 0.35

@@ -20,7 +20,7 @@ from backend.state_store import state_store
 from backend.engines.ltf_engine import ltf_engine
 from backend.engines.signal_fusion import fusion_engine
 from backend import ws_hub
-from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE
+from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE, TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -213,7 +213,7 @@ async def debug_fusion():
             }
 
         return {
-            "tier_thresholds": {"SNIPER": 85, "OPPORTUNITY": 65, "WATCH": 40},
+            "tier_thresholds": {"SNIPER": TIER_SNIPER_SCORE, "OPPORTUNITY": TIER_OPPORTUNITY_SCORE, "WATCH": TIER_WATCH_SCORE},
             "d1_count": len(d1),
             "d2_count": len(d2),
             "decision_count": len(decisions),

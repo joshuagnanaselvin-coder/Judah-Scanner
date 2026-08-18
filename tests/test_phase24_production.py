@@ -233,9 +233,9 @@ class TestD1Independence:
 
     def test_tier_classification_explainable(self):
         """Tier boundaries are explicit in config — no magic numbers."""
-        assert TIER_SNIPER_SCORE == 85
-        assert TIER_OPPORTUNITY_SCORE == 65
-        assert TIER_WATCH_SCORE == 40
+        assert TIER_SNIPER_SCORE == 55
+        assert TIER_OPPORTUNITY_SCORE == 38
+        assert TIER_WATCH_SCORE == 22
 
     def test_d1_does_not_read_d2(self):
         """D1 tier classification is pure — no D2 dependency."""
@@ -829,9 +829,9 @@ class TestTierProperties:
 
     def test_tier_boundaries_from_config(self):
         """Tier boundaries must come from config, not magic numbers."""
-        assert TIER_SNIPER_SCORE == 85
-        assert TIER_OPPORTUNITY_SCORE == 65
-        assert TIER_WATCH_SCORE == 40
+        assert TIER_SNIPER_SCORE == 55
+        assert TIER_OPPORTUNITY_SCORE == 38
+        assert TIER_WATCH_SCORE == 22
         assert TIER_WEAK_SCORE == 10
 
     def test_ignore_threshold_below_watch(self):
