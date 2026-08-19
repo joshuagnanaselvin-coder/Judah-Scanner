@@ -43,7 +43,10 @@ class MarketData:
 
     async def bootstrap(self, symbols: list) -> int:
         self._symbols = symbols
-        self.session = aiohttp.ClientSession()
+        # Reuse existing session if one was created by connect_websocket(),
+        # otherwise create a new one (legacy path when bootstrap runs first).
+        if self.session is None or self.session.closed:
+            self.session = aiohttp.ClientSession()
         count = 0
 
         print(f"[marketdata] Bootstrapping {len(symbols)} coins...")
@@ -155,6 +158,12 @@ class MarketData:
         return []
 
     def connect_websocket(self, symbols: list):
+        # Create the session now if not already created by bootstrap.
+        # In the new non-blocking startup, scanner.start() calls this before
+        # _background_bootstrap() runs bootstrap().
+        if self.session is None:
+            self.session = aiohttp.ClientSession()
+
         all_streams = []
         for symbol in symbols:
             for tf in ALL_TIMEFRAMES:
