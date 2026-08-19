@@ -88,26 +88,29 @@ class SignalStore:
         self.signals.pop(f"{symbol}_{engine}", None)
 
     def refresh(self, signal, current_price=None):
+        """Refresh a signal's price data and freshness state without decaying score.
+
+        D1 (HTF): composite_score = base_score — no decay for multi-hour setups.
+        D2 (LTF): uses its own LTFSignal objects with its own decay logic.
+
+        Score changes only happen on revalidation (new scan result) or invalidation.
+        Freshness state (hot/warm/cool/cold) is still updated for any consumers
+        that want to weight signals by recency.
+        """
         signal['age_ticks'] = signal.get('age_ticks', 0) + 1
         if current_price is not None:
             signal['current_price'] = current_price
 
         age = signal['age_ticks']
-        base = signal.get('base_score', signal.get('composite_score', 0))
-        signal['base_score'] = base
         rr = signal.get('rr', 1.5)
+        base = signal.get('base_score', signal.get('composite_score', 0))
 
-        # Decay: 1pt per ~2min, floor at 20
-        # 2min=1pt, 5min=2pts, 10min=4pts, 20min=8pts, 30min=12pts
-        decay_map = {12: 1, 30: 2, 60: 4, 120: 8, 180: 12}
-        decay = 0
-        for threshold, pts in sorted(decay_map.items()):
-            if age >= threshold:
-                decay = pts
-        # Live display score (decays for visual feedback only — does NOT affect tier)
-        signal['composite_score'] = max(20, base - decay)
+        # Score stays stable — only revalidation changes the actual score.
+        # composite_score = base_score for clean, predictable display.
+        signal['composite_score'] = base
+        signal['base_score'] = base
 
-        # Tier is locked to the ORIGINAL base score — never downgraded by age decay.
+        # Tier is locked to base score — never downgraded by age.
         # A SNIPER stays SNIPER until the setup is revalidated or invalidated.
         signal['tier'] = _recalc_tier(base, rr)
 
@@ -130,11 +133,8 @@ class SignalStore:
 
         signal['age_minutes'] = (age * SCAN_INTERVAL_SECONDS) // 60
 
-        next_decay = next((t for t in sorted(decay_map.keys()) if t > age), None)
-        signal['ticks_to_next_decay'] = next_decay - age if next_decay else 0
-
-        logger.debug(f"[refresh] {signal['id']} age={age} base={base} decay={decay} "
-                     f"live={signal['composite_score']} state={signal['freshness_state']}")
+        logger.debug(f"[refresh] {signal['id']} age={age} base={base} "
+                     f"score={signal['composite_score']} state={signal['freshness_state']}")
         return signal
 
     def revalidate(self, signal, new_signal: dict) -> dict:

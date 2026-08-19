@@ -262,7 +262,10 @@ class Scanner:
             d1_tiers_this_cycle = {}
             all_coin_tfs: dict[str, dict] = {}
 
-            # Collect scan results
+            # Collect scan results — use base_score (actual setup quality)
+            # instead of composite_score (time-decayed display score).
+            # composite_score decays via refresh() and can hit 0 on invalidation,
+            # but base_score always reflects the last confirmed setup quality.
             for sig in signal_store.signals.values():
                 coin = sig['symbol']
                 tf = sig['engine']
@@ -270,7 +273,7 @@ class Scanner:
                     all_coin_tfs[coin] = {}
                 all_coin_tfs[coin][tf] = {
                     "tier": sig.get('tier', 'WATCH'),
-                    "score": sig.get('composite_score', 0),
+                    "score": sig.get('base_score', sig.get('composite_score', 0)),
                     "direction": sig.get('direction', ''),
                 }
 
@@ -445,7 +448,7 @@ class Scanner:
             if sig:
                 tfs[tf] = {
                     "tier": sig.get('tier', 'WATCH'),
-                    "score": sig.get('composite_score', 0),
+                    "score": sig.get('base_score', sig.get('composite_score', 0)),
                     "direction": sig.get('direction', ''),
                 }
 
