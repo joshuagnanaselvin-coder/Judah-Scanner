@@ -259,7 +259,13 @@ function flashNew(id) {
 
 // ── Type E Alerts ─────────────────────────────────────────────────
 function handleTypeEAlert(alert) {
-  typeEAlerts.unshift(alert);
+  // Only one alert per coin — replace existing if already present
+  const existing = typeEAlerts.findIndex(a => a.coin === alert.coin);
+  if (existing >= 0) {
+    typeEAlerts[existing] = alert;
+  } else {
+    typeEAlerts.unshift(alert);
+  }
   if (typeEAlerts.length > 10) typeEAlerts.length = 10;
   renderTypeEAlerts();
 }

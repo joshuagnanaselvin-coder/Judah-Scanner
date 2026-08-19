@@ -166,8 +166,12 @@ class LTFEngine:
                 d1_score = next((s for c, _, s in d1_approved if c == coin), 0)
                 raw = await scan_entry(coin, d1_tier=d1_tier, d1_score=d1_score)
                 if raw:
-                    await state_store.set_d2_signal(coin, raw)
-                    revalidated.append(raw)
+                    # Update in-place — preserves signal_id, no duplicate cards
+                    sig.update(raw)
+                    sig.d1_tier = d1_tier
+                    sig.d1_score = d1_score
+                    await state_store.set_d2_signal(coin, sig)
+                    revalidated.append(sig)
                 else:
                     # Setup broken — remove
                     await state_store.set_d2_signal(coin, None)
@@ -220,8 +224,10 @@ class LTFEngine:
                 _mark_scanned(coin)
                 continue
 
-            await state_store.set_d2_signal(coin, result)
-            new_signals.append(result)
+            # scan_entry returns raw dict — wrap in LTFSignal
+            ltf_sig = LTFSignal(coin, result)
+            await state_store.set_d2_signal(coin, ltf_sig)
+            new_signals.append(ltf_sig)
             _mark_scanned(coin)
 
         # Phase 11: No Silent Failures — propagate DEGRADED if any scans failed
