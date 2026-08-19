@@ -304,12 +304,25 @@ class Scanner:
                             "direction": "",
                         }
 
-            # Build per-coin best tier
+            # Build per-coin best tier — preserve existing tiers for coins
+            # not scanned this cycle. Non-candidates get REJECTED+0 in all_coin_tfs
+            # but we must NOT overwrite a previously known tier with that.
+            coins_scanned_this_cycle = set()
+            for sym, tf in scan_tasks:
+                coins_scanned_this_cycle.add(sym)
+
             for coin, tfs in all_coin_tfs.items():
                 best_tf = max(tfs.items(), key=lambda x: x[1]['score'])
                 best_tier = best_tf[1]['tier']
                 best_score = best_tf[1]['score']
                 best_direction = best_tf[1].get('direction', '')
+
+                # Skip overwrite: coin wasn't scanned this cycle AND all TFs are REJECTED+0
+                if coin not in coins_scanned_this_cycle and best_tier == "REJECTED" and best_score == 0:
+                    existing = state_store.get_d1_tier(coin)
+                    if existing and existing.get("tier") != "REJECTED":
+                        # Keep the existing tier — don't clobber with REJECTED+0
+                        continue
 
                 prev_tier = self._prev_tiers.get(coin, "WATCH")
                 if prev_tier != best_tier:
