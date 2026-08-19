@@ -77,29 +77,43 @@ class Scanner:
         self._scan_semaphore = asyncio.Semaphore(SCAN_CONCURRENCY)
         self._scan_events = asyncio.Queue()
 
-        print(f"[scanner] [{self.cycle_id}] Bootstrapping {len(symbols)} coins...")
-        count = await market_data.bootstrap(symbols)
-        print(f"[scanner] [{self.cycle_id}] Bootstrapped {count} candle sets")
-
-        # Drop the last (currently-forming) candle from each HTF pair.
-        # Binance klines include the incomplete current candle as the last entry.
-        # D1 HTF analysis must use only closed candles — the WS will append
-        # the first true closed candle when it fires on_candle_close.
-        dropped = self._drop_incomplete_candles()
-        print(f"[scanner] [{self.cycle_id}] Dropped {dropped} incomplete HTF candles from bootstrap")
-
+        # Connect WS immediately so we start receiving live candle data
         market_data.connect_websocket(symbols)
         market_data.on_candle_close = self._on_candle_close
 
-        # Initial full scan on startup (all candidates + tiers)
-        print(f"[scanner] [{self.cycle_id}] Initial full scan...")
-        await self._run_batch_scan()
-        print(f"[scanner] [{self.cycle_id}] Initial scan complete")
-
+        # Start the scan loop immediately — it will run WS-triggered scans
+        # as soon as candle data is available (from WS or bootstrap).
         self.scan_task = asyncio.create_task(self._scan_loop())
         print(f"[scanner] [{self.cycle_id}] Live - {len(symbols)} coins x {len(TIMEFRAMES_HTF)} TFs")
         print(f"[scanner] [{self.cycle_id}] D1 scanning: event-driven on HTF candle close "
               f"({', '.join(TIMEFRAMES_HTF)}) + {self._fallback_cycle_seconds}s fallback")
+
+        # Bootstrap historical candle data in background (does NOT block scanning).
+        # 2116 REST requests for 529 pairs × 4 TFs — takes ~100s.
+        # Scan loop handles scans as data arrives; bootstrap fills in the rest.
+        asyncio.create_task(self._background_bootstrap(symbols))
+
+    async def _background_bootstrap(self, symbols: list):
+        """Download historical candle data without blocking the scanner.
+
+        Runs after the scanner is already live. Scan loop will process
+        whatever data is available; this fills in the rest.
+        """
+        try:
+            print(f"[scanner] [{self.cycle_id}] Background bootstrap starting "
+                  f"({len(symbols)} pairs x {len(TIMEFRAMES_HTF)} HTF + {len(TIMEFRAMES_LTF)} LTF)...")
+            count = await market_data.bootstrap(symbols)
+            print(f"[scanner] [{self.cycle_id}] Background bootstrap: {count} candle sets")
+
+            dropped = self._drop_incomplete_candles()
+            print(f"[scanner] [{self.cycle_id}] Dropped {dropped} incomplete HTF candles")
+
+            # Run initial full scan now that we have historical data
+            print(f"[scanner] [{self.cycle_id}] Initial full scan (post-bootstrap)...")
+            await self._run_batch_scan()
+            print(f"[scanner] [{self.cycle_id}] Initial scan complete")
+        except Exception as e:
+            logger.error(f"[scanner] [{self.cycle_id}] Background bootstrap failed: {e}")
 
     async def _scan_loop(self):
         """Event-driven scan loop.
