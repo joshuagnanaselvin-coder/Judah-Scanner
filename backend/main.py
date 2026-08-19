@@ -8,6 +8,7 @@
 import asyncio
 import logging
 import json
+import os
 from datetime import datetime, timezone
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.staticfiles import StaticFiles
@@ -68,7 +69,6 @@ def _now_ms() -> int:
 app = FastAPI(title="Judah Scanner")
 
 # Serve frontend static files with NO caching
-import os
 frontend_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend")
 if os.path.exists(frontend_dir):
     from fastapi.responses import FileResponse as _FR
