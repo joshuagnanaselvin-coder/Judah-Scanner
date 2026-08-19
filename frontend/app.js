@@ -322,19 +322,19 @@ function renderSignals() {
 
   const filtered = applyFilters();
 
-  // Sort by momentum (D2 fast-mover score) descending — highest momentum first,
-  // then by D2 tier, then by confidence as final tie-breaker.
+  // Sort by composite score descending — highest conviction first,
+  // tie-break by D2 tier, then confidence.
   const tierRank = { SNIPER: 3, OPPORTUNITY: 2, WATCH: 1, REJECTED: 0, '—': 0 };
   filtered.sort((a, b) => {
-    const m_a = (a.momentum_score ?? (a.marketEvolution || {}).momentumVelocity) || 0;
-    const m_b = (b.momentum_score ?? (b.marketEvolution || {}).momentumVelocity) || 0;
-    if (m_b !== m_a) return m_b - m_a;          // higher momentum first
+    const c_a = b.composite_score ?? b.d2_score ?? 0;
+    const c_b = a.composite_score ?? a.d2_score ?? 0;
+    if (c_b !== c_a) return c_a - c_b;          // higher composite first
     const ta = tierRank[b.d2_tier] || 0;
     const tb = tierRank[a.d2_tier] || 0;
     if (ta !== tb) return ta - tb;               // higher tier first
-    const c_a = (a.marketEvolution || {}).confidence ?? 0;
-    const c_b = (b.marketEvolution || {}).confidence ?? 0;
-    return c_b - c_a;                            // higher confidence first
+    const d_a = (a.marketEvolution || {}).confidence ?? 0;
+    const d_b = (b.marketEvolution || {}).confidence ?? 0;
+    return d_b - d_a;                            // higher confidence first
   });
 
   if (allSignals.length === 0) {
