@@ -81,6 +81,13 @@ class Scanner:
         count = await market_data.bootstrap(symbols)
         print(f"[scanner] [{self.cycle_id}] Bootstrapped {count} candle sets")
 
+        # Drop the last (currently-forming) candle from each HTF pair.
+        # Binance klines include the incomplete current candle as the last entry.
+        # D1 HTF analysis must use only closed candles — the WS will append
+        # the first true closed candle when it fires on_candle_close.
+        dropped = self._drop_incomplete_candles()
+        print(f"[scanner] [{self.cycle_id}] Dropped {dropped} incomplete HTF candles from bootstrap")
+
         market_data.connect_websocket(symbols)
         market_data.on_candle_close = self._on_candle_close
 
@@ -146,6 +153,9 @@ class Scanner:
                     logger.info(f"[scan] [{self.cycle_id}] WS-triggered: "
                                 f"{len(scan_tasks)} HTF candle close events")
                     await self._scan_batch(scan_tasks, full_cycle=False)
+                    # Update D1 tiers for coins that were just scanned
+                    for symbol, tf in scan_tasks:
+                        await self._update_d1_tier_for(symbol)
 
                 # Fallback: full cycle (revalidate + new scan + tier build)
                 if now - last_fallback >= self._fallback_cycle_seconds:
@@ -382,6 +392,26 @@ class Scanner:
             except asyncio.QueueFull:
                 pass  # queue full — will be caught by fallback cycle
 
+
+    def _drop_incomplete_candles(self) -> int:
+        """Drop the last (forming) candle from each HTF pair after bootstrap.
+
+        Binance returns the currently-forming candle as the last entry in klines.
+        For D1 HTF analysis we must use only closed candles — WS will deliver
+        the next closed candle when it actually closes.
+
+        Returns count of candles dropped.
+        """
+        dropped = 0
+        for tf in TIMEFRAMES_HTF:
+            for symbol in self.symbols:
+                key = f"{symbol}_{tf}"
+                candles = market_data.candles.get(key)
+                if candles and len(candles) >= 2:
+                    # Pop the last entry — it's the incomplete candle
+                    candles.pop()
+                    dropped += 1
+        return dropped
 
     async def _update_d1_tier_for(self, coin: str):
         """Update D1 tier for a single coin after WS-triggered scan."""
