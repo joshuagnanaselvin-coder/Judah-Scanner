@@ -1,0 +1,31 @@
+# Judah Scanner — VPS Docker Compose
+
+services:
+  scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile.vps
+    container_name: judah-scanner
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - BINANCE_REST_BASE=https://fapi.binance.com
+      - HOST=0.0.0.0
+      - PORT=8000
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - judah-net
+
+volumes:
+  # data is on host (./data) so it survives container restarts
+
+networks:
+  judah-net:
