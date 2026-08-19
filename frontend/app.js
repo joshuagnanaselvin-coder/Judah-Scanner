@@ -108,11 +108,11 @@ function buildCard(s) {
   const hist = (s.score_history || []).slice(-12);
   const sparkData = hist.map(h => h[1] || h.score || 0).join(',');
 
-  // TF breakdown chips
+  // TF breakdown chips — each TF's score with tier-colored background for visibility
   const tfs = s.d1_timeframes || {};
   const tfHtml = Object.entries(tfs).map(([tf, d]) => {
     const tc = TIER_COLORS[d.tier] || '#6b7280';
-    return `<span class="tf-chip" style="color:${tc};border-color:${tc}33">${tf} <b>${d.score ?? 0}</b></span>`;
+    return `<span class="tf-chip" style="color:${tc};border-color:${tc};background:${tc}22"><b>${tf}</b> ${d.score ?? 0}</span>`;
   }).join('');
 
   // EV color
@@ -278,14 +278,12 @@ function renderTypeEAlerts() {
 }
 
 // ── Filtering ────────────────────────────────────────────────────
-// Only display OPPORTUNITY and SNIPER tier coins — WATCH/WEAK/REJECTED filtered out
-const DISPLAY_TIERS = new Set(["OPPORTUNITY", "SNIPER"]);
+// Show all coins with D2 activity — user plans trades manually
+const DISPLAY_TIERS = null;  // null = no tier filter
 
 function applyFilters() {
   return allSignals.filter(s => {
     if (filters.direction !== 'all' && s.direction !== filters.direction) return false;
-    const d2Tier = (s.d2_tier || '').toUpperCase();
-    if (!DISPLAY_TIERS.has(d2Tier)) return false;
     return true;
   });
 }
