@@ -219,7 +219,10 @@ class FusionEngine:
         last_d1 = state_store.last_d1_scan
         last_d2 = state_store.last_d2_scan
 
-        if last_d1 == self._last_d1_scan and last_d2 == self._last_d2_scan:
+        # Always fuse if D2 changed. Only skip if BOTH are stale (system idle).
+        d1_changed = last_d1 != self._last_d1_scan
+        d2_changed = last_d2 != self._last_d2_scan
+        if not d1_changed and not d2_changed:
             return
 
         self._last_d1_scan = last_d1
@@ -341,18 +344,14 @@ class FusionEngine:
 
         # ── Expected Value Calculation ─────────────────────────────────
         # Per-signal EV using formula: EV = (WinRate × AvgWin) - (LossRate × AvgLoss)
+        # Use CONTINUOUS mapping from D2 score (not bucketed) so each signal
+        # gets a unique win rate reflecting its actual quality.
         raw_signal = getattr(d2, 'raw_signal', {}) or {}
-        rr = getattr(d2, 'rr', 1.0)
-        # Estimate win rate from score: higher score → higher win rate
-        # SNIPER(+) = 75%, OPPORTUNITY(+) = 60%, WATCH(+) = 45%
-        if d2_score >= D3_D2_SNIPER_THRESHOLD:
-            estimated_win_rate = 0.75
-        elif d2_score >= D3_D2_MODERATE_THRESHOLD:
-            estimated_win_rate = 0.60
-        elif d2_score >= TIER_WATCH_SCORE:
-            estimated_win_rate = 0.45
-        else:
-            estimated_win_rate = 0.35
+        rr = float(getattr(d2, 'rr', 1.0) or 1.0)
+        # Continuous WR: score 0 = 30%, score 50 = 60%, score 80+ = 78%
+        # Anchored at institutional-grade baseline.
+        estimated_win_rate = 0.30 + (d2_score / 100.0) * 0.50
+        estimated_win_rate = min(0.85, max(0.20, estimated_win_rate))
 
         # === IMPROVEMENT #5: Session Regime weighting ===
         # Apply session conviction multiplier to win rate
