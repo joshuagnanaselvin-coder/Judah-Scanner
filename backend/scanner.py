@@ -714,6 +714,9 @@ class Scanner:
         self.running = True
         self.scan_task = asyncio.create_task(self._scan_loop())
 
+        # Kick off an immediate D1 full scan so last_d1_scan gets set
+        asyncio.create_task(self._run_batch_scan())
+
         logger.info(f"[restart] Restart complete — {count} candle sets, "
                     f"{len(self.symbols)} pairs live")
 
