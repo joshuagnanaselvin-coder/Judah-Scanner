@@ -213,6 +213,11 @@ class Scanner:
                             new_sig = self._apply_confluence(sig['symbol'], new_sig)
                             new_sig = self._apply_boosts(new_sig, sig['engine'])
                         updated = signal_store.revalidate(sig, new_sig)
+                        # If revalidation invalidated the signal, remove it from the
+                        # store so PASS 3 below doesn't pick up its score=0 and
+                        # overwrite the coin's D1 tier with REJECTED.
+                        if updated.get("freshness_state") == "INVALIDATED":
+                            signal_store.remove(sig['symbol'], sig['engine'])
                         revalidated.append(updated)
                         continue
 
@@ -268,6 +273,12 @@ class Scanner:
             if signal_store.add(signal):
                 new_signals.append(signal)
 
+        if not full_cycle:
+            # WS-triggered scans: update D1 tiers per coin so D3 always has
+            # fresh data without waiting for the next full cycle.
+            for (symbol, tf) in scan_tasks:
+                await self._update_d1_tier_for(symbol)
+
         if full_cycle:
             # === PASS 3: Build D1 tiers per coin ===
             # Build D1 tiers from scan results + ensure ALL coins have an entry.
@@ -281,6 +292,10 @@ class Scanner:
             # composite_score decays via refresh() and can hit 0 on invalidation,
             # but base_score always reflects the last confirmed setup quality.
             for sig in signal_store.signals.values():
+                # Skip invalidated/expired signals — they have score=0 and would
+                # pollute D1 tiers with REJECTED+0 entries.
+                if sig.get("freshness_state") in ("INVALIDATED", "EXPIRED"):
+                    continue
                 coin = sig['symbol']
                 tf = sig['engine']
                 if coin not in all_coin_tfs:
