@@ -71,11 +71,11 @@ SMC_SCORE_LIQUIDITY = 5
 # === TIERS (fixed — no sensitivity modes) ===
 # Same thresholds for D1 and D2 scoring.
 # Lowered to match realistic scoring ranges (CRT 10-20, SMC 0-20, Flow 0-15, Momentum 0-15 = 45-70 base)
-TIER_SNIPER_SCORE = 55       # SNIPER >= 55: highest probability (strong setups)
-TIER_OPPORTUNITY_SCORE = 38  # OPPORTUNITY >= 38: strong setups (solid confirmation)
-TIER_WATCH_SCORE = 22        # WATCH >= 22: partial confirmation
-TIER_WEAK_SCORE = 10        # WEAK >= 10: low-confidence but viable setups
-IGNORE_MIN_SCORE = 10        # Below this: not shown (was 60 — way too aggressive)
+TIER_SNIPER_SCORE = 65       # SNIPER >= 65: highest probability (strong setups)
+TIER_OPPORTUNITY_SCORE = 50  # OPPORTUNITY >= 50: strong setups (solid confirmation)
+TIER_WATCH_SCORE = 35        # WATCH >= 35: partial confirmation
+TIER_WEAK_SCORE = 18         # WEAK >= 18: low-confidence but viable setups
+IGNORE_MIN_SCORE = 18        # Below this: not shown
 MIN_RR = 1.5
 
 # === 100-POINT SCORING WEIGHTS ===
@@ -201,14 +201,14 @@ MAX_D2_SIGNALS = 200              # Cap D2 signal store (matches D1 cap)
 # Used by signal_fusion.classify_signal_type for D1/D2 classification.
 # Tier thresholds (TIER_SNIPER_SCORE etc.) are the floor values;
 # these add margin for cross-dimension signal classification.
-D3_D1_SNIPER_THRESHOLD = 55       # D1 score >= this → SNIPER tier for Type C
-D3_D2_SNIPER_THRESHOLD = 55       # D2 score >= this → SNIPER tier for Type C
-D3_D1_APPROVED_THRESHOLD = 38     # D1 score >= this → approved (SNIPER/OPP) for Type A
-D3_D2_MODERATE_THRESHOLD = 22     # D2 score >= this → moderate confirmation for Type A
-D3_TYPE_D_D1_THRESHOLD = 38       # D1 score >= this for Type D (D1 approved, D2 not aligned)
+D3_D1_SNIPER_THRESHOLD = 65       # D1 score >= this → SNIPER tier for Type C
+D3_D2_SNIPER_THRESHOLD = 65       # D2 score >= this → SNIPER tier for Type C
+D3_D1_APPROVED_THRESHOLD = 50     # D1 score >= this → approved (SNIPER/OPP) for Type A
+D3_D2_MODERATE_THRESHOLD = 35     # D2 score >= this → moderate confirmation for Type A
+D3_TYPE_D_D1_THRESHOLD = 50       # D1 score >= this for Type D (D1 approved, D2 not aligned)
 
 # === TYPE B MINIMUMS ===
-TYPE_B_MIN_D2_SCORE = 22          # minimum total D2 score (lowered from 38 — catches WATCH D2)
+TYPE_B_MIN_D2_SCORE = 35          # minimum total D2 score (raised — matches WATCH tier)
 TYPE_B_ENTRY_PRECISION_GATE = 10   # minimum Entry Precision sub-score out of 20 (was 16)
 
 # === D2 MINIMUM THRESHOLDS ===
