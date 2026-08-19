@@ -309,6 +309,22 @@ async def analytics_db():
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
+@app.get("/api/logs")
+async def api_logs(lines: int = 200):
+    """Tail the server log file."""
+    try:
+        log_path = os.path.join(_log_dir, "server.log")
+        if not os.path.exists(log_path):
+            return JSONResponse(status_code=404, content={"error": "No log file yet"})
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+        tail = "".join(all_lines[-lines:])
+        return JSONResponse(content={"lines": tail.splitlines(), "total": len(all_lines)})
+    except Exception as e:
+        logger.error(f"[api/logs] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.post("/api/restart")
 async def restart_scanner():
     try:
