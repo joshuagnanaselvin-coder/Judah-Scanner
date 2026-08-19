@@ -14,6 +14,11 @@ let typeEAlerts = [];
 // ── Helpers ────────────────────────────────────────────────────────
 function getMEE(s) { return s.marketEvolution || {}; }
 
+function fmtMomentum(v) {
+  if (v == null || isNaN(v)) return '—';
+  return Number(v).toFixed(1);
+}
+
 function fmtPrice(v) {
   if (v == null || isNaN(v)) return '—';
   if (v === 0) return '0';
@@ -164,7 +169,7 @@ function buildCard(s) {
         </div>
         <div class="me-detail-cell">
           <span class="me-lbl">Momentum</span>
-          <span class="me-momentum">${(mee.momentumVelocity ?? 0).toFixed(1)}</span>
+          <span class="me-momentum">${fmtMomentum(mee.momentumVelocity)}</span>
         </div>
         <div class="me-detail-cell">
           <span class="me-lbl">Confidence</span>
@@ -317,11 +322,19 @@ function renderSignals() {
 
   const filtered = applyFilters();
 
-  // Sort by confidence descending — highest confidence first
+  // Sort by momentum (D2 fast-mover score) descending — highest momentum first,
+  // then by D2 tier, then by confidence as final tie-breaker.
+  const tierRank = { SNIPER: 3, OPPORTUNITY: 2, WATCH: 1, REJECTED: 0, '—': 0 };
   filtered.sort((a, b) => {
-    const ca = (a.marketEvolution || {}).confidence ?? 0;
-    const cb = (b.marketEvolution || {}).confidence ?? 0;
-    return cb - ca;
+    const m_a = (a.momentum_score ?? (a.marketEvolution || {}).momentumVelocity) || 0;
+    const m_b = (b.momentum_score ?? (b.marketEvolution || {}).momentumVelocity) || 0;
+    if (m_b !== m_a) return m_b - m_a;          // higher momentum first
+    const ta = tierRank[b.d2_tier] || 0;
+    const tb = tierRank[a.d2_tier] || 0;
+    if (ta !== tb) return ta - tb;               // higher tier first
+    const c_a = (a.marketEvolution || {}).confidence ?? 0;
+    const c_b = (b.marketEvolution || {}).confidence ?? 0;
+    return c_b - c_a;                            // higher confidence first
   });
 
   if (allSignals.length === 0) {

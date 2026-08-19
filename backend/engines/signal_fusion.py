@@ -611,6 +611,10 @@ class FusionEngine:
             # Nascent move flag
             "nascent_move": nascent_move,
             "entry_precision": entry_precision,
+            # D2 sub-scores (for frontend sorting and breakdown)
+            "momentum_score": round(float(getattr(d2, 'momentum_score', 0)), 1),
+            "flow_score": round(float(getattr(d2, 'flow_score', 0)), 1),
+            "htf_bonus": round(float(getattr(d2, 'htf_bonus', 0)), 1),
         }
 
         # ── Market Evolution Engine (16-state matrix) ─────────────────

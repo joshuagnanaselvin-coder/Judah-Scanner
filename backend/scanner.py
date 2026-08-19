@@ -319,12 +319,25 @@ class Scanner:
                             "direction": "",
                         }
 
-            # Build per-coin best tier — preserve existing tiers for coins
-            # not scanned this cycle. Non-candidates get REJECTED+0 in all_coin_tfs
-            # but we must NOT overwrite a previously known tier with that.
+            # Build per-coin best tier.
+            #
+            # CRITICAL INVARIANT: only store per-TF entries for TFs that have
+            # an actual signal in signal_store. The filler REJECTED+0 entries
+            # below are for state_store tier tracking (D3 needs a tier for
+            # every coin), but they MUST NOT pollute the timeframes dict
+            # because the frontend TF chips render from that dict and would
+            # show phantom REJECTED+0 scores for TFs that were never scanned.
             coins_scanned_this_cycle = set()
             for sym, tf in scan_tasks:
                 coins_scanned_this_cycle.add(sym)
+
+            # Track which specific (coin, tf) pairs produced a signal.
+            # Only these get included in the per-coin timeframes dict.
+            signal_tfs: set[str] = set()
+            for sig in signal_store.signals.values():
+                if sig.get("freshness_state") in ("INVALIDATED", "EXPIRED"):
+                    continue
+                signal_tfs.add(f"{sig['symbol']}_{sig['engine']}")
 
             for coin, tfs in all_coin_tfs.items():
                 best_tf = max(tfs.items(), key=lambda x: x[1]['score'])
@@ -332,11 +345,11 @@ class Scanner:
                 best_score = best_tf[1]['score']
                 best_direction = best_tf[1].get('direction', '')
 
-                # Skip overwrite: coin wasn't scanned this cycle AND all TFs are REJECTED+0
-                if coin not in coins_scanned_this_cycle and best_tier == "REJECTED" and best_score == 0:
+                # Only overwrite tier if this coin was scanned this cycle.
+                # For unscanned coins, keep existing tier from state_store.
+                if coin not in coins_scanned_this_cycle:
                     existing = state_store.get_d1_tier(coin)
                     if existing and existing.get("tier") != "REJECTED":
-                        # Keep the existing tier — don't clobber with REJECTED+0
                         continue
 
                 prev_tier = self._prev_tiers.get(coin, "WATCH")
@@ -345,7 +358,14 @@ class Scanner:
                         self.on_tier_change(coin, prev_tier, best_tier)
                     self._prev_tiers[coin] = best_tier
 
-                await state_store.set_d1_tier(coin, best_tier, best_score, tfs, best_direction)
+                # Pass only TFs with real signals to state_store — this keeps
+                # the frontend TF chips clean (no phantom REJECTED+0 entries).
+                real_tfs = {tf: data for tf, data in tfs.items()
+                            if f"{coin}_{tf}" in signal_tfs}
+                # If no TF has a signal, pass empty dict (frontend shows no TF chips).
+                display_tfs = real_tfs if real_tfs else {}
+
+                await state_store.set_d1_tier(coin, best_tier, best_score, display_tfs, best_direction)
                 d1_tiers_this_cycle[coin] = best_tier
 
             await state_store.set_timestamp("last_d1_scan")
@@ -388,7 +408,7 @@ class Scanner:
 
         # Build candidate list (coins that pass the ATR/movement filter)
         scan_tasks = []
-        scanned_coins: set[str] = set()
+        scanned_pairs: set[str] = set()   # (coin, tf) pairs actually scanned
         for tf in TIMEFRAMES_HTF:
             candidates = get_candidates(self.symbols, tf)
             for symbol in candidates:
@@ -396,7 +416,7 @@ class Scanner:
                 if quality in ("STALE", "INVALID", "GAPPED"):
                     continue
                 scan_tasks.append((symbol, tf))
-                scanned_coins.add(symbol)
+                scanned_pairs.add(f"{symbol}_{tf}")
 
         logger.info(f"[scan] [{self.cycle_id}] Full cycle: {len(scan_tasks)} pairs")
         await self._scan_batch(scan_tasks, full_cycle=True)
@@ -483,7 +503,12 @@ class Scanner:
         return dropped
 
     async def _update_d1_tier_for(self, coin: str):
-        """Update D1 tier for a single coin after WS-triggered scan."""
+        """Update D1 tier for a single coin after WS-triggered scan.
+
+        CRITICAL: only use TFs that have a signal in signal_store right now.
+        Do NOT fabricate REJECTED+0 for missing TFs — that would corrupt
+        the best_tf selection and overwrite a real score with 0.
+        """
         tfs = {}
         for tf in TIMEFRAMES_HTF:
             sig = signal_store.get(coin, tf)
@@ -508,6 +533,8 @@ class Scanner:
                 self.on_tier_change(coin, prev_tier, best_tier)
             self._prev_tiers[coin] = best_tier
 
+        # Pass the tfs dict (only populated TFs) — state_store will preserve
+        # existing per-TF entries for TFs not in this dict.
         await state_store.set_d1_tier(coin, best_tier, best_score, tfs, best_direction)
 
     def _apply_confluence(self, symbol, signal):
