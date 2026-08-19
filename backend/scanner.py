@@ -389,20 +389,50 @@ class Scanner:
         await state_store.set_d1_tier(coin, best_tier, best_score, tfs, best_direction)
 
     def _apply_confluence(self, symbol, signal):
+        """Institutional MTF Confluence Engine.
+
+        Instead of a flat +10 boost for ANY agreement, now counts ALL agreeing TFs
+        and applies graduated boost. Direction conflict across TFs reduces score.
+
+        Hedge fund logic: the more independent timeframes that confirm the same
+        direction, the higher the conviction. A signal where 1H/4H/1D all agree
+        BULLISH is significantly more reliable than just 1H + 4H agreeing.
+        """
         other_tfs = [tf for tf in TIMEFRAMES_HTF if tf != signal["engine"]]
         agreeing = []
+        opposing = []
         for otf in other_tfs:
             existing = signal_store.get(symbol, otf)
-            if existing and existing["direction"] == signal["direction"]:
+            if not existing:
+                continue
+            if existing["direction"] == signal["direction"]:
                 agreeing.append(otf)
+            elif existing["direction"] and existing["direction"] != signal["direction"]:
+                opposing.append(otf)
 
         if agreeing:
             signal["confluence"] = agreeing
-            signal["confluence_boost"] = signal.get("confluence_boost", 0) + 10
-            # Apply confluence boost to composite_score so MTF agreement lifts score.
+            # Graduated boost: 1 agreeing TF = +5, 2 = +10, 3 = +15
+            boost = min(len(agreeing) * 5, 15)
+            signal["confluence_boost"] = signal.get("confluence_boost", 0) + boost
             base = signal.get("composite_score", 0)
-            # Confluence boost is part of the 90-point ceiling.
-            signal["composite_score"] = min(base + 10, 100)
+            signal["composite_score"] = min(base + boost, 100)
+            signal["mtf_confluence"] = {
+                "agreeing": agreeing,
+                "opposing": opposing,
+                "boost": boost,
+                "level": f"{1 + len(agreeing)}/3 TF agreement",
+            }
+
+        # Conflict penalty: if another HTF strongly opposes, reduce score
+        if opposing and not agreeing:
+            penalty = min(len(opposing) * 3, 6)
+            current = signal.get("composite_score", 0)
+            signal["composite_score"] = max(current - penalty, 0)
+            signal["mtf_conflict"] = {
+                "opposing": opposing,
+                "penalty": penalty,
+            }
 
         return signal
 

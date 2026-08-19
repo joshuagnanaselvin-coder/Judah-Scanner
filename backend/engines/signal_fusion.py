@@ -348,6 +348,16 @@ class FusionEngine:
         else:
             estimated_win_rate = 0.35
 
+        # === IMPROVEMENT #5: Session Regime weighting ===
+        # Apply session conviction multiplier to win rate
+        from backend.session_regime import session_regime
+        sig_type_for_session = sig_type or "D"
+        regime_mult = session_regime.get_conviction_multiplier(sig_type_for_session, coin)
+        regime_info = session_regime.get_session_info(coin)
+
+        # Adjust win rate by regime multiplier (capped between 0.20 and 0.85)
+        estimated_win_rate = min(0.85, max(0.20, estimated_win_rate * regime_mult))
+
         # Avg win/loss derived from RR
         # Assume 1% risk per trade
         risk_amount = 0.01
@@ -585,6 +595,9 @@ class FusionEngine:
             "expected_value": round(expected_value, 4),
             "expected_value_pct": round(expected_value_pct, 2),
             "estimated_win_rate": round(estimated_win_rate * 100, 1),
+            # Session regime info (Improvement #5)
+            "session_regime": regime_info,
+            "regime_mult": regime_mult,
             # Metadata
             "freshness": getattr(d2, 'freshness', 'HOT'),
             "score_history": list(getattr(d2, 'score_history', []))[-10:],

@@ -13,17 +13,17 @@ logger = logging.getLogger("judah.smc")
 
 
 def run_smc(candles: list, crt: dict) -> Optional[dict]:
-    """SMC Engine — strict ICT scoring. Max SMC score: 25."""
+    """SMC Engine — institutional ICT scoring. Max SMC score: 25."""
     if not candles or len(candles) < 25 or not crt or not crt.get("displacement"):
         return None
 
     score = 0
     result = {}
 
-    # 1. Swing Points gate
+    # 1. Swing Points gate (lowered from 2 to 1 — single swing is valid on HTF)
     swings = detect_swing_points(candles)
     total_swings = len(swings["swing_highs"]) + len(swings["swing_lows"])
-    if total_swings < 2:
+    if total_swings < 1:
         return None
     result["swing_count"] = {
         "highs": len(swings["swing_highs"]),
@@ -108,7 +108,7 @@ def _score_ob(candles, crt, swings) -> tuple[int, dict | None]:
 
 
 def _score_fvg(candles, crt) -> tuple[int, dict | None]:
-    """Max 5: >=1.5x ATR unfilled = 5, >=1.0x = 3, >=0.5x = 1, partial = 0."""
+    """Max 5: >=2.0x ATR unfilled = 5, >=1.5x = 4, >=1.0x = 3, >=0.5x = 1, partial = 0."""
     all_fvgs = detect_fvg(candles)
     fvg = _find_relevant_fvg(all_fvgs, crt, candles)
     if not fvg:
@@ -132,14 +132,18 @@ def _score_fvg(candles, crt) -> tuple[int, dict | None]:
     fvg["size_atr"] = round(size_atr, 2)
     fvg["filled_pct"] = round(filled_pct, 1)
 
-    if not fvg.get("filled", False) and size_atr >= 1.5:
+    # Loosened from >=1.5x → >=2.0x for 5pts, added >=1.5x for 4pts
+    # HTF FVGs are legitimately larger — 0.5x ATR is common and valuable
+    if not fvg.get("filled", False) and size_atr >= 2.0:
         return 5, fvg
+    if not fvg.get("filled", False) and size_atr >= 1.5:
+        return 4, fvg
     if not fvg.get("filled", False) and size_atr >= 1.0:
         return 3, fvg
     if not fvg.get("filled", False) and size_atr >= 0.5:
-        return 1, fvg
+        return 2, fvg
     if filled_pct > 0 and filled_pct < 100:
-        return 0, fvg
+        return 1, fvg
     return 0, fvg
 
 
@@ -198,7 +202,7 @@ def _detect_ob(candles, crt):
     di = crt["displacement"]["candle_index"]
     dd = crt["displacement"]["direction"]
     last = candles[-1].close
-    limit = max(0, di - 15)
+    limit = max(0, di - 25)  # Search deeper — HTF OBs are 15-25 bars back, not 15
 
     for i in range(di - 1, limit, -1):
         c = candles[i]
@@ -207,7 +211,8 @@ def _detect_ob(candles, crt):
         if is_opp:
             dist = (abs(c.low - last) / last * 100) if dd == "BULLISH" \
                    else (abs(c.high - last) / last * 100)
-            if dist <= OB_PROXIMITY_PERCENT:
+            # Loosened from 1.5% → 5.0% — HTF OBs often sit 2-4% away from current price
+            if dist <= OB_PROXIMITY_PERCENT * 3.33:
                 return {
                     "type": "BULLISH_OB" if dd == "BULLISH" else "BEARISH_OB",
                     "direction": dd,

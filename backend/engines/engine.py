@@ -156,11 +156,17 @@ async def scan(symbol: str, timeframe: str) -> dict | None:
 
     # === D1 100-POINT SCORING ===
     # D1: CRT(20) + SMC(25) + Flow(15) + Momentum(15) + Timing(10) + R/R(10) + Confluence(5) = 100
+    # Plus Conviction multiplier (up to 1.15x) when all 4 core dimensions are strong.
     fm = detect_fast_mover(candles, swings)
     crt["crt_score"] = min(crt.get("crt_score", 0), 20)  # D1 CRT capped at 20
     smc["smc_score"] = min(smc.get("smc_score", 0), SMC_SCORE_MAX)
     flow_score = min(flow["boost"], 15)
     momentum_score = min(fm["score"] if fm["is_fast_mover"] else 0, 15)
+
+    # === IMPROVEMENT #2: Volume Profile scoring ===
+    # Hedge fund logic: entries at the POC or value area edge have statistically
+    # better outcomes than entries at the extremes. Score entries that land on
+    # POC/+1SD or POC/-1SD.
 
     # Build base signal first (includes CRT+SMC+Flow+Momentum in composite)
     logger.debug(f"[engine] Building signal for {symbol} {timeframe} ({path}) "
@@ -172,8 +178,10 @@ async def scan(symbol: str, timeframe: str) -> dict | None:
         timing_score = _score_timing(candles)
         # --- Risk/Reward (10 pts) ---
         rr_score, sl_quality = _score_rr(signal, smc, crt, candles)
+        # --- Volume Profile alignment (3 pts) ---
+        vp_score = _score_volume_profile(signal, crt)
         # --- Confluence Bonus (5 pts) ---
-        confluence_score = _confluence_bonus(crt, smc, flow_score, momentum_score, timing_score, rr_score)
+        confluence_score = _confluence_bonus(crt, smc, flow_score, momentum_score, timing_score, rr_score, vp_score)
 
         # Fatal flaw check
         if _check_fatal_flaws(signal, flow, smc):
@@ -192,10 +200,39 @@ async def scan(symbol: str, timeframe: str) -> dict | None:
             }
         else:
             # Add Timing + R/R + Confluence to composite
-            signal["composite_score"] = min(
-                signal.get("composite_score", 0) + timing_score + rr_score + confluence_score,
-                100
-            )
+            base_composite = signal.get("composite_score", 0) + timing_score + rr_score + confluence_score
+
+            # === IMPROVEMENT #4: Conviction Multiplier ===
+            # Hedge fund methodology: when all 4 core dimensions score ≥70% of their max,
+            # it's a high-conviction signal. Apply multiplicative boost (not additive).
+            # This prevents a 100-pt signal from being 4 mediocre scores; it rewards
+            # STRONG scores across all dimensions (CRT ≥14, SMC ≥18, Flow ≥11, Momentum ≥11).
+            crt_raw = crt.get("crt_score", 0)
+            smc_raw = smc.get("smc_score", 0)
+            conviction_mult = 1.0
+            conviction_factors = 0
+            if crt_raw >= 14:       # CRT ≥70% of 20
+                conviction_factors += 1
+            if smc_raw >= 18:       # SMC ≥72% of 25
+                conviction_factors += 1
+            if flow_score >= 11:    # Flow ≥73% of 15
+                conviction_factors += 1
+            if momentum_score >= 11: # Momentum ≥73% of 15
+                conviction_factors += 1
+
+            if conviction_factors >= 4:
+                conviction_mult = 1.15       # All 4 strong: +15% multiplier
+            elif conviction_factors >= 3:
+                conviction_mult = 1.08       # 3 of 4: +8% multiplier
+            elif conviction_factors >= 2:
+                conviction_mult = 1.03       # 2 of 4: +3% minor boost
+
+            final_composite = base_composite * conviction_mult
+            final_composite = min(final_composite, 100)
+            signal["composite_score"] = round(final_composite, 1)
+            signal["conviction_mult"] = round(conviction_mult, 3)
+            signal["conviction_factors"] = conviction_factors
+
             signal["scoring_breakdown"] = {
                 "crt": crt.get("crt_score", 0),
                 "smc": smc.get("smc_score", 0),
@@ -203,7 +240,10 @@ async def scan(symbol: str, timeframe: str) -> dict | None:
                 "momentum": momentum_score,
                 "timing": timing_score,
                 "rr": rr_score,
+                "volume_profile": vp_score,
                 "confluence": confluence_score,
+                "conviction_mult": round(conviction_mult, 3),
+                "conviction_factors": conviction_factors,
                 "fatal_flaw": False,
             }
 
@@ -267,6 +307,7 @@ def _score_timing(candles: list) -> int:
       - Setup 10+ bars old = 0 pts
     """
     from backend.helpers.session import get_session_at, session_score
+    from backend.session_regime import session_regime
     from datetime import datetime, timezone
 
     ts = int(datetime.now(timezone.utc).timestamp())
@@ -298,7 +339,9 @@ def _score_timing(candles: list) -> int:
             recency_score = 1
         # else 0
 
-    return min(killzone_score + session_quality_score + recency_score, 10)
+    base_timing = min(killzone_score + session_quality_score + recency_score, 10)
+
+    return base_timing
 
 
 def _estimate_setup_age(candles: list, session: str) -> int:
@@ -401,7 +444,7 @@ def _score_rr(signal: dict, smc: dict, crt: dict, candles: list) -> tuple:
 
 
 def _confluence_bonus(crt: dict, smc: dict, flow_score: int, momentum_score: int,
-                       timing_score: int, rr_score: int) -> int:
+                       timing_score: int, rr_score: int, vp_score: int = 0) -> int:
     """Confluence Bonus — 5 pts max.
 
     Count satisfied independent factors:
@@ -411,6 +454,7 @@ def _confluence_bonus(crt: dict, smc: dict, flow_score: int, momentum_score: int
       4. Momentum >= 8/15
       5. Timing >= 6/10
       6. R:R >= 2.5:1 (rr_score >= 5)
+      7. Volume Profile edge entry (vp_score >= 2)
     """
     factors = 0
     if crt.get("crt_score", 0) >= 14:
@@ -425,8 +469,61 @@ def _confluence_bonus(crt: dict, smc: dict, flow_score: int, momentum_score: int
         factors += 1
     if rr_score >= 5:
         factors += 1
+    if vp_score >= 2:
+        factors += 1
 
     return min(factors, CONFLUENCE_MAX)
+
+
+def _score_volume_profile(signal: dict, crt: dict) -> int:
+    """Hedge fund VP scoring — value area edge entries score higher.
+
+    Institutional logic:
+      - Entry AT POC = neutral (0 pts) — fair value, no edge
+      - Entry at POC ±0.5 SD (value area boundary) = +3 pts — institutional defense
+      - Entry inside VA but not at POC = +1 pt — okay
+      - Entry outside VA (>1.5 SD) = 0 pts — risky territory, outside value
+      - VAH/VAL proximity = +2 pts — at edge of acceptance/rejection
+    """
+    vp = crt.get("volume_profile") or signal.get("volume_profile") or {}
+    if not vp or vp.get("poc_price", 0) <= 0:
+        return 0
+
+    poc = vp.get("poc_price", 0)
+    va_high = vp.get("va_high", 0)
+    va_low = vp.get("va_low", 0)
+    entry = signal.get("entry", 0)
+    direction = signal.get("direction", "BULLISH")
+
+    if entry <= 0 or poc <= 0:
+        return 0
+
+    # Calculate distance from POC and VA boundaries
+    va_range = va_high - va_low if va_high > va_low else 0
+
+    # Entry at POC (within 0.1% of POC price)
+    if abs(entry - poc) / poc < 0.001:
+        return 1  # At fair value — minimal edge
+
+    if va_range > 0:
+        # Position within value area (0-100%)
+        if va_low <= entry <= va_high:
+            pct_in_va = ((entry - va_low) / va_range) * 100
+
+            # BULLISH: entries at lower VA edge (VAL) are best (deep discount)
+            if direction == "BULLISH" and pct_in_va <= 25:
+                return 3  # Value area low - deep discount entry
+            elif direction == "BULLISH" and pct_in_va <= 40:
+                return 2  # Lower half of value area - good risk/reward
+            elif direction == "BEARISH" and pct_in_va >= 75:
+                return 3  # Value area high - premium short entry
+            elif direction == "BEARISH" and pct_in_va >= 60:
+                return 2  # Upper half of value area - good short entry
+            else:
+                return 1  # Inside VA but not at edge
+
+    # Entry outside VA — risky, no edge
+    return 0
 
 
 def _check_fatal_flaws(signal: dict, flow: dict, smc: dict) -> bool:
@@ -500,16 +597,17 @@ async def _log_evidence_async(symbol: str, timeframe: str, signal: dict,
 
     records: list = []
 
-    # MSB break evidence
+    # MSB break evidence (None-safe: msb.type may be None for unconfirmed breaks)
     msb = smc.get("msb", {})
-    if msb and msb.get("type", "NONE") != "NONE":
+    if msb and msb.get("type") and msb.get("type", "NONE") != "NONE":
         strength = EvidenceStrength.STRONG if msb.get("confirmed", False) else EvidenceStrength.MODERATE
+        msb_dir = (msb.get("direction") or direction or "NEUTRAL").upper()
         records.append(EvidenceRecord(
             evidence_id=next_evidence_id(symbol),
             category=EvidenceCategory.MSB_BREAK,
             symbol=symbol, timeframe=timeframe,
             price=last_price, strength=strength,
-            direction=msb.get("type", direction).upper(),
+            direction=msb_dir,
             confidence=0.8 if msb.get("confirmed") else 0.5,
             candle_time=now, detected_at=now,
             source="engine.crt", snapshot_id=snap_id,
