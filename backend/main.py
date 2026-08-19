@@ -20,6 +20,7 @@ from backend.state_store import state_store
 from backend.engines.ltf_engine import ltf_engine
 from backend.engines.signal_fusion import fusion_engine
 from backend import ws_hub
+from backend import db
 from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE, TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE
 
 logging.basicConfig(
@@ -27,6 +28,19 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
 )
+
+# Rotating file handler — prevent unbounded log growth (was 105MB)
+from logging.handlers import RotatingFileHandler
+_fh = RotatingFileHandler(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "server.log"),
+    maxBytes=10 * 1024 * 1024,  # 10 MB per file
+    backupCount=5,               # keep 5 rotated files
+    encoding="utf-8",
+)
+_fh.setLevel(logging.DEBUG)
+_fh.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s", datefmt="%H:%M:%S"))
+logging.getLogger().addHandler(_fh)
+
 logger = logging.getLogger("judah")
 
 
@@ -236,6 +250,63 @@ async def get_performance():
         return JSONResponse(status_code=500, content={"error": "Failed to fetch performance data", "detail": str(e)})
 
 
+# ── Analytics REST API (Phase 6) ──────────────────────────────────────────
+
+@app.get("/api/analytics/outcomes")
+async def analytics_outcomes():
+    """Signal outcome stats from SQLite — aggregate win rates by type/tier/session."""
+    try:
+        stats = await db.get_outcome_stats()
+        return stats if stats else {"error": "No data yet"}
+    except Exception as e:
+        logger.error(f"[api/analytics/outcomes] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/analytics/evolution/{coin}")
+async def analytics_evolution(coin: str):
+    """State transition history for a specific coin."""
+    try:
+        rows = await db.get_evolution_history(coin.upper(), limit=50)
+        return {"coin": coin.upper(), "history": rows}
+    except Exception as e:
+        logger.error(f"[api/analytics/evolution] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/analytics/bayes")
+async def analytics_bayes():
+    """Bayesian calibration table — win rates per state+signal type."""
+    try:
+        table = await db.get_bayes_table()
+        return {"entries": len(table), "calibration": table}
+    except Exception as e:
+        logger.error(f"[api/analytics/bayes] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/analytics/decisions")
+async def analytics_decisions():
+    """Recent D3 fusion decisions from SQLite."""
+    try:
+        rows = await db.get_recent_decisions(limit=100)
+        return {"count": len(rows), "decisions": rows}
+    except Exception as e:
+        logger.error(f"[api/analytics/decisions] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/analytics/db")
+async def analytics_db():
+    """DB file size + row counts for all tables."""
+    try:
+        stats = await db.get_db_stats()
+        return stats
+    except Exception as e:
+        logger.error(f"[api/analytics/db] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
 @app.post("/api/restart")
 async def restart_scanner():
     try:
@@ -333,6 +404,14 @@ async def _bootstrap():
 async def startup():
     """Fire-and-forget bootstrap — health endpoint is available immediately."""
     import asyncio
+
+    # Phase 22: Initialize SQLite schema (idempotent — safe to call on every restart)
+    try:
+        await db.init_schema()
+        logger.info("[startup] SQLite schema initialized")
+    except Exception:
+        logger.exception("[startup] DB schema init failed")
+
     asyncio.create_task(_bootstrap())
 
 if __name__ == "__main__":

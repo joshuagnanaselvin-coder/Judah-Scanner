@@ -693,6 +693,14 @@ class Scanner:
         # Wipe candle cache so bootstrap fetches fresh
         market_data.candles.clear()
 
+        # Phase 22: Rehydrate Bayesian calibration from DB (survives restarts)
+        try:
+            from backend.market_evolution.confidence import _load_bayes_from_db
+            await _load_bayes_from_db()
+            logger.info("[restart] Bayesian calibration rehydrated from DB")
+        except Exception:
+            logger.exception("[restart] Bayes rehydration failed")
+
         # 4. Re-bootstrap (fresh REST pull for every symbol x TF)
         print(f"[restart] Re-bootstrapping {len(self.symbols)} pairs x {len(TIMEFRAMES_HTF)} TFs...")
         count = await market_data.bootstrap(self.symbols)

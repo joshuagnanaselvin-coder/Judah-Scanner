@@ -8,6 +8,9 @@ signal outcomes using Beta distribution.
 
 V5.4: Evidence quality/freshness and evolution stability.
 
+V5.5: DB persistence — alpha/beta per (state, type) saved to SQLite so
+calibration survives restarts.
+
 Formula:
   1. Base = matrix confidence (0-95)
   2. D1/D2 boost = (D1_score + D2_score) * 0.1  (capped at +10)
@@ -18,6 +21,7 @@ Formula:
   7. Bayesian adjustment = posterior_mean - 0.5  (centered, capped at +-5)
   8. Final = clamp(base + all boosts + bayesian_adj, 0, 100)
 """
+import asyncio
 import logging
 from collections import defaultdict
 from .constants import MARKET_EVOLUTION_MATRIX, STATE_TO_CATEGORY
@@ -36,6 +40,7 @@ _BAYES_MAX_ENTRIES = 500
 # Adjustment = (posterior_mean - 0.5) * 10, capped at +-5.
 
 _bayes_tracker: dict[str, dict[str, dict]] = defaultdict(lambda: {"alpha": 1.0, "beta": 1.0})
+_bayes_loaded: bool = False
 
 
 def _trim_bayes_tracker():
@@ -52,12 +57,46 @@ def _get_bayes_key(state_name: str, signal_type: str) -> str:
     return f"{state_name}:{signal_type}"
 
 
+async def _load_bayes_from_db() -> None:
+    """Load Bayesian calibration from SQLite into the in-memory tracker.
+
+    Safe to call multiple times — guarded by _bayes_loaded flag.
+    """
+    global _bayes_loaded
+    if _bayes_loaded:
+        return
+    try:
+        from backend import db
+        rows = await db.load_all_bayes()
+        for key, entry in rows.items():
+            _bayes_tracker[key] = {"alpha": entry["alpha"], "beta": entry["beta"]}
+            logger.debug(f"[bayes] loaded {key} a={entry['alpha']:.1f} b={entry['beta']:.1f}")
+        _bayes_loaded = True
+        logger.info(f"[bayes] Loaded {len(rows)} calibration entries from DB")
+    except Exception:
+        logger.exception("[bayes] Failed to load calibration from DB")
+        _bayes_loaded = True  # don't retry on every call
+
+
 def record_outcome(state_name: str, signal_type: str, won: bool) -> None:
     """Record a trade outcome for Bayesian updating."""
     key = _get_bayes_key(state_name, signal_type)
     _bayes_tracker[key]["alpha" if won else "beta"] += 1.0
     # Phase 16: trim if over cap
     _trim_bayes_tracker()
+
+    # Phase 22: persist to SQLite (fire-and-forget)
+    entry = _bayes_tracker[key]
+    try:
+        from backend import db
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(db.upsert_bayes(key, entry["alpha"], entry["beta"]))
+        else:
+            loop.run_until_complete(db.upsert_bayes(key, entry["alpha"], entry["beta"]))
+    except Exception:
+        logger.exception("[bayes] DB persist failed for %s", key)
+
     logger.debug(f"[bayes] {key} → a={_bayes_tracker[key]['alpha']:.0f} "
                  f"b={_bayes_tracker[key]['beta']:.0f}")
 

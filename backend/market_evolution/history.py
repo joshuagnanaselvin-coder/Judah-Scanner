@@ -1,13 +1,17 @@
 """Market Evolution - Transition History.
 
 Persists the last N state transitions per coin.
-Ready for future AI/persistence layer.
+Phase 22: Also writes each transition to SQLite so the evolution
+history survives restarts.
 """
+import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import List
 
 from .models import Transition
 
+logger = logging.getLogger("judah.history")
 
 MAX_HISTORY = 20
 
@@ -27,8 +31,9 @@ class CoinHistory:
                trading_decision: str = "",
                evolution_velocity: str = ""):
         """Append a transition record. Truncate to MAX_HISTORY."""
+        ts = datetime.now(timezone.utc).timestamp()
         t = Transition(
-            ts=datetime.now(timezone.utc).timestamp(),
+            ts=ts,
             state=state,
             spiral=spiral,
             direction=direction,
@@ -40,6 +45,28 @@ class CoinHistory:
         self._transitions.append(t)
         if len(self._transitions) > MAX_HISTORY:
             self._transitions = self._transitions[-MAX_HISTORY:]
+
+        # Phase 22: persist to SQLite
+        try:
+            from backend import db
+            row = {
+                "coin": self.coin,
+                "ts": ts,
+                "state": state,
+                "spiral": spiral,
+                "direction": direction,
+                "d1_score": d1_score,
+                "d2_score": d2_score,
+                "momentum_velocity": momentum_velocity,
+                "evolution": evolution,
+            }
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(db.insert_transition(row))
+            else:
+                loop.run_until_complete(db.insert_transition(row))
+        except Exception:
+            logger.exception("[history] DB persist failed for %s", self.coin)
 
     def to_dict(self) -> list:
         return [t.to_dict() for t in self._transitions]

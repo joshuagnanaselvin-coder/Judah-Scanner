@@ -1,5 +1,11 @@
-"""Performance tracking — win/loss stats by scenario, direction, tier."""
+"""Performance tracking — win/loss stats by scenario, direction, tier.
+
+Phase 22: DB persistence — every record() call is also written to SQLite
+via backend.db.insert_outcome(). In-memory ring buffer stays for
+fast get_stats() access; DB is the durable trading journal.
+"""
 import logging
+import asyncio
 
 logger = logging.getLogger("judah.perf")
 
@@ -14,7 +20,7 @@ class PerformanceTracker:
         self.tier_stats = {}
 
     def record(self, signal):
-        self.completed.append({
+        entry = {
             "symbol": signal.get("symbol"),
             "engine": signal.get("engine"),
             "direction": signal.get("direction"),
@@ -24,9 +30,49 @@ class PerformanceTracker:
             "session": signal.get("session", ""),
             "outcome": signal.get("outcome", "TIMEOUT"),
             "scenario": signal.get("scenario", ""),
-        })
+        }
+        self.completed.append(entry)
         if len(self.completed) > 1000:
             self.completed = self.completed[-1000:]
+
+        # Phase 22: persist to SQLite (fire-and-forget — never blocks caller)
+        self._persist_async(entry)
+
+    @staticmethod
+    def _persist_async(entry: dict) -> None:
+        """Schedule a DB write without blocking the caller."""
+        try:
+            from backend import db
+            row = {
+                "signal_id": entry.get("signal_id"),
+                "symbol": entry.get("symbol"),
+                "timeframe": entry.get("engine"),
+                "direction": entry.get("direction"),
+                "tier": entry.get("tier"),
+                "signal_type": entry.get("signal_type"),
+                "d1_tier": entry.get("d1_tier"),
+                "d1_score": entry.get("d1_score"),
+                "d2_tier": entry.get("d2_tier"),
+                "d2_score": entry.get("d2_score"),
+                "entry_price": entry.get("entry_price"),
+                "sl_price": entry.get("sl_price"),
+                "tp_price": entry.get("tp_price"),
+                "rr": entry.get("rr"),
+                "session": entry.get("session"),
+                "scenario": entry.get("scenario"),
+                "outcome": entry.get("outcome"),
+                "pnl_pct": entry.get("pnl_pct"),
+                "opened_at": entry.get("opened_at"),
+                "closed_at": entry.get("closed_at"),
+                "engine": entry.get("engine"),
+            }
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(db.insert_outcome(row))
+            else:
+                loop.run_until_complete(db.insert_outcome(row))
+        except Exception:
+            logger.exception("[perf] DB persist failed for %s", entry.get("symbol"))
 
     def get_stats(self):
         if not self.completed:

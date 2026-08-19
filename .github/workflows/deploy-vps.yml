@@ -1,0 +1,44 @@
+# Judah Scanner — Auto-deploy to VPS on push to main
+# Triggered automatically when you push to GitHub.
+# SSH into VPS → pull latest → rebuild container → restart.
+
+name: Deploy to VPS
+
+on:
+  push:
+    branches: [ main ]
+  # Allow manual trigger from GitHub Actions tab too
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script: |
+            cd /opt/judah-scanner
+
+            echo "=== Pulling latest code ==="
+            git pull origin main
+
+            echo "=== Building & restarting container ==="
+            docker compose -f docker-compose.vps.yml up -d --build --force-recreate
+
+            echo "=== Waiting for health check ==="
+            sleep 30
+
+            echo "=== Health check ==="
+            curl -sf http://localhost:8000/api/health || echo "WARN: health check failed"
+
+            echo "=== Cleanup old images ==="
+            docker image prune -f
+
+            echo "=== Deploy complete ==="
+            docker compose -f docker-compose.vps.yml ps

@@ -146,6 +146,47 @@ def classify_signal_type(d1_tier: str, d1_score: float, d2_tier: str, d2_score: 
     return None
 
 
+# ── DB Persistence Helpers ──────────────────────────────────────────
+
+def _persist_decision(coin: str, sig_type: str | None, package: dict) -> None:
+    """Write D3 decision to SQLite. Fire-and-forget — never blocks caller."""
+    try:
+        from backend import db
+        alignment = package.get("alignment", {})
+        risk_dec = package.get("risk_decision", {})
+        trade_plan = package.get("trade_plan", {})
+        row = {
+            "coin": coin,
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "signal_type": sig_type or "?",
+            "action": package.get("action"),
+            "position_mult": package.get("position_mult"),
+            "stop_mult": package.get("stop_mult"),
+            "ev_pct": package.get("expected_value_pct"),
+            "confidence": alignment.get("alignment_score"),
+            "d1_tier": package.get("d1_tier"),
+            "d1_score": package.get("d1_score"),
+            "d2_tier": package.get("d2_tier"),
+            "d2_score": package.get("d2_score"),
+        }
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(db.insert_decision(row))
+        else:
+            loop.run_until_complete(db.insert_decision(row))
+    except Exception:
+        logger.exception("[fusion] DB persist failed for %s", coin)
+
+
+async def ensure_bayes_loaded() -> None:
+    """Lazy-load Bayesian calibration from DB. Safe to call multiple times."""
+    try:
+        from backend.market_evolution.confidence import _load_bayes_from_db
+        await _load_bayes_from_db()
+    except Exception:
+        logger.exception("[fusion] ensure_bayes_loaded failed")
+
+
 # ── Fusion Engine ───────────────────────────────────────────────────
 
 class FusionEngine:
@@ -164,6 +205,13 @@ class FusionEngine:
 
     async def start(self):
         """Start D3 fusion loop."""
+        # Phase 22: Rehydrate Bayesian calibration from SQLite on startup
+        try:
+            await ensure_bayes_loaded()
+            logger.info("[fusion] Bayesian calibration rehydrated from DB")
+        except Exception:
+            logger.exception("[fusion] Bayes rehydration failed")
+
         self.running = True
         self.scan_task = asyncio.create_task(self._scan_loop())
         logger.info("[fusion] D3 Fusion Engine started (Signal Types A/B/C/D/E)")
@@ -684,6 +732,9 @@ class FusionEngine:
 
         await state_store.set_d3_decision(coin, package)
         await broadcast({"type": "signal", "data": package})
+
+        # Phase 22: persist decision to SQLite
+        _persist_decision(coin, sig_type, package)
 
         logger.debug(f"[fusion] {coin}: Type {sig_type or '—'} "
                       f"D1={d1_tier}({d1_score:.0f}) D2={d2_score:.0f} "

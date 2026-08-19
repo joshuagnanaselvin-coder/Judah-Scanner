@@ -1,0 +1,72 @@
+# Judah Scanner — VPS Production Deployment
+# Services: scanner (FastAPI), postgres (DB), nginx (reverse proxy + SSL)
+
+services:
+  scanner:
+    build:
+      context: .
+      dockerfile: Dockerfile.vps
+    container_name: judah-scanner
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://judah:${DB_PASSWORD}@postgres:5432/judah_scanner
+      - BINANCE_REST_BASE=https://fapi.binance.com
+      - HOST=0.0.0.0
+      - PORT=8000
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - judah-net
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: judah-postgres
+    restart: always
+    environment:
+      POSTGRES_USER: judah
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: judah_scanner
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U judah"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - judah-net
+
+  nginx:
+    image: nginx:alpine
+    container_name: judah-nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - ./frontend:/usr/share/nginx/html:ro
+    depends_on:
+      - scanner
+    networks:
+      - judah-net
+
+volumes:
+  pgdata:
+
+networks:
+  judah-net:
