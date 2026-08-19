@@ -1,8 +1,10 @@
 """ALL tunable parameters in one place. Edit this to tune the scanner."""
 
 # === SCANNER ===
-SCAN_INTERVAL_SECONDS = 15        # Full D1 scan cycle (candidate filter + CRT/SMC pipeline)
-SIGNAL_TTL_MINUTES = 15           # D1 signal expiry in state_store
+SCAN_INTERVAL_SECONDS = 15        # Full D1 scan cycle (candidate filter + CRT+SMC pipeline)
+SIGNAL_TTL_MINUTES = 240          # D1 signal expiry (4 hours — HTF setups on 4H/1D candles
+                                  # should outlive the candle itself; 15min was wiping D1
+                                  # data every cycle and replacing it with REJECTED+0)
 EVIDENCE_TTL_MINUTES = 240        # Evidence expiry in evidence_store (4 hours)
 MAX_SIGNALS = 200
 BOOTSTRAP_CANDLES = 50            # Only need ~50 candles for indicator lookbacks (was 200)
