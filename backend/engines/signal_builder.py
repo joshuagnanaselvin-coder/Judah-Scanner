@@ -664,7 +664,9 @@ def build_signal(
     total = composite_score
 
     # Minimum total score to produce a signal
-    if total < 15:
+    # Lowered 15 → 10 so HTF (1H/4H/1D) — where CRT rarely fires — still produces signals.
+    # Tier gate at scanner.py:192-197 still drops WEAK (<10) before storing.
+    if total < 10:
         logger.debug(f"[builder] REJECT {symbol} {timeframe}: score too low {total}")
         return None
 

@@ -37,6 +37,7 @@ from backend.state_store import state_store
 from backend.config import (
     SCAN_INTERVAL_SECONDS, TIMEFRAMES_HTF, SIGNAL_TTL_MINUTES,
     SCAN_CONCURRENCY,
+    TIMEFRAMES_LTF,
 )
 from backend.performance_tracker import performance_tracker
 from backend.decision_snapshot import SnapshotBuilder
@@ -65,10 +66,16 @@ class Scanner:
         self._prev_tiers: dict[str, str] = {}
         self._scan_semaphore: asyncio.Semaphore | None = None
 
+        # Event-driven scan queue: HTF candle close events push (symbol, tf) here
+        self._scan_events: asyncio.Queue = None
+        # Fallback timer: full revalidate+tier cycle every N seconds
+        self._fallback_cycle_seconds = 300  # 5 min safety net
+
     async def start(self, symbols: list):
         self.symbols = symbols
         self.running = True
-        self._scan_semaphore = asyncio.Semaphore(20)
+        self._scan_semaphore = asyncio.Semaphore(SCAN_CONCURRENCY)
+        self._scan_events = asyncio.Queue()
 
         print(f"[scanner] [{self.cycle_id}] Bootstrapping {len(symbols)} coins...")
         count = await market_data.bootstrap(symbols)
@@ -77,88 +84,119 @@ class Scanner:
         market_data.connect_websocket(symbols)
         market_data.on_candle_close = self._on_candle_close
 
+        # Initial full scan on startup (all candidates + tiers)
+        print(f"[scanner] [{self.cycle_id}] Initial full scan...")
+        await self._run_batch_scan()
+        print(f"[scanner] [{self.cycle_id}] Initial scan complete")
+
         self.scan_task = asyncio.create_task(self._scan_loop())
         print(f"[scanner] [{self.cycle_id}] Live - {len(symbols)} coins x {len(TIMEFRAMES_HTF)} TFs")
+        print(f"[scanner] [{self.cycle_id}] D1 scanning: event-driven on HTF candle close "
+              f"({', '.join(TIMEFRAMES_HTF)}) + {self._fallback_cycle_seconds}s fallback")
 
     async def _scan_loop(self):
-        """Main scan cycle: 15s timer + WS event drain."""
+        """Event-driven scan loop.
+
+        Two triggers:
+          1. WS candle close → enqueues (symbol, tf) → batched scan
+          2. Fallback timer → full revalidate+tier cycle every N seconds
+        """
+        last_fallback = _time_module.time()
+        # Per-symbol+tf cooldown so we don't scan the same coin multiple times
+        # while its WS events arrive rapidly.
+        _scan_cooldown: dict[str, float] = {}
+        COOLDOWN_SEC = 30  # skip re-scans within 30s of last scan
+
         while self.running:
             try:
-                t0 = _time_module.time()
-                logger.info(f"[scan] [{self.cycle_id}] Cycle starting")
-                await self._run_batch_scan()
-                elapsed = _time_module.time() - t0
-                logger.info(f"[scan] [{self.cycle_id}] Cycle complete in {elapsed:.1f}s")
+                # Wait for WS event (timeout = 2s so we can drain queue + check fallback)
+                try:
+                    event = await asyncio.wait_for(
+                        self._scan_events.get(), timeout=2.0
+                    )
+                except asyncio.TimeoutError:
+                    event = None
+
+                # Batch: drain all pending events (handles burst of candle closes)
+                events = [event] if event else []
+                while not self._scan_events.empty():
+                    try:
+                        events.append(self._scan_events.get_nowait())
+                    except asyncio.QueueEmpty:
+                        break
+
+                # De-dup + filter HTF + cooldown
+                seen: set[str] = set()
+                scan_tasks = []
+                now = _time_module.time()
+                for symbol, tf in events:
+                    key = f"{symbol}_{tf}"
+                    if key in seen:
+                        continue
+                    # Only scan HTF timeframes here (1H/4H/1D)
+                    if tf not in TIMEFRAMES_HTF:
+                        continue
+                    if now - _scan_cooldown.get(key, 0) < COOLDOWN_SEC:
+                        continue
+                    seen.add(key)
+                    scan_tasks.append((symbol, tf))
+                    _scan_cooldown[key] = now
+
+                if scan_tasks:
+                    logger.info(f"[scan] [{self.cycle_id}] WS-triggered: "
+                                f"{len(scan_tasks)} HTF candle close events")
+                    await self._scan_batch(scan_tasks, full_cycle=False)
+
+                # Fallback: full cycle (revalidate + new scan + tier build)
+                if now - last_fallback >= self._fallback_cycle_seconds:
+                    last_fallback = now
+                    logger.info(f"[scan] [{self.cycle_id}] Fallback full cycle")
+                    await self._run_batch_scan()
+
             except asyncio.CancelledError:
                 break
             except Exception:
-                # Phase 11: No Silent Failures — propagate DEGRADED state
                 logger.exception(f"[scan] [{self.cycle_id}] Scan error")
                 state_store.set_d1_status("DEGRADED", reason="scan_cycle_failed")
-            await asyncio.sleep(SCAN_INTERVAL_SECONDS)
 
-    async def _run_batch_scan(self):
-        """Production-grade batch scan:
-        PASS 1: Revalidate + refresh existing signals
-        PASS 2: Candidate filter → concurrent scan for new signals
-        PASS 3: Build D1 tiers, push to frontend
+    async def _scan_batch(self, scan_tasks: list, full_cycle: bool = True):
+        """Run a batch of scans (from WS events).
+
+        Args:
+            scan_tasks: list of (symbol, tf) to scan
+            full_cycle: if True, also revalidate existing signals and build tiers
         """
         refreshed = []
         revalidated = []
 
-        # Build immutable snapshot for this cycle (Gate 1: Snapshot)
-        snap = SnapshotBuilder(market_data).build(self.symbols, TIMEFRAMES_HTF)
-        state_store.set_snapshot_info(snap.snapshot_id, snap.snapshot_timestamp)
-        logger.info(f"[scan] [{self.cycle_id}] Snapshot {snap.snapshot_id[:8]} — "
-                    f"{sum(1 for v in snap.data_quality.values() if v == 'VALID')}/{len(snap.data_quality)} pairs VALID")
+        if full_cycle:
+            # === PASS 1: Revalidate + refresh existing signals ===
+            snap = SnapshotBuilder(market_data).build(self.symbols, TIMEFRAMES_HTF)
+            state_store.set_snapshot_info(snap.snapshot_id, snap.snapshot_timestamp)
 
-        # === PASS 1: Revalidate + refresh existing signals ===
-        for key, sig in list(signal_store.signals.items()):
-            quality = snap.candle_quality(sig['symbol'], sig['engine'])
-            if quality in ("STALE", "INVALID", "GAPPED"):
-                logger.debug(f"[scan] Skip revalidate {sig['symbol']}: quality={quality}")
-                continue
-
-            candles = snap.get_candles(sig['symbol'], sig['engine'])
-            if not candles:
-                candles = market_data.get_candles(sig['symbol'], sig['engine'])
-            if candles:
-                if signal_store.should_revalidate(sig):
-                    logger.info(f"[revalidate] [{self.cycle_id}] {sig['symbol']} {sig['engine']} "
-                                f"at {sig.get('age_minutes', 0)}min checkpoint...")
-                    new_sig = await scan(sig['symbol'], sig['engine'])
-                    if new_sig:
-                        new_sig = self._apply_confluence(sig['symbol'], new_sig)
-                        new_sig = self._apply_boosts(new_sig, sig['engine'])
-                    updated = signal_store.revalidate(sig, new_sig)
-                    revalidated.append(updated)
-                    continue
-
-                updated = signal_store.refresh(sig, candles[-1].close)
-                refreshed.append(updated)
-
-        # === PASS 2: Batch scan for new signals ===
-        # Get candidates that pass the adaptive ATR/movement filter
-        new_signals = []
-        scan_tasks = []
-
-        for tf in TIMEFRAMES_HTF:
-            candidates = get_candidates(self.symbols, tf)
-            for symbol in candidates:
-                quality = snap.candle_quality(symbol, tf)
+            for key, sig in list(signal_store.signals.items()):
+                quality = snap.candle_quality(sig['symbol'], sig['engine'])
                 if quality in ("STALE", "INVALID", "GAPPED"):
                     continue
-                # Skip if already scanned in this cycle
-                if signal_store.was_recently_scanned(symbol, tf, max_age_sec=SCAN_INTERVAL_SECONDS):
-                    continue
-                scan_tasks.append((symbol, tf))
 
-        logger.debug(f"[scan] Batch: {len(scan_tasks)} candidate pairs to scan")
+                candles = snap.get_candles(sig['symbol'], sig['engine'])
+                if not candles:
+                    candles = market_data.get_candles(sig['symbol'], sig['engine'])
+                if candles:
+                    if signal_store.should_revalidate(sig):
+                        new_sig = await scan(sig['symbol'], sig['engine'])
+                        if new_sig:
+                            new_sig = self._apply_confluence(sig['symbol'], new_sig)
+                            new_sig = self._apply_boosts(new_sig, sig['engine'])
+                        updated = signal_store.revalidate(sig, new_sig)
+                        revalidated.append(updated)
+                        continue
 
-        # Phase 11 (No Silent Failures): run scans concurrently WITHOUT
-        # return_exceptions=True.  Each individual scan catches its own
-        # exceptions.  If a scan task raises, asyncio.gather will propagate
-        # it — the outer try/except in _scan_loop() handles it.
+                    updated = signal_store.refresh(sig, candles[-1].close)
+                    refreshed.append(updated)
+
+        # === Scan the new batch ===
+        new_signals = []
         from backend.config import SCAN_CONCURRENCY
         _scan_sem = self._scan_semaphore or asyncio.Semaphore(SCAN_CONCURRENCY)
 
@@ -187,18 +225,11 @@ class Scanner:
                 signal_store.mark_scanned(symbol, tf)
                 continue
 
-            # Tier gate: filter WEAK/REJECTED D1 signals at source
-            # These tiers can never produce valid signal types in D3
             tier = signal.get("tier", "")
             if tier in ("WEAK", "REJECTED"):
-                logger.debug(f"[scan] {symbol} {tf}: score={signal.get('composite_score', 0):.1f} "
-                             f"tier={tier} — filtered out")
                 signal_store.mark_scanned(symbol, tf)
                 continue
 
-            # Phase 12 (Signal Provenance): attach lineage fields.
-            # These link the signal to the DecisionSnapshot and config that
-            # produced it, enabling full reconstruction later.
             snap_id = state_store.last_snapshot_id
             from backend.decision_snapshot import _CODE_VERSION, _CONFIG_HASH
             signal["snapshot_id"] = snap_id
@@ -213,37 +244,36 @@ class Scanner:
             if signal_store.add(signal):
                 new_signals.append(signal)
 
-            signal_store.mark_scanned(symbol, tf)
+        if full_cycle:
+            # === PASS 3: Build D1 tiers per coin ===
+            d1_tiers_this_cycle = {}
+            coin_tf_map: dict[str, dict] = {}
+            for sig in signal_store.signals.values():
+                coin = sig['symbol']
+                if coin not in coin_tf_map:
+                    coin_tf_map[coin] = {}
+                coin_tf_map[coin][sig['engine']] = {
+                    "tier": sig.get('tier', 'WATCH'),
+                    "score": sig.get('composite_score', 0),
+                    "direction": sig.get('direction', ''),
+                }
 
-        # === PASS 3: Build D1 tiers per coin ===
-        d1_tiers_this_cycle = {}
-        coin_tf_map: dict[str, dict] = {}
-        for sig in signal_store.signals.values():
-            coin = sig['symbol']
-            if coin not in coin_tf_map:
-                coin_tf_map[coin] = {}
-            coin_tf_map[coin][sig['engine']] = {
-                "tier": sig.get('tier', 'WATCH'),
-                "score": sig.get('composite_score', 0),
-                "direction": sig.get('direction', ''),
-            }
+            for coin, tfs in coin_tf_map.items():
+                best_tf = max(tfs.items(), key=lambda x: x[1]['score'])
+                best_tier = best_tf[1]['tier']
+                best_score = best_tf[1]['score']
+                best_direction = best_tf[1].get('direction', '')
 
-        for coin, tfs in coin_tf_map.items():
-            best_tf = max(tfs.items(), key=lambda x: x[1]['score'])
-            best_tier = best_tf[1]['tier']
-            best_score = best_tf[1]['score']
-            best_direction = best_tf[1].get('direction', '')
+                prev_tier = self._prev_tiers.get(coin, "WATCH")
+                if prev_tier != best_tier:
+                    if self.on_tier_change:
+                        self.on_tier_change(coin, prev_tier, best_tier)
+                    self._prev_tiers[coin] = best_tier
 
-            prev_tier = self._prev_tiers.get(coin, "WATCH")
-            if prev_tier != best_tier:
-                if self.on_tier_change:
-                    self.on_tier_change(coin, prev_tier, best_tier)
-                self._prev_tiers[coin] = best_tier
+                await state_store.set_d1_tier(coin, best_tier, best_score, tfs, best_direction)
+                d1_tiers_this_cycle[coin] = best_tier
 
-            await state_store.set_d1_tier(coin, best_tier, best_score, tfs, best_direction)
-            d1_tiers_this_cycle[coin] = best_tier
-
-        await state_store.set_timestamp("last_d1_scan")
+            await state_store.set_timestamp("last_d1_scan")
 
         # Console output
         if new_signals:
@@ -257,8 +287,9 @@ class Scanner:
                 score = s.get('composite_score', 0)
                 print(f"[reval] {s['symbol']} {s['engine']}: {state} score={score}")
         print(f"[scan] {len(new_signals)} new, {len(refreshed)} refreshed, "
-              f"{len(revalidated)} revalidated, {len(d1_tiers_this_cycle)} D1 tiers, "
-              f"{len(scan_tasks)} candidates scanned")
+              f"{len(revalidated)} revalidated, "
+              f"{len(scan_tasks)} HTF candle events scanned"
+              + (f", {len(d1_tiers_this_cycle)} D1 tiers" if full_cycle else ""))
 
         # Push to frontend
         if self._callback:
@@ -268,6 +299,28 @@ class Scanner:
                 await self._callback(new_signals, all_signals, refreshed, revalidated)
             except Exception as e:
                 logger.warning(f"[scan] callback error: {e}")
+
+    async def _run_batch_scan(self):
+        """Full batch scan cycle — revalidate, scan all candidates, build tiers.
+
+        Called on startup and as a fallback every _fallback_cycle_seconds.
+        """
+        snap = SnapshotBuilder(market_data).build(self.symbols, TIMEFRAMES_HTF)
+        state_store.set_snapshot_info(snap.snapshot_id, snap.snapshot_timestamp)
+        logger.info(f"[scan] [{self.cycle_id}] Full cycle: snapshot {snap.snapshot_id[:8]}")
+
+        # Build candidate list (all coins that pass the ATR/movement filter)
+        scan_tasks = []
+        for tf in TIMEFRAMES_HTF:
+            candidates = get_candidates(self.symbols, tf)
+            for symbol in candidates:
+                quality = snap.candle_quality(symbol, tf)
+                if quality in ("STALE", "INVALID", "GAPPED"):
+                    continue
+                scan_tasks.append((symbol, tf))
+
+        logger.info(f"[scan] [{self.cycle_id}] Full cycle: {len(scan_tasks)} candidate pairs")
+        await self._scan_batch(scan_tasks, full_cycle=True)
 
     def _apply_zscore_normalization(self, all_signals: list) -> list:
         """Normalize composite scores across the live signal universe.
@@ -304,7 +357,14 @@ class Scanner:
         return all_signals
 
     def _on_candle_close(self, symbol: str, tf: str):
-        """WS callback — offload blocking scan() to avoid blocking the WS read loop."""
+        """WS callback — enqueue HTF candle close events for batched scanning.
+
+        D1 scanning is event-driven on HTF candle close (1H/4H/1D).
+        15M events are ignored — D2 handles them separately.
+        """
+        if tf not in TIMEFRAMES_HTF:
+            return  # LTF candles handled by ltf_engine
+
         # Defensive guard: skip duplicates within 2 seconds
         key = f"{symbol}_{tf}"
         last = getattr(self, '_ws_trigger_ts', {}).get(key, 0)
@@ -315,53 +375,16 @@ class Scanner:
         ts_map[key] = now
         self._ws_trigger_ts = ts_map
 
-        # Offload blocking work — WS callback must return immediately
-        asyncio.get_running_loop().create_task(
-            self._ws_scan_task(symbol, tf)
-        )
+        # Enqueue for the scan loop to process
+        if self._scan_events:
+            try:
+                self._scan_events.put_nowait((symbol, tf))
+            except asyncio.QueueFull:
+                pass  # queue full — will be caught by fallback cycle
 
-        signal_store.mark_scanned(symbol, tf)
-
-    async def _ws_scan_task(self, symbol: str, tf: str):
-        """Async wrapper — runs scan() without blocking the WS read loop."""
-        try:
-            signal = await scan(symbol, tf)
-        except Exception as e:
-            logger.warning(f"[ws_scan] {symbol} {tf}: scan raised {e}")
-            return
-
-        if not signal:
-            return
-
-        try:
-            signal = self._apply_confluence(symbol, signal)
-            signal = self._apply_boosts(signal, tf)
-        except Exception as e:
-            logger.warning(f"[ws_scan] {symbol} {tf}: boost/confluence failed {e}")
-
-        if signal_store.add(signal):
-            print(f"[{signal['engine']}] {signal['symbol']}: {signal['tier']} "
-                  f"score={signal['composite_score']} dir={signal['direction']} "
-                  f"RR={signal['rr']:.1f}")
-            logger.info(f"[OUT] {symbol} {tf}: "
-                        f"composite={signal.get('composite_score')} "
-                        f"tier={signal.get('tier', '?')} dir={signal.get('direction')}")
-
-            if self._callback:
-                all_sigs = signal_store.get_all()
-                try:
-                    await self._callback([signal], all_sigs, [], [])
-                except Exception as e:
-                    logger.warning(f"[ws_scan] callback error: {e}")
-
-        # Update D1 tier in state store after WS-triggered scan
-        try:
-            await self._update_d1_tier_for(symbol)
-        except Exception as e:
-            logger.warning(f"[ws_scan] tier update error: {e}")
 
     async def _update_d1_tier_for(self, coin: str):
-        """Update D1 tier for a single coin (called after WS candle close)."""
+        """Update D1 tier for a single coin after WS-triggered scan."""
         tfs = {}
         for tf in TIMEFRAMES_HTF:
             sig = signal_store.get(coin, tf)

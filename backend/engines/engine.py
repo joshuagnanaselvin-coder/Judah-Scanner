@@ -33,7 +33,9 @@ import logging
 logger = logging.getLogger("judah.engine")
 
 # Thresholds for the SMC-only fallback path (used when CRT fails on impulse moves)
-_FALLBACK_MIN_CONFIDENCE = 30  # weighted fallback threshold (replaces binary MSB + SMC≥15)
+_FALLBACK_MIN_CONFIDENCE = 15  # weighted fallback threshold (replaces binary MSB + SMC≥15)
+# Lowered from 30 → 15: HTF (1H/4H/1D) rarely lights all 6 components at once.
+# 15 lets solid setups through (e.g. MSB(8) + OB(5) + flow(8) = 21, or OB+liq+sweep).
 
 
 async def scan(symbol: str, timeframe: str) -> dict | None:
@@ -565,14 +567,15 @@ def _check_fatal_flaws(signal: dict, flow: dict, smc: dict) -> bool:
             logger.info(f"[engine] FATAL FLAW {signal.get('symbol')}: sweep_reversal_bullish opposes BEARISH signal")
             return True
 
-    # 4. MSB (Market Structure Break) opposing signal direction
+    # 4. MSB (Market Structure Break) opposing signal direction.
+    # NOTE: msb["type"] is "CHOCH" / "BOS" — direction lives in msb["direction"].
     msb = smc.get("msb", {})
-    msb_type = msb.get("type", "NONE")
-    if msb_type != "NONE":
-        if msb_type == "BEARISH" and signal_dir == "BULLISH":
+    if msb.get("confirmed"):
+        msb_dir = msb.get("direction", "")
+        if msb_dir == "BEARISH" and signal_dir == "BULLISH":
             logger.info(f"[engine] FATAL FLAW {signal.get('symbol')}: BEARISH MSB opposes BULLISH signal")
             return True
-        if msb_type == "BULLISH" and signal_dir == "BEARISH":
+        if msb_dir == "BULLISH" and signal_dir == "BEARISH":
             logger.info(f"[engine] FATAL FLAW {signal.get('symbol')}: BULLISH MSB opposes BEARISH signal")
             return True
 
