@@ -32,8 +32,10 @@ logging.basicConfig(
 
 # Rotating file handler — prevent unbounded log growth (was 105MB)
 from logging.handlers import RotatingFileHandler
+_log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+os.makedirs(_log_dir, exist_ok=True)
 _fh = RotatingFileHandler(
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs", "server.log"),
+    os.path.join(_log_dir, "server.log"),
     maxBytes=10 * 1024 * 1024,  # 10 MB per file
     backupCount=5,               # keep 5 rotated files
     encoding="utf-8",
