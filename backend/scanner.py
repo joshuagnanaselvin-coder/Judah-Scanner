@@ -256,19 +256,39 @@ class Scanner:
 
         if full_cycle:
             # === PASS 3: Build D1 tiers per coin ===
+            # Build D1 tiers from scan results + ensure ALL coins have an entry.
+            # D3 iterates over ALL D2 coins (529 pairs); a missing D1 tier entry
+            # shows as d1_score=0 in the frontend. Non-candidates get REJECTED.
             d1_tiers_this_cycle = {}
-            coin_tf_map: dict[str, dict] = {}
+            all_coin_tfs: dict[str, dict] = {}
+
+            # Collect scan results
             for sig in signal_store.signals.values():
                 coin = sig['symbol']
-                if coin not in coin_tf_map:
-                    coin_tf_map[coin] = {}
-                coin_tf_map[coin][sig['engine']] = {
+                tf = sig['engine']
+                if coin not in all_coin_tfs:
+                    all_coin_tfs[coin] = {}
+                all_coin_tfs[coin][tf] = {
                     "tier": sig.get('tier', 'WATCH'),
                     "score": sig.get('composite_score', 0),
                     "direction": sig.get('direction', ''),
                 }
 
-            for coin, tfs in coin_tf_map.items():
+            # Fill REJECTED for coins that were scanned but produced no signal,
+            # AND for all non-candidate coins so D3 always has a D1 tier entry.
+            for symbol in self.symbols:
+                if symbol not in all_coin_tfs:
+                    all_coin_tfs[symbol] = {}
+                for tf in TIMEFRAMES_HTF:
+                    if tf not in all_coin_tfs[symbol]:
+                        all_coin_tfs[symbol][tf] = {
+                            "tier": "REJECTED",
+                            "score": 0,
+                            "direction": "",
+                        }
+
+            # Build per-coin best tier
+            for coin, tfs in all_coin_tfs.items():
                 best_tf = max(tfs.items(), key=lambda x: x[1]['score'])
                 best_tier = best_tf[1]['tier']
                 best_score = best_tf[1]['score']
@@ -311,16 +331,19 @@ class Scanner:
                 logger.warning(f"[scan] callback error: {e}")
 
     async def _run_batch_scan(self):
-        """Full batch scan cycle — revalidate, scan all candidates, build tiers.
+        """Full batch scan cycle — revalidate, scan candidates, build tiers for ALL coins.
 
         Called on startup and as a fallback every _fallback_cycle_seconds.
+        Scans ATR candidates (efficient) but writes REJECTED tier entries for
+        all non-candidate coins so D1 tiers exist for every coin D3 may reference.
         """
         snap = SnapshotBuilder(market_data).build(self.symbols, TIMEFRAMES_HTF)
         state_store.set_snapshot_info(snap.snapshot_id, snap.snapshot_timestamp)
         logger.info(f"[scan] [{self.cycle_id}] Full cycle: snapshot {snap.snapshot_id[:8]}")
 
-        # Build candidate list (all coins that pass the ATR/movement filter)
+        # Build candidate list (coins that pass the ATR/movement filter)
         scan_tasks = []
+        scanned_coins: set[str] = set()
         for tf in TIMEFRAMES_HTF:
             candidates = get_candidates(self.symbols, tf)
             for symbol in candidates:
@@ -328,8 +351,9 @@ class Scanner:
                 if quality in ("STALE", "INVALID", "GAPPED"):
                     continue
                 scan_tasks.append((symbol, tf))
+                scanned_coins.add(symbol)
 
-        logger.info(f"[scan] [{self.cycle_id}] Full cycle: {len(scan_tasks)} candidate pairs")
+        logger.info(f"[scan] [{self.cycle_id}] Full cycle: {len(scan_tasks)} pairs")
         await self._scan_batch(scan_tasks, full_cycle=True)
 
     def _apply_zscore_normalization(self, all_signals: list) -> list:
