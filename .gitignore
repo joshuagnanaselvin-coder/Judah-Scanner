@@ -6,3 +6,8 @@ signal_log.xlsx
 ~$signal_log.xlsx
 .env
 logs/
+
+# SQLite runtime data
+data/*.db
+data/*.db-shm
+data/*.db-wal
