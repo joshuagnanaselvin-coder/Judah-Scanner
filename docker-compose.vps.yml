@@ -24,8 +24,6 @@ services:
     networks:
       - judah-net
 
-volumes:
-  # data is on host (./data) so it survives container restarts
 
 networks:
   judah-net:
