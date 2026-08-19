@@ -277,6 +277,12 @@ class FusionEngine:
 
         d1_tier = d1.get("tier", "WATCH")
         d1_score = d1.get("score", 0)
+        # Always show real D1 score even for REJECTED tier.
+        # The tier "score" is 0 for REJECTED, but real scores (10-30+) live in
+        # the per-TF breakdown. Pick the best TF score as the display score.
+        d1_tf_scores = [v.get("score", 0) for v in d1.get("timeframes", {}).values()]
+        real_d1_score = max(d1_tf_scores) if d1_tf_scores else d1_score
+        d1_score = real_d1_score if real_d1_score > 0 else d1_score
         d2_score = float(getattr(d2, 'score', 0))
         d2_tier_name = classify_tier(d2_score)
 
