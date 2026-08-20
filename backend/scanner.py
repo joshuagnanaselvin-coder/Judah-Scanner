@@ -116,72 +116,62 @@ class Scanner:
             logger.error(f"[scanner] [{self.cycle_id}] Background bootstrap failed: {e}")
 
     async def _scan_loop(self):
-        """Event-driven scan loop.
+        """Periodic D1 scan loop.
 
-        Two triggers:
-          1. WS candle close → enqueues (symbol, tf) → batched scan
-          2. Fallback timer → full revalidate+tier cycle every N seconds
+        Primary timer: SCAN_INTERVAL_SECONDS — runs full candidate scan + tier build.
+        WS events: drain between cycles for immediate per-coin re-scans on candle close.
         """
-        last_fallback = _time_module.time()
-        # Per-symbol+tf cooldown so we don't scan the same coin multiple times
-        # while its WS events arrive rapidly.
         _scan_cooldown: dict[str, float] = {}
-        COOLDOWN_SEC = 30  # skip re-scans within 30s of last scan
+        COOLDOWN_SEC = 30
 
+        # Drain any events accumulated during startup/bootstrapping
+        while not self._scan_events.empty():
+            try:
+                self._scan_events.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+        # Run first full cycle immediately after bootstrap (already kicked off in restart())
+        # Then enter the periodic loop.
         while self.running:
             try:
-                # Wait for WS event (timeout = 2s so we can drain queue + check fallback)
-                try:
-                    event = await asyncio.wait_for(
-                        self._scan_events.get(), timeout=2.0
-                    )
-                except asyncio.TimeoutError:
-                    event = None
-
-                # Batch: drain all pending events (handles burst of candle closes)
-                events = [event] if event else []
-                while not self._scan_events.empty():
+                # 1. Drain WS events (non-blocking) — quick per-coin scans between cycles
+                ws_tasks = []
+                while True:
                     try:
-                        events.append(self._scan_events.get_nowait())
+                        event = self._scan_events.get_nowait()
                     except asyncio.QueueEmpty:
                         break
-
-                # De-dup + filter HTF + cooldown
-                seen: set[str] = set()
-                scan_tasks = []
-                now = _time_module.time()
-                for symbol, tf in events:
-                    key = f"{symbol}_{tf}"
-                    if key in seen:
-                        continue
-                    # Only scan HTF timeframes here (1H/4H/1D)
+                    symbol, tf = event
                     if tf not in TIMEFRAMES_HTF:
                         continue
+                    key = f"{symbol}_{tf}"
+                    now = _time_module.time()
                     if now - _scan_cooldown.get(key, 0) < COOLDOWN_SEC:
                         continue
-                    seen.add(key)
-                    scan_tasks.append((symbol, tf))
                     _scan_cooldown[key] = now
+                    ws_tasks.append((symbol, tf))
 
-                if scan_tasks:
+                if ws_tasks:
                     logger.info(f"[scan] [{self.cycle_id}] WS-triggered: "
-                                f"{len(scan_tasks)} HTF candle close events")
-                    await self._scan_batch(scan_tasks, full_cycle=False)
-                    # Update D1 tiers for coins that were just scanned
-                    for symbol, tf in scan_tasks:
+                                f"{len(ws_tasks)} HTF candle close events")
+                    await self._scan_batch(ws_tasks, full_cycle=False)
+                    for symbol, tf in ws_tasks:
                         await self._update_d1_tier_for(symbol)
 
-                # Fallback: full cycle (revalidate + new scan + tier build)
-                if now - last_fallback >= self._fallback_cycle_seconds:
-                    last_fallback = now
-                    logger.info(f"[scan] [{self.cycle_id}] Fallback full cycle")
-                    await self._run_batch_scan()
+                # 2. Periodic full scan cycle (candidates + tier build)
+                logger.info(f"[scan] [{self.cycle_id}] Periodic full cycle")
+                await self._run_batch_scan()
+
+                # 3. Sleep until next cycle
+                await asyncio.sleep(SCAN_INTERVAL_SECONDS)
 
             except asyncio.CancelledError:
                 break
             except Exception:
                 logger.exception(f"[scan] [{self.cycle_id}] Scan error")
                 state_store.set_d1_status("DEGRADED", reason="scan_cycle_failed")
+                await asyncio.sleep(SCAN_INTERVAL_SECONDS)  # keep going despite errors
 
     async def _scan_batch(self, scan_tasks: list, full_cycle: bool = True):
         """Run a batch of scans (from WS events).
