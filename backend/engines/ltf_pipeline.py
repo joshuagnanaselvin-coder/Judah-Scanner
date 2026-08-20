@@ -384,14 +384,15 @@ async def _log_ltf_evidence_async(symbol: str, timeframe: str, signal: dict,
 
     # MSB break evidence
     msb = crt.get("msb", smc.get("msb", {}))
-    if msb and msb.get("type", "NONE") != "NONE":
+    msb_type = msb.get("type") or "NONE"
+    if msb_type != "NONE":
         strength = EvidenceStrength.STRONG if msb.get("confirmed", False) else EvidenceStrength.MODERATE
         records.append(EvidenceRecord(
             evidence_id=next_evidence_id(symbol),
             category=EvidenceCategory.MSB_BREAK,
             symbol=symbol, timeframe=timeframe,
             price=last_price, strength=strength,
-            direction=msb.get("type", direction).upper(),
+            direction=msb_type.upper(),
             confidence=0.8 if msb.get("confirmed") else 0.5,
             candle_time=now, detected_at=now,
             source="ltf_pipeline.crt", snapshot_id=snap_id,
