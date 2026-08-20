@@ -310,18 +310,108 @@ async def analytics_db():
 
 
 @app.get("/api/logs")
-async def api_logs(lines: int = 200):
-    """Tail the server log file."""
+async def api_logs(lines: int = 200, source: str = "all"):
+    """Tail the server log file.
+
+    source: all (default), d1, d2, d3, errors
+    """
     try:
         log_path = os.path.join(_log_dir, "server.log")
         if not os.path.exists(log_path):
             return JSONResponse(status_code=404, content={"error": "No log file yet"})
         with open(log_path, "r", encoding="utf-8", errors="replace") as f:
             all_lines = f.readlines()
-        tail = "".join(all_lines[-lines:])
-        return JSONResponse(content={"lines": tail.splitlines(), "total": len(all_lines)})
+
+        raw = all_lines[-lines * 2:]  # read extra for filtering
+        filtered = []
+        source_map = {
+            "d1": ["judah.scanner", "judah.confluence"],
+            "d2": ["judah.ltf_engine", "judah.ltf", "judah.ltf_pipeline", "judah.crt",
+                   "judah.smc", "judah.builder", "judah.correlation", "judah.flow",
+                   "judah.fast_mover", "judah.engine"],
+            "d3": ["judah.fusion"],
+            "errors": ["ERROR", "CRITICAL", "Task exception"],
+        }
+        src = source_map.get(source, [])
+
+        for line in raw:
+            if source == "all":
+                filtered.append(line)
+            elif source == "errors":
+                up = line.upper()
+                if any(k in up for k in src):
+                    filtered.append(line)
+            else:
+                if any(lg in line for lg in src):
+                    filtered.append(line)
+            if len(filtered) >= lines:
+                break
+
+        tail = "".join(filtered[-lines:])
+        return JSONResponse(content={
+            "lines": tail.splitlines(),
+            "total": len(all_lines),
+            "filtered": len(filtered),
+            "source": source,
+        })
     except Exception as e:
         logger.error(f"[api/logs] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/health/detail")
+async def health_detail():
+    """Richer health: scan cycle ages, error counts from logs, uptime."""
+    try:
+        import time
+        now = time.time()
+        h = {"status": "ok", "uptime_s": 0, "d1": {}, "d2": {}, "d3": {},
+             "ws": {}, "errors_1h": 0}
+
+        # Basic state
+        h["status"] = "ok" if state_store.last_d1_scan > 0 else "initializing"
+        h["ws"]["connected"] = market_data.ws_connected if hasattr(market_data, 'ws_connected') else False
+        h["ws"]["clients"] = len(ws_hub._clients) if hasattr(ws_hub, '_clients') else 0
+        h["signals"] = len(signal_store.get_all())
+        h["decisions"] = len(state_store.d3_decisions)
+
+        # D1/D2/D3 timing
+        d1_ts = state_store.last_d1_scan
+        d2_ts = state_store.last_d2_scan
+        d3_ts = state_store.last_d3_fusion
+        h["d1"] = {
+            "last_scan_ts": d1_ts,
+            "age_s": round(now - d1_ts, 1) if d1_ts > 0 else None,
+            "status": "live" if d1_ts > 0 and (now - d1_ts) < 30 else "stale" if d1_ts > 0 else "never",
+            "coins": len(state_store.d1_tiers),
+        }
+        h["d2"] = {
+            "last_scan_ts": d2_ts,
+            "age_s": round(now - d2_ts, 1) if d2_ts > 0 else None,
+            "status": "live" if d2_ts > 0 and (now - d2_ts) < 30 else "stale" if d2_ts > 0 else "never",
+            "signals": len(state_store.d2_signals),
+        }
+        h["d3"] = {
+            "last_scan_ts": d3_ts,
+            "age_s": round(now - d3_ts, 1) if d3_ts > 0 else None,
+            "status": "live" if d3_ts > 0 and (now - d3_ts) < 30 else "stale" if d3_ts > 0 else "never",
+            "decisions": len(state_store.d3_decisions),
+        }
+
+        # Count errors in last ~200 lines of log
+        try:
+            log_path = os.path.join(_log_dir, "server.log")
+            if os.path.exists(log_path):
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    recent = f.readlines()[-200:]
+                h["errors_1h"] = sum(1 for l in recent if "ERROR" in l)
+                h["warnings_1h"] = sum(1 for l in recent if "WARNING" in l)
+        except Exception:
+            pass
+
+        return h
+    except Exception as e:
+        logger.error(f"[api/health/detail] Error: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 

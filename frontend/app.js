@@ -36,7 +36,9 @@ function fmtPct(v) {
 
 function timeAgo(ts) {
   if (!ts) return '—';
-  const s = Math.floor((Date.now() - new Date(ts * 1000).getTime()) / 1000);
+  const ms = (typeof ts === 'number') ? ts * 1000 : new Date(ts).getTime();
+  if (isNaN(ms)) return '—';
+  const s = Math.floor((Date.now() - ms) / 1000);
   if (s < 60) return s + 's';
   if (s < 3600) return Math.floor(s / 60) + 'm';
   return Math.floor(s / 3600) + 'h';
@@ -44,7 +46,9 @@ function timeAgo(ts) {
 
 function fmtAge(ts) {
   if (!ts) return '';
-  const s = Math.floor((Date.now() - new Date(ts * 1000).getTime()) / 1000);
+  const ms = (typeof ts === 'number') ? ts * 1000 : new Date(ts).getTime();
+  if (isNaN(ms)) return '';
+  const s = Math.floor((Date.now() - ms) / 1000);
   if (s < 5) return 'LIVE';
   if (s < 30) return 'NEW';
   if (s < 120) return Math.floor(s / 15) * 15 + 's';
@@ -52,8 +56,8 @@ function fmtAge(ts) {
 }
 
 // ── Signal Type colors ────────────────────────────────────────────
-const STYPE_COLORS = { A: '#eab308', B: '#3b82f6', C: '#22c55e', D: '#f97316', E: '#ef4444' };
-const STYPE_BG = { A: '#eab30822', B: '#3b82f622', C: '#22c55e22', D: '#f9731622', E: '#ef444422' };
+const STYPE_COLORS = { A: '#eab308', B: '#3b82f6', C: '#22c55e', D: '#f97316', E: '#ef4444', F: '#a855f7' };
+const STYPE_BG = { A: '#eab30822', B: '#3b82f622', C: '#22c55e22', D: '#f9731622', E: '#ef444422', F: '#a855f722' };
 const TIER_COLORS = { SNIPER: '#eab308', OPPORTUNITY: '#22c55e', WATCH: '#3b82f6', WEAK: '#a855f7', REJECTED: '#6b7280' };
 const SPIRAL_COLORS = { Expansion: '#22c55e', Correction: '#f59e0b', Failure: '#ef4444', Neutral: '#6b7280' };
 const DIR_COLORS = { BULLISH: '#22c55e', BEARISH: '#ef4444', NEUTRAL: '#6b7280' };
@@ -224,7 +228,7 @@ function buildCard(s) {
         </div>
         ${s.nascent_move ? '<span class="tag tag-nascent">NASCENT</span>' : ''}
         ${s.entry_precision ? `<span class="tag tag-ep">EP ${s.entry_precision.toFixed(0)}</span>` : ''}
-        <span class="born-time">${new Date(s.born_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</span>
+        ${s.born_at ? '<span class="born-time">' + new Date(s.born_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) + '</span>' : ''}
         <canvas class="sparkline" data-values="${sparkData}" width="80" height="20"></canvas>
       </div>
     </div>` : ''}
@@ -505,6 +509,201 @@ function connectWS() {
       }
     } catch (e) { console.error('[WS]', e); }
   };
+}
+
+// ── Observability Panel ─────────────────────────────────────────────
+let obsVisible = false;
+let obsTab = 'logs';
+let logRefreshTimer = null;
+let healthRefreshTimer = null;
+
+function toggleObsPanel() {
+  obsVisible = !obsVisible;
+  const panel = document.getElementById('obsPanel');
+  const toggle = document.getElementById('obsToggle');
+  if (obsVisible) {
+    panel.style.display = '';
+    toggle.style.background = 'var(--accent)';
+    toggle.style.color = '#fff';
+    switchObsTab(obsTab);
+    startObsRefresh();
+  } else {
+    panel.style.display = 'none';
+    toggle.style.background = '';
+    toggle.style.color = '';
+    stopObsRefresh();
+  }
+}
+
+function switchObsTab(tab) {
+  obsTab = tab;
+  document.querySelectorAll('.obs-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.querySelectorAll('.obs-tab-panel').forEach(p => p.style.display = 'none');
+  const panel = document.getElementById('tab-' + tab);
+  if (panel) panel.style.display = '';
+
+  if (tab === 'logs') loadLogs();
+  if (tab === 'health') loadHealthDetail();
+}
+
+function startObsRefresh() {
+  stopObsRefresh();
+  logRefreshTimer = setInterval(() => { if (obsTab === 'logs') loadLogs(false); }, 5000);
+  healthRefreshTimer = setInterval(() => { if (obsTab === 'health') loadHealthDetail(false); }, 3000);
+}
+
+function stopObsRefresh() {
+  if (logRefreshTimer) { clearInterval(logRefreshTimer); logRefreshTimer = null; }
+  if (healthRefreshTimer) { clearInterval(healthRefreshTimer); healthRefreshTimer = null; }
+}
+
+async function loadLogs(scroll = true) {
+  const container = document.getElementById('logContainer');
+  if (!container) return;
+  const source = document.getElementById('logSource')?.value || 'all';
+  const lines = parseInt(document.getElementById('logLines')?.value || '200', 10);
+
+  try {
+    const resp = await fetch(`/api/logs?lines=${lines}&source=${encodeURIComponent(source)}`);
+    const data = await resp.json();
+    if (data.error) { container.innerHTML = `<div class="obs-log-loading">${data.error}</div>`; return; }
+
+    const info = document.getElementById('logFilterInfo');
+    if (info) info.textContent = data.filtered !== undefined ? `${data.filtered} of ${data.total} lines` : `${data.lines?.length || 0} lines`;
+
+    if (!data.lines || data.lines.length === 0) {
+      container.innerHTML = '<div class="obs-log-loading">No log lines match filter</div>';
+      return;
+    }
+
+    container.innerHTML = data.lines.map(line => {
+      let cls = 'log-line';
+      const up = line.toUpperCase();
+      if (up.includes('ERROR') || up.includes('CRITICAL')) cls += ' error-line';
+      else if (up.includes('WARNING')) cls += ' warn-line';
+
+      // Extract level
+      let level = '';
+      const levelMatch = line.match(/(DEBUG|INFO|WARNING|ERROR|CRITICAL)/);
+      if (levelMatch) level = levelMatch[1].toLowerCase();
+
+      // Highlight [judah.xxx] logger prefix
+      let msg = escapeHtml(line);
+      msg = msg.replace(/\[judah\.(\w+)\]/g, '<strong>[judah.$1]</strong>');
+
+      // Extract timestamp (HH:MM:SS at start)
+      const tsMatch = line.match(/^(\d{2}:\d{2}:\d{2})/);
+      const ts = tsMatch ? tsMatch[1] : '';
+
+      return `<div class="${cls}"><span class="log-ts">${ts}</span><span class="log-level ll-${level}">${level || ''}</span><span class="log-msg">${msg}</span></div>`;
+    }).join('');
+
+    if (scroll) container.scrollTop = container.scrollHeight;
+  } catch (e) {
+    container.innerHTML = '<div class="obs-log-loading">Failed to load logs</div>';
+  }
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function loadHealthDetail(smooth = true) {
+  const grid = document.getElementById('healthGrid');
+  if (!grid) return;
+
+  try {
+    const [hResp, healthResp] = await Promise.all([
+      fetch('/api/health/detail'),
+      fetch('/api/health'),
+    ]);
+    const h = await hResp.json();
+    const health = await healthResp.json();
+
+    function statusClass(val) {
+      if (val === 'live') return 'ok';
+      if (val === 'stale' || val === 'initializing') return 'warn';
+      if (val === 'never') return 'err';
+      return 'neutral';
+    }
+
+    function statusLabel(val) {
+      if (val === 'live') return '🟢 Live';
+      if (val === 'stale') return '🟡 Stale';
+      if (val === 'initializing') return '🟡 Starting';
+      if (val === 'never') return '🔴 Never';
+      return '⚪ ' + val;
+    }
+
+    function dotClass(val) {
+      if (val === 'live') return 'live';
+      if (val === 'stale') return 'stale';
+      if (val === 'never') return 'never';
+      return 'unknown';
+    }
+
+    const d1 = h.d1 || {};
+    const d2 = h.d2 || {};
+    const d3 = h.d3 || {};
+
+    grid.innerHTML = `
+      <!-- Connection -->
+      <div class="health-card">
+        <div class="health-card-title">🔌 Connection</div>
+        <div class="health-row"><span class="health-key">WS Connected</span><span class="health-val ${(h.ws?.connected) ? 'ok' : 'err'}">${h.ws?.connected ? 'Yes' : 'No'}</span></div>
+        <div class="health-row"><span class="health-key">WS Clients</span><span class="health-val neutral">${h.ws?.clients || 0}</span></div>
+        <div class="health-row"><span class="health-key">Server Status</span><span class="health-val ${h.status === 'ok' ? 'ok' : 'warn'}">${h.status || '?'}</span></div>
+        <div class="health-row"><span class="health-key">Uptime</span><span class="health-val neutral">${h.uptime_s != null ? Math.round(h.uptime_s / 60) + ' min' : '—'}</span></div>
+      </div>
+
+      <!-- D1 -->
+      <div class="health-card">
+        <div class="health-card-title">📊 D1 — HTF Scanner</div>
+        <div class="health-row"><span class="health-key">Status</span><span class="health-val ${statusClass(d1.status)}"><span class="status-dot ${dotClass(d1.status)}"></span>${statusLabel(d1.status)}</span></div>
+        <div class="health-row"><span class="health-key">Last Scan</span><span class="health-val neutral">${d1.age_s != null ? d1.age_s + 's ago' : 'never'}</span></div>
+        <div class="health-row"><span class="health-key">Coins in Tier</span><span class="health-val neutral">${d1.coins != null ? d1.coins : '—'}</span></div>
+        <div class="health-row"><span class="health-key">Signals</span><span class="health-val neutral">${h.signals || 0}</span></div>
+        <div class="health-bar"><div class="health-bar-fill" style="width:${d1.age_s ? Math.max(0, 100 - d1.age_s) : 0}%;background:${d1.status === 'live' ? 'var(--green)' : d1.status === 'never' ? 'var(--red)' : 'var(--amber)'}"></div></div>
+      </div>
+
+      <!-- D2 -->
+      <div class="health-card">
+        <div class="health-card-title">🎯 D2 — 15M LTF Engine</div>
+        <div class="health-row"><span class="health-key">Status</span><span class="health-val ${statusClass(d2.status)}"><span class="status-dot ${dotClass(d2.status)}"></span>${statusLabel(d2.status)}</span></div>
+        <div class="health-row"><span class="health-key">Last Cycle</span><span class="health-val neutral">${d2.age_s != null ? d2.age_s + 's ago' : 'never'}</span></div>
+        <div class="health-row"><span class="health-key">Signals</span><span class="health-val neutral">${d2.signals != null ? d2.signals : '—'}</span></div>
+        <div class="health-bar"><div class="health-bar-fill" style="width:${d2.age_s ? Math.max(0, 100 - d2.age_s) : 0}%;background:${d2.status === 'live' ? 'var(--green)' : d2.status === 'never' ? 'var(--red)' : 'var(--amber)'}"></div></div>
+      </div>
+
+      <!-- D3 -->
+      <div class="health-card">
+        <div class="health-card-title">⚡ D3 — Fusion Engine</div>
+        <div class="health-row"><span class="health-key">Status</span><span class="health-val ${statusClass(d3.status)}"><span class="status-dot ${dotClass(d3.status)}"></span>${statusLabel(d3.status)}</span></div>
+        <div class="health-row"><span class="health-key">Last Fusion</span><span class="health-val neutral">${d3.age_s != null ? d3.age_s + 's ago' : 'never'}</span></div>
+        <div class="health-row"><span class="health-key">Decisions</span><span class="health-val neutral">${d3.decisions != null ? d3.decisions : '—'}</span></div>
+        <div class="health-bar"><div class="health-bar-fill" style="width:${d3.age_s ? Math.max(0, 100 - d3.age_s) : 0}%;background:${d3.status === 'live' ? 'var(--green)' : d3.status === 'never' ? 'var(--red)' : 'var(--amber)'}"></div></div>
+      </div>
+
+      <!-- Errors -->
+      <div class="health-card">
+        <div class="health-card-title">⚠️ Recent Errors</div>
+        <div class="health-row"><span class="health-key">Errors (recent)</span><span class="health-val ${(h.errors_1h || 0) > 0 ? 'err' : 'ok'}">${h.errors_1h || 0}</span></div>
+        <div class="health-row"><span class="health-key">Warnings (recent)</span><span class="health-val ${(h.warnings_1h || 0) > 0 ? 'warn' : 'ok'}">${h.warnings_1h || 0}</span></div>
+        <div class="health-row"><span class="health-key">D1 Scan Age</span><span class="health-val neutral">${d1.age_s != null ? d1.age_s + 's' : '—'}</span></div>
+        <div class="health-row"><span class="health-key">D2 Scan Age</span><span class="health-val neutral">${d2.age_s != null ? d2.age_s + 's' : '—'}</span></div>
+        <div class="health-row"><span class="health-key">D3 Fusion Age</span><span class="health-val neutral">${d3.age_s != null ? d3.age_s + 's' : '—'}</span></div>
+      </div>
+
+      <!-- Stats -->
+      <div class="health-card">
+        <div class="health-card-title">📈 Pipeline Stats</div>
+        <div class="health-row"><span class="health-key">Total Signals</span><span class="health-val neutral">${h.signals || 0}</span></div>
+        <div class="health-row"><span class="health-key">Fusion Decisions</span><span class="health-val neutral">${h.decisions || 0}</span></div>
+      </div>
+    `;
+  } catch (e) {
+    grid.innerHTML = '<div class="obs-log-loading">Failed to load health data</div>';
+  }
 }
 
 // ── Init ───────────────────────────────────────────────────────────

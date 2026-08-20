@@ -47,13 +47,14 @@ SIGNAL_TYPES = {
     "C": {"name": "Full Confluence", "color": "#22c55e", "icon": "🟢", "action": "EXECUTE", "ttl_min": 240},
     "D": {"name": "HTF Early Warn",  "color": "#f97316", "icon": "🟠", "action": "WATCH",   "ttl_min": 60},
     "E": {"name": "Conflict/Trap",   "color": "#ef4444", "icon": "🔴", "action": "ALERT",   "ttl_min": 0},
+    "F": {"name": "LTF Weak",        "color": "#a855f7", "icon": "🟣", "action": "WATCH",   "ttl_min": 30},
 }
 
 # Position size multipliers by signal type
-TYPE_POSITION_MULT = {"A": 0.75, "B": 0.35, "C": 1.0, "D": 0.0, "E": 0.0}
+TYPE_POSITION_MULT = {"A": 0.75, "B": 0.35, "C": 1.0, "D": 0.0, "E": 0.0, "F": 0.0}
 
 # Stop width multipliers by signal type
-TYPE_STOP_MULT = {"A": 1.5, "B": 1.0, "C": 1.5, "D": 1.5, "E": 1.5}
+TYPE_STOP_MULT = {"A": 1.5, "B": 1.0, "C": 1.5, "D": 1.5, "E": 1.5, "F": 2.0}
 
 # Decay rates per signal type (per 5-min interval)
 DECAY_TYPE_A = 0.94
@@ -86,7 +87,7 @@ def calculate_ev(win_rate: float, avg_win: float, avg_loss: float) -> float:
 
 def classify_signal_type(d1_tier: str, d1_score: float, d2_tier: str, d2_score: float,
                           d1_direction: str, d2_direction: str,
-                          nascent_move: bool = False, entry_precision: float = 0.0) -> str | None:
+                          nascent_move: bool = False, entry_precision: float = 0.0) -> str:
     """Decision Layer: classify signal into Type A/B/C/D/E or None.
 
     REJECTED D1 and D2 tiers are not blocked — they reach D3 and can produce
@@ -101,7 +102,7 @@ def classify_signal_type(d1_tier: str, d1_score: float, d2_tier: str, d2_score: 
     3. Type B: D1 NOT approved AND D2 >= TYPE_B_MIN_D2_SCORE AND nascent_move AND EP >= TYPE_B_ENTRY_PRECISION_GATE
     4. Type E: D1 approved AND D2 strong BUT opposing directions
     5. Type D: D1 >= D3_TYPE_D_D1_THRESHOLD AND D2 not aligned
-    6. None: everything else (e.g. both REJECTED, or weak D2 without nascent move)
+    6. Type F: catch-all — any D2 signal that didn't match above (manual watch)
     """
     from backend.config import (
         D3_D1_SNIPER_THRESHOLD, D3_D2_SNIPER_THRESHOLD,
@@ -142,8 +143,9 @@ def classify_signal_type(d1_tier: str, d1_score: float, d2_tier: str, d2_score: 
     if d1_opp_or_above and not directions_align and d2_not_rejected:
         return "D"
 
-    # No signal
-    return None
+    # No signal type matched — fallback to Type F (LTF Weak)
+    # All D2 coins now produce a card so user can see every coin for manual planning.
+    return "F"
 
 
 # ── DB Persistence Helpers ──────────────────────────────────────────
