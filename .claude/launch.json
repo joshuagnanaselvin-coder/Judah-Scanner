@@ -4,8 +4,9 @@
     {
       "name": "Judah Scanner",
       "runtimeExecutable": "venv/Scripts/uvicorn.exe",
-      "runtimeArgs": ["backend.main:app", "--host", "0.0.0.0", "--port", "8001"],
+      "runtimeArgs": ["backend.main:app", "--host", "0.0.0.0"],
       "port": 8001,
+      "autoPort": true,
       "url": "http://localhost:8001/"
     }
   ]

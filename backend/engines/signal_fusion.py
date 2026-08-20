@@ -231,7 +231,7 @@ class FusionEngine:
             except asyncio.CancelledError:
                 break
             except Exception:
-                logger.exception("[fusion] Scan error")
+                logger.exception("[fusion] Scan loop error")
             await asyncio.sleep(2)
 
     async def _archive_expired(self):
@@ -273,10 +273,19 @@ class FusionEngine:
         d1_changed = last_d1 != self._last_d1_scan
         d2_changed = last_d2 != self._last_d2_scan
         if not d1_changed and not d2_changed:
+            # Log periodically so the D3 log filter always shows D3 is alive
+            import time as _time
+            now_ts = _time.time()
+            if now_ts - getattr(self, '_last_idle_log', 0) > 30:
+                self._last_idle_log = now_ts
+                logger.debug(f"[fusion] Idle — d1_age={last_d1 and round(now_ts - last_d1, 0) or 'never'}, "
+                             f"d2_age={last_d2 and round(now_ts - last_d2, 0) or 'never'}")
             return
 
         self._last_d1_scan = last_d1
         self._last_d2_scan = last_d2
+        logger.info(f"[fusion] Cycle: d1_changed={d1_changed} d2_changed={d2_changed} "
+                    f"d1_ts={last_d1:.0f} d2_ts={last_d2:.0f}")
 
         # Archive any D3 decisions that lost their D2 signal
         await self._archive_expired()
