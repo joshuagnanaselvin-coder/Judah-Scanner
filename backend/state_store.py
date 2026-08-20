@@ -402,8 +402,13 @@ class StateStore:
 
     def get_stats(self) -> dict:
         """Get pipeline stats for health endpoint."""
+        d1_output_count = sum(
+            1 for entry in self.d1_tiers.values()
+            if entry.get("tier") not in (None, "REJECTED")
+        )
         return {
-            "d1_coins": len(self.d1_tiers),
+            "d1_coins": d1_output_count,
+            "d1_input_count": len(self.d1_tiers),
             "d2_signals": len(self.d2_signals),
             "d3_fusion": len(self.d3_decisions),
             "last_d1_scan": self.last_d1_scan,
