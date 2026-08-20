@@ -326,19 +326,20 @@ function renderSignals() {
 
   const filtered = applyFilters();
 
-  // Sort by composite score descending — highest conviction first,
-  // tie-break by D2 tier, then confidence.
+  // Sort primarily by market evolution confidence, then composite score,
+  // then D2 tier — highest conviction and most established setups first.
   const tierRank = { SNIPER: 3, OPPORTUNITY: 2, WATCH: 1, REJECTED: 0, '—': 0 };
   filtered.sort((a, b) => {
-    const c_a = b.composite_score ?? b.d2_score ?? 0;
-    const c_b = a.composite_score ?? a.d2_score ?? 0;
-    if (c_b !== c_a) return c_a - c_b;          // higher composite first
+    const ca = (a.marketEvolution || {}).confidence ?? 0;
+    const cb = (b.marketEvolution || {}).confidence ?? 0;
+    if (cb !== ca) return cb - ca;                // higher confidence first
+    const sa = b.composite_score ?? b.d2_score ?? 0;
+    const sb = a.composite_score ?? a.d2_score ?? 0;
+    if (sb !== sa) return sa - sb;                // higher score first
     const ta = tierRank[b.d2_tier] || 0;
     const tb = tierRank[a.d2_tier] || 0;
-    if (ta !== tb) return ta - tb;               // higher tier first
-    const d_a = (a.marketEvolution || {}).confidence ?? 0;
-    const d_b = (b.marketEvolution || {}).confidence ?? 0;
-    return d_b - d_a;                            // higher confidence first
+    if (ta !== tb) return ta - tb;                // higher tier first
+    return 0;
   });
 
   if (allSignals.length === 0) {
