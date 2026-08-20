@@ -202,13 +202,13 @@ MAX_D2_SIGNALS = 200              # Cap D2 signal store (matches D1 cap)
 # Tier thresholds (TIER_SNIPER_SCORE etc.) are the floor values;
 # these add margin for cross-dimension signal classification.
 D3_D1_SNIPER_THRESHOLD = 65       # D1 score >= this → SNIPER tier for Type C
-D3_D2_SNIPER_THRESHOLD = 65       # D2 score >= this → SNIPER tier for Type C
+D3_D2_SNIPER_THRESHOLD = 45       # D2 score >= 45 (OPPORTUNITY tier) → SNIPER for Type C (was 65 — unreachable)
 D3_D1_APPROVED_THRESHOLD = 50     # D1 score >= this → approved (SNIPER/OPP) for Type A
-D3_D2_MODERATE_THRESHOLD = 35     # D2 score >= this → moderate confirmation for Type A
+D3_D2_MODERATE_THRESHOLD = 25     # D2 score >= 25 (WATCH tier) → moderate for Type A (was 35)
 D3_TYPE_D_D1_THRESHOLD = 50       # D1 score >= this for Type D (D1 approved, D2 not aligned)
 
 # === TYPE B MINIMUMS ===
-TYPE_B_MIN_D2_SCORE = 35          # minimum total D2 score (raised — matches WATCH tier)
+TYPE_B_MIN_D2_SCORE = 25          # minimum D2 score for Type B (matches WATCH tier floor, was 35)
 TYPE_B_ENTRY_PRECISION_GATE = 10   # minimum Entry Precision sub-score out of 20 (was 16)
 
 # === D2 MINIMUM THRESHOLDS ===

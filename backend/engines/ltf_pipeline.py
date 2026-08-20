@@ -256,7 +256,7 @@ async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
     # D2: Entry Precision(20) + LTF Structure(20) + Flow(15) + Momentum(15)
     #     + Nascent Move(10) + HTF Context(10) + Timing(5) + Confluence(5) = 100
     fm = detect_fast_mover(candles, swings)
-    crt["crt_score"] = min(crt.get("crt_score", 0), 20)  # Entry Precision: 20 max
+    crt["crt_score"] = min(crt.get("crt_score", 0), 25)  # Entry Precision: CRT max 25
     smc["smc_score"] = min(smc.get("smc_score", 0), SMC_SCORE_MAX)
     flow_score = min(flow["boost"], D2_FLOW_SCORE_MAX)
     momentum_score = min(fm["score"], 15)  # always use detected score, cap at 15
