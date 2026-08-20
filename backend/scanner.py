@@ -340,14 +340,24 @@ class Scanner:
                 signal_tfs.add(f"{sig['symbol']}_{sig['engine']}")
 
             for coin, tfs in all_coin_tfs.items():
-                best_tf = max(tfs.items(), key=lambda x: x[1]['score'])
-                best_tier = best_tf[1]['tier']
-                best_score = best_tf[1]['score']
-                best_direction = best_tf[1].get('direction', '')
+                # If nothing was scanned this cycle (e.g. post-restart with no
+                # ATR-passing candidates yet), write REJECTED for all coins
+                # so D3 has a tier entry and last_d1_scan gets set.
+                if not coins_scanned_this_cycle:
+                    best_tier = "REJECTED"
+                    best_score = 0
+                    best_direction = ""
+                else:
+                    best_tf = max(tfs.items(), key=lambda x: x[1]['score'])
+                    best_tier = best_tf[1]['tier']
+                    best_score = best_tf[1]['score']
+                    best_direction = best_tf[1].get('direction', '')
 
                 # Only overwrite tier if this coin was scanned this cycle.
                 # For unscanned coins, keep existing tier from state_store.
-                if coin not in coins_scanned_this_cycle:
+                # Exception: if nothing was scanned at all (post-restart),
+                # force REJECTED for all coins.
+                if coin not in coins_scanned_this_cycle and coins_scanned_this_cycle:
                     existing = state_store.get_d1_tier(coin)
                     if existing and existing.get("tier") != "REJECTED":
                         continue
@@ -368,6 +378,8 @@ class Scanner:
                 await state_store.set_d1_tier(coin, best_tier, best_score, display_tfs, best_direction)
                 d1_tiers_this_cycle[coin] = best_tier
 
+            # Always set last_d1_scan timestamp — even if no candidates
+            # passed the ATR filter (e.g. right after restart).
             await state_store.set_timestamp("last_d1_scan")
 
         # Console output
@@ -715,7 +727,11 @@ class Scanner:
         self.scan_task = asyncio.create_task(self._scan_loop())
 
         # Kick off an immediate D1 full scan so last_d1_scan gets set
-        asyncio.create_task(self._run_batch_scan())
+        scan_task = asyncio.create_task(self._run_batch_scan())
+        scan_task.add_done_callback(
+            lambda t: logger.error(f"[restart] D1 full scan failed: {t.exception()}")
+            if t.exception() else None
+        )
 
         logger.info(f"[restart] Restart complete — {count} candle sets, "
                     f"{len(self.symbols)} pairs live")
