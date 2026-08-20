@@ -84,8 +84,8 @@ class Scanner:
         # Start the scan loop immediately — it will run WS-triggered scans
         # as soon as candle data is available (from WS or bootstrap).
         self.scan_task = asyncio.create_task(self._scan_loop())
-        print(f"[scanner] [{self.cycle_id}] Live - {len(symbols)} coins x {len(TIMEFRAMES_HTF)} TFs")
-        print(f"[scanner] [{self.cycle_id}] D1 scanning: event-driven on HTF candle close "
+        logger.info(f"[scanner] [{self.cycle_id}] Live - {len(symbols)} coins x {len(TIMEFRAMES_HTF)} TFs")
+        logger.info(f"[scanner] [{self.cycle_id}] D1 scanning: event-driven on HTF candle close "
               f"({', '.join(TIMEFRAMES_HTF)}) + {self._fallback_cycle_seconds}s fallback")
 
         # Bootstrap historical candle data in background (does NOT block scanning).
@@ -100,18 +100,18 @@ class Scanner:
         whatever data is available; this fills in the rest.
         """
         try:
-            print(f"[scanner] [{self.cycle_id}] Background bootstrap starting "
+            logger.info(f"[scanner] [{self.cycle_id}] Background bootstrap starting "
                   f"({len(symbols)} pairs x {len(TIMEFRAMES_HTF)} HTF + {len(TIMEFRAMES_LTF)} LTF)...")
             count = await market_data.bootstrap(symbols)
-            print(f"[scanner] [{self.cycle_id}] Background bootstrap: {count} candle sets")
+            logger.info(f"[scanner] [{self.cycle_id}] Background bootstrap: {count} candle sets")
 
             dropped = self._drop_incomplete_candles()
-            print(f"[scanner] [{self.cycle_id}] Dropped {dropped} incomplete HTF candles")
+            logger.info(f"[scanner] [{self.cycle_id}] Dropped {dropped} incomplete HTF candles")
 
             # Run initial full scan now that we have historical data
-            print(f"[scanner] [{self.cycle_id}] Initial full scan (post-bootstrap)...")
+            logger.info(f"[scanner] [{self.cycle_id}] Initial full scan (post-bootstrap)...")
             await self._run_batch_scan()
-            print(f"[scanner] [{self.cycle_id}] Initial scan complete")
+            logger.info(f"[scanner] [{self.cycle_id}] Initial scan complete")
         except Exception as e:
             logger.error(f"[scanner] [{self.cycle_id}] Background bootstrap failed: {e}")
 
@@ -385,15 +385,15 @@ class Scanner:
         # Console output
         if new_signals:
             for s in new_signals:
-                print(f"[{s['engine']}] {s['symbol']}: {s['tier']} "
+                logger.info(f"[{s['engine']}] {s['symbol']}: {s['tier']} "
                       f"score={s['composite_score']} dir={s['direction']} "
                       f"RR={s['rr']:.1f} session={s['session']}")
         if revalidated:
             for s in revalidated:
                 state = s.get('freshness_state', '?')
                 score = s.get('composite_score', 0)
-                print(f"[reval] {s['symbol']} {s['engine']}: {state} score={score}")
-        print(f"[scan] {len(new_signals)} new, {len(refreshed)} refreshed, "
+                logger.debug(f"[reval] {s['symbol']} {s['engine']}: {state} score={score}")
+        logger.info(f"[scan] {len(new_signals)} new, {len(refreshed)} refreshed, "
               f"{len(revalidated)} revalidated, "
               f"{len(scan_tasks)} HTF candle events scanned"
               + (f", {len(d1_tiers_this_cycle)} D1 tiers" if full_cycle else ""))
@@ -714,9 +714,9 @@ class Scanner:
             logger.exception("[restart] Bayes rehydration failed")
 
         # 4. Re-bootstrap (fresh REST pull for every symbol x TF)
-        print(f"[restart] Re-bootstrapping {len(self.symbols)} pairs x {len(TIMEFRAMES_HTF)} TFs...")
+        logger.info(f"[restart] Re-bootstrapping {len(self.symbols)} pairs x {len(TIMEFRAMES_HTF)} TFs...")
         count = await market_data.bootstrap(self.symbols)
-        print(f"[restart] Bootstrapped {count} candle sets")
+        logger.info(f"[restart] Bootstrapped {count} candle sets")
 
         # 5. Reconnect WebSocket
         market_data.connect_websocket(self.symbols)
