@@ -590,27 +590,35 @@ class FusionEngine:
                      f"→ position_mult={position_mult} action={action}")
 
         # ── Phase 12: Signal Provenance — collect D1/D2 evidence IDs ─────
-        snap_id = state_store.last_snapshot_id or ""
+        # D1 and D2 have separate snapshot IDs. Read evidence from each dimension's
+        # own snapshot so the AlignmentEngine sees both sides correctly.
+        d1_snap_id = state_store.last_snapshot_id or ""
+        d2_snap_id = state_store.last_d2_snapshot_id or ""
         from backend.decision_snapshot import _CODE_VERSION, _CONFIG_HASH
         try:
             evidence = __import__("backend.evidence_store", fromlist=["evidence_store"]).evidence_store
-            all_evidence = evidence.get_for_snapshot_sync(snap_id) if snap_id else {}
+
+            # D1 evidence from D1's snapshot (HTF timeframes: 1H, 4H, 1D)
+            d1_evidence = evidence.get_for_snapshot_sync(d1_snap_id) if d1_snap_id else {}
             d1_evidence_ids = [
                 r.evidence_id
-                for by_cat in all_evidence.get(coin, {}).values()
+                for by_cat in d1_evidence.get(coin, {}).values()
                 for r in by_cat
                 if r.timeframe in ("1H", "4H", "1D")
             ]
+
+            # D2 evidence from D2's snapshot (LTF timeframe: 15M)
+            d2_evidence = evidence.get_for_snapshot_sync(d2_snap_id) if d2_snap_id else {}
             d2_evidence_ids = [
                 r.evidence_id
-                for by_cat in all_evidence.get(coin, {}).values()
+                for by_cat in d2_evidence.get(coin, {}).values()
                 for r in by_cat
                 if r.timeframe == "15M"
             ]
         except Exception:
             d1_evidence_ids = []
             d2_evidence_ids = []
-        alignment_id = f"aln-{snap_id[:8]}-{coin[:6]}" if snap_id else ""
+        alignment_id = f"aln-{d1_snap_id[:8]}-{coin[:6]}" if d1_snap_id else ""
 
         # ── SSL/BSL levels ────────────────────────────────────────────
         liq_pools = raw.get("liquidity_pools", {}) or {}
