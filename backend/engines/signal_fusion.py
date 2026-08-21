@@ -319,6 +319,8 @@ class FusionEngine:
         # Batch broadcast — one message with all signals instead of N individual sends.
         # Prevents ws_hub queue overflow (maxsize=8 can't hold 73+ individual messages).
 
+        await state_store.set_timestamp("last_d3_fusion")
+
         # Phase 5: Per-signal change detection — only broadcast when something changed
         changed, new_coins, removed_coins = self._detect_changes(results)
         if not changed and not new_coins and not removed_coins:
@@ -338,7 +340,6 @@ class FusionEngine:
         for msg in messages:
             await broadcast(msg)
 
-        await state_store.set_timestamp("last_d3_fusion")
         logger.info(f"[fusion] Broadcast {len(results)} signals "
                      f"({len(new_coins)} new, {len(changed)} updated, "
                      f"{len(removed_coins)} removed)")
