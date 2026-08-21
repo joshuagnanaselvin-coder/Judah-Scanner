@@ -717,7 +717,7 @@ class FusionEngine:
 
         # ── Build package ─────────────────────────────────────────────
         package = {
-            "snapshot_id": snap_id,
+            "snapshot_id": d1_snap_id,
             "signal_id": getattr(d2, 'signal_id', ''),
             # Phase 12: Signal Provenance chain
             "code_version": _CODE_VERSION,
@@ -829,8 +829,8 @@ class FusionEngine:
         risk_decision = risk_authority.review(plan, correlation_group=coin[:3])
 
         # Phase 12: Wire plan/risk decision IDs back into provenance chain
-        plan_id = getattr(plan, 'plan_id', '') or f"plan-{snap_id[:8]}-{coin[:6]}"
-        risk_id = getattr(risk_decision, 'decision_id', '') or f"risk-{snap_id[:8]}-{coin[:6]}"
+        plan_id = getattr(plan, 'plan_id', '') or f"plan-{d1_snap_id[:8]}-{coin[:6]}"
+        risk_id = getattr(risk_decision, 'decision_id', '') or f"risk-{d1_snap_id[:8]}-{coin[:6]}"
 
         package["trade_plan"] = plan.to_dict()
         package["trade_plan_id"] = plan_id
