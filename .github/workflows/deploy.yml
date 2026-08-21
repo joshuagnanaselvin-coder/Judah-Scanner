@@ -17,5 +17,6 @@ jobs:
           port: 22
           script: |
             cd /opt/Judah-Scanner
-            git pull
+            git fetch --force origin main
+            git reset --hard origin/main
             docker compose -f docker-compose.vps.yml up -d --build
