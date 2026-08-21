@@ -252,22 +252,23 @@ class SessionRegimeEngine:
 
     def _classify_session(self, utc_hour: float) -> str:
         """Classify current hour into a session regime."""
-        # Killzone overlap check first (London close + NY open overlap)
-        if KILLZONE_LONDON_CLOSE_START <= utc_hour < KILLZONE_NY_END and utc_hour >= KILLZONE_NY_START:
-            # Overlap zone (NY open during London close)
-            return "OVERLAP"
+        # Order matters: most-specific first
+        # OVERLAP (NY open during London close) — highest priority
         if KILLZONE_NY_START <= utc_hour < KILLZONE_NY_END:
-            return "OVERLAP" if KILLZONE_LONDON_CLOSE_START <= utc_hour < KILLZONE_LONDON_CLOSE_END else "OVERLAP"
-        if KILLZONE_LONDON_START <= utc_hour < KILLZONE_LONDON_END:
-            return "LONDON_OPEN"
+            return "OVERLAP"
+        # LONDON_CLOSE (10:30-12:00 UTC) — must check before LONDON_OPEN
         if KILLZONE_LONDON_CLOSE_START <= utc_hour < KILLZONE_LONDON_CLOSE_END:
             return "LONDON_CLOSE"
+        # LONDON_OPEN (08:00-10:30 UTC)
+        if KILLZONE_LONDON_START <= utc_hour < KILLZONE_LONDON_CLOSE_START:
+            return "LONDON_OPEN"
+        # OVERLAP (fallback: 13:30-16:30 UTC)
         if 13.5 <= utc_hour < 16.5:
             return "OVERLAP"
-        if 8.0 <= utc_hour < 13.5:
-            return "LONDON_OPEN"
+        # ASIA (00:00-08:00 UTC)
         if 0.0 <= utc_hour < 8.0:
             return "ASIA_OPEN"
+        # NY Evening (16:30-20:00 UTC)
         if 16.5 <= utc_hour < 20.0:
             return "NY_EVENING"
         return "OFF_HOURS"
