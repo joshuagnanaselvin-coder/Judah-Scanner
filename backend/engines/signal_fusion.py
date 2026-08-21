@@ -457,7 +457,9 @@ class FusionEngine:
         ttl_min = type_info.get("ttl_min", 60)
 
         # position_mult and action are set by the convergence gate below
-        # (after alignment evaluation). Do NOT set them here.
+        # (after alignment evaluation). Initialise defaults for the log block.
+        action = "WATCH"
+        position_mult = 0.0
 
         # ── Structured Scoring Decision Log ────────────────────────────
         logger.info(
