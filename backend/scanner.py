@@ -173,19 +173,21 @@ class Scanner:
                 state_store.set_d1_status("DEGRADED", reason="scan_cycle_failed")
                 await asyncio.sleep(SCAN_INTERVAL_SECONDS)  # keep going despite errors
 
-    async def _scan_batch(self, scan_tasks: list, full_cycle: bool = True):
-        """Run a batch of scans (from WS events).
+    async def _scan_batch(self, scan_tasks: list, full_cycle: bool = True, snap=None):
+        """Run a batch of scans (from WS events or full cycle).
 
         Args:
             scan_tasks: list of (symbol, tf) to scan
             full_cycle: if True, also revalidate existing signals and build tiers
+            snap: optional pre-built SnapshotBuilder (avoids duplicate builds)
         """
         refreshed = []
         revalidated = []
 
         if full_cycle:
             # === PASS 1: Revalidate + refresh existing signals ===
-            snap = SnapshotBuilder(market_data).build(self.symbols, TIMEFRAMES_HTF)
+            if snap is None:
+                snap = SnapshotBuilder(market_data).build(self.symbols, TIMEFRAMES_HTF)
             await state_store.set_snapshot_info(snap.snapshot_id, snap.snapshot_timestamp)
 
             for key, sig in list(signal_store.signals.items()):
@@ -405,6 +407,7 @@ class Scanner:
         all non-candidate coins so D1 tiers exist for every coin D3 may reference.
         """
         logger.info(f"[scan] [{self.cycle_id}] Full cycle: building snapshot")
+        snap = SnapshotBuilder(market_data).build(self.symbols, TIMEFRAMES_HTF)
         # Build candidate list (coins that pass the ATR/movement filter)
         scan_tasks = []
         scanned_pairs: set[str] = set()   # (coin, tf) pairs actually scanned
@@ -418,7 +421,7 @@ class Scanner:
                 scanned_pairs.add(f"{symbol}_{tf}")
 
         logger.info(f"[scan] [{self.cycle_id}] Full cycle: {len(scan_tasks)} pairs")
-        await self._scan_batch(scan_tasks, full_cycle=True)
+        await self._scan_batch(scan_tasks, full_cycle=True, snap=snap)
 
     def _apply_zscore_normalization(self, all_signals: list) -> list:
         """Normalize composite scores across the live signal universe.

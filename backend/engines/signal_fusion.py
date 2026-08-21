@@ -171,7 +171,11 @@ def _persist_decision(coin: str, sig_type: str | None, package: dict) -> None:
             "d2_tier": package.get("d2_tier"),
             "d2_score": package.get("d2_score"),
         }
-        loop = asyncio.get_event_loop()
+        # Phase 7: Use get_running_loop() (deprecation-safe in Python 3.12+)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.get_event_loop()
         if loop.is_running():
             asyncio.create_task(db.insert_decision(row))
         else:
@@ -204,6 +208,7 @@ class FusionEngine:
         self.scan_task = None
         self._last_d1_scan: float = 0.0
         self._last_d2_scan: float = 0.0
+        self._prev_signal_cache: dict[str, dict] = {}  # Phase 5: per-signal change detection
 
     async def start(self):
         """Start D3 fusion loop."""
@@ -239,6 +244,7 @@ class FusionEngine:
 
         D2 removes signals at 15-min TTL (ltf_engine PASS 1). D3 must catch
         the orphaned decisions and clean them up so they don't pile up.
+        Returns list of signal_ids that were removed (for frontend notification).
         """
         archived = []
         signal_ids_to_remove = []
@@ -257,12 +263,8 @@ class FusionEngine:
         if archived:
             logger.info(f"[fusion] Archived {len(archived)} expired decisions: "
                         f"{', '.join(archived[:5])}{'...' if len(archived) > 5 else ''}")
-            # Notify frontend of removals
-            await broadcast({
-                "type": "REMOVE_SIGNALS",
-                "signal_ids": signal_ids_to_remove,
-                "moved_to_history": True,
-            })
+
+        return signal_ids_to_remove
 
     async def _check_and_fuse(self):
         """Check if D1 or D2 has new data, fuse all D2 signals (independent of D1)."""
@@ -316,9 +318,74 @@ class FusionEngine:
 
         # Batch broadcast — one message with all signals instead of N individual sends.
         # Prevents ws_hub queue overflow (maxsize=8 can't hold 73+ individual messages).
-        await broadcast({"type": "SIGNALS_BATCH", "signals": results})
+
+        # Phase 5: Per-signal change detection — only broadcast when something changed
+        changed, new_coins, removed_coins = self._detect_changes(results)
+        if not changed and not new_coins and not removed_coins:
+            logger.debug(f"[fusion] No signal changes — skipping broadcast")
+            return
+
+        messages = []
+        if results:
+            messages.append({"type": "SIGNALS_BATCH", "signals": results})
+        if removed_coins:
+            messages.append({
+                "type": "REMOVE_SIGNALS",
+                "signal_ids": removed_coins,
+                "moved_to_history": True,
+            })
+
+        for msg in messages:
+            await broadcast(msg)
+
         await state_store.set_timestamp("last_d3_fusion")
-        logger.info(f"[fusion] Broadcast {len(results)} signals as batch")
+        logger.info(f"[fusion] Broadcast {len(results)} signals "
+                     f"({len(new_coins)} new, {len(changed)} updated, "
+                     f"{len(removed_coins)} removed)")
+
+    def _detect_changes(self, results: list[dict]) -> tuple[set, list, list]:
+        """Phase 5: Compare current results to previous to find what changed.
+
+        Returns:
+            (changed_coins, new_coins, removed_coins)
+            - changed_coins: coins whose signal properties changed
+            - new_coins: coins not in previous cycle
+            - removed_coins: coins in previous cycle but absent now
+        """
+        current_coins = {pkg["coin"] for pkg in results}
+        prev_coins = set(self._prev_signal_cache.keys())
+
+        new_coins = sorted(current_coins - prev_coins)
+        removed_coins = sorted(prev_coins - current_coins)
+        changed_coins = set()
+
+        # Build current keyed cache
+        current_cache = {}
+        for pkg in results:
+            coin = pkg["coin"]
+            # Hash signal properties that matter for display
+            key = (
+                pkg.get("signal_type", "—"),
+                pkg.get("signal_type_name", "—"),
+                pkg.get("direction", "BULLISH"),
+                round(float(pkg.get("d2_score", 0)), 1),
+                round(float(pkg.get("d1_score", 0)), 1),
+                pkg.get("d1_tier", "WATCH"),
+                pkg.get("d2_tier", "WEAK"),
+                round(float(pkg.get("position_mult", 0)), 2),
+                pkg.get("action", "WATCH"),
+                round(float(pkg.get("entry", 0) or 0), 6),
+                round(float(pkg.get("sl", 0) or 0), 6),
+                round(float(pkg.get("tp1", 0) or 0), 6),
+                round(float(pkg.get("tp2", 0) or 0), 6),
+            )
+            current_cache[coin] = key
+            prev_key = self._prev_signal_cache.get(coin)
+            if prev_key and prev_key != key:
+                changed_coins.add(coin)
+
+        self._prev_signal_cache = current_cache
+        return changed_coins, new_coins, removed_coins
 
     async def _fuse_coin(self, coin: str, type_e_alerts: list | None = None):
         """Fuse D1 + D2 for one coin. Returns package dict or None.
