@@ -352,6 +352,10 @@ class FusionEngine:
         d2_tier_name = classify_tier(d2_score)
 
         # ── Signal Type Classification ─────────────────────────────────
+        # classify_signal_type always returns a type (A/B/C/D/E/F).
+        # Type F is a catch-all for any D2 signal that doesn't match A-E.
+        # Signal type controls actionability (position_mult, action) — NOT visibility.
+        # Every D2 signal MUST appear in D3 output so the user can see D1/D2 state.
         d1_direction = d1.get("direction", "")
         d2_direction = getattr(d2, 'direction', '')
         nascent_move = getattr(d2, 'nascent_move', False)
@@ -361,13 +365,6 @@ class FusionEngine:
             d1_tier, d1_score, d2_tier_name, d2_score,
             d1_direction, d2_direction, nascent_move, entry_precision
         )
-
-        # No valid signal type (e.g. both REJECTED, or weak D2 without nascent move)
-        # — skip this coin, don't pollute D3 output
-        if sig_type is None:
-            logger.debug(f"[fusion] {coin}: no signal type (d1={d1_tier}/{d1_score:.0f} "
-                        f"d2={d2_tier_name}/{d2_score:.0f}) — skipping")
-            return None
 
         # Type E conflict alert (sent to frontend + logged)
         if sig_type == "E" and type_e_alerts is not None:
@@ -389,10 +386,11 @@ class FusionEngine:
             })
 
         type_info = SIGNAL_TYPES.get(sig_type, SIGNAL_TYPES.get("D", {}))
-        action = type_info.get("action", "WATCH")
-        position_mult = TYPE_POSITION_MULT.get(sig_type, 0.0)
         stop_mult = TYPE_STOP_MULT.get(sig_type, 1.5)
         ttl_min = type_info.get("ttl_min", 60)
+
+        # position_mult and action are set by the convergence gate below
+        # (after alignment evaluation). Do NOT set them here.
 
         # ── Structured Scoring Decision Log ────────────────────────────
         logger.info(
@@ -565,6 +563,31 @@ class FusionEngine:
         alignment = alignment_result.to_dict()
         alignment["alignment_score"] = int(alignment_result.score * 20)  # back-compat (0–20)
         alignment_level = alignment_result.level.value
+
+        # ── Convergence Gate — adjusts actionability, NOT visibility ──────
+        # Signal type (A/B/C/D/E/F) and signal type position_mult are the base.
+        # Alignment level then scales position_mult:
+        #   STRONG_ALIGNMENT     → 100% of signal type's base multiplier
+        #   PARTIAL_ALIGNMENT    → 50% of signal type's base multiplier
+        #   CONFLICT             → 0% (watch/alert only, never execute)
+        #   INSUFFICIENT_EVIDENCE → 0% (watch only)
+        #   DEGRADED             → 0% (watch only)
+        # The signal STILL appears in D3 output — it just shows position_mult=0
+        # and action=WATCH/ALERT so the user sees everything.
+        base_position_mult = TYPE_POSITION_MULT.get(sig_type, 0.0)
+        if alignment_result.level == AlignmentLevel.STRONG_ALIGNMENT:
+            position_mult = base_position_mult
+            action = type_info.get("action", "EXECUTE")
+        elif alignment_result.level == AlignmentLevel.PARTIAL_ALIGNMENT:
+            position_mult = round(base_position_mult * 0.5, 2)
+            action = "EXECUTE" if base_position_mult > 0 else "WATCH"
+        else:  # CONFLICT, INSUFFICIENT_EVIDENCE, DEGRADED
+            position_mult = 0.0
+            action = "ALERT" if alignment_result.level == AlignmentLevel.CONFLICT else "WATCH"
+
+        logger.debug(f"[fusion] [{coin}] convergence: {alignment_level} "
+                     f"sig_type={sig_type} base_mult={base_position_mult} "
+                     f"→ position_mult={position_mult} action={action}")
 
         # ── Phase 12: Signal Provenance — collect D1/D2 evidence IDs ─────
         snap_id = state_store.last_snapshot_id or ""
