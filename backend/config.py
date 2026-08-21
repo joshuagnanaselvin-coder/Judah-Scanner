@@ -9,7 +9,6 @@ EVIDENCE_TTL_MINUTES = 240        # Evidence expiry in evidence_store (4 hours)
 MAX_SIGNALS = None     # No cap — store all D1 signals
 BOOTSTRAP_CANDLES = 50            # Only need ~50 candles for indicator lookbacks (was 200)
 SCAN_CONCURRENCY = 20             # Max parallel CRT+SMC scans per cycle
-D1_TTL_SECONDS = 120              # D1 signal expiry in state_store
 
 # === CANDIDATE SELECTION ENGINE (formerly pre-filter) ===
 # Adaptive ATR threshold: each coin's threshold = 60% of its own 50-period rolling ATR baseline.

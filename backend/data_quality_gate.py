@@ -21,7 +21,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from backend.config import (
-    D1_TTL_SECONDS,
     D2_TIMEFRAME,
     BOOTSTRAP_CANDLES,
 )
