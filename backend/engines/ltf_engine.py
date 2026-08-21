@@ -19,7 +19,7 @@ Input: all D1 coins (SNIPER, OPPORTUNITY, WATCH, REJECTED — all flow to D2).
 Dimensions work independently during the process.
 """
 from backend.config import (
-    D2_SCAN_INTERVAL_SECONDS, D2_SIGNAL_TTL_MINUTES, MAX_D2_SIGNALS,
+    D2_SCAN_INTERVAL_SECONDS, D2_SIGNAL_TTL_MINUTES,
     TIMEFRAMES_LTF,
     SCAN_CONCURRENCY,
 )

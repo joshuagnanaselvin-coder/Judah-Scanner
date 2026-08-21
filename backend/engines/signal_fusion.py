@@ -314,8 +314,11 @@ class FusionEngine:
                                f"| D1={alert['d1_tier']}({alert['d1_score']:.0f}) "
                                f"D2={alert['d2_tier']}({alert['d2_score']:.0f})")
 
-        # Update D3 fusion timestamp
+        # Batch broadcast — one message with all signals instead of N individual sends.
+        # Prevents ws_hub queue overflow (maxsize=8 can't hold 73+ individual messages).
+        await broadcast({"type": "SIGNALS_BATCH", "signals": results})
         await state_store.set_timestamp("last_d3_fusion")
+        logger.info(f"[fusion] Broadcast {len(results)} signals as batch")
 
     async def _fuse_coin(self, coin: str, type_e_alerts: list | None = None):
         """Fuse D1 + D2 for one coin. Returns package dict or None.
@@ -742,7 +745,7 @@ class FusionEngine:
         package["tradeable"] = alignment_result.is_tradeable() and risk_decision.verdict.value == "APPROVED"
 
         await state_store.set_d3_decision(coin, package)
-        await broadcast({"type": "signal", "data": package})
+        # Broadcast removed — batch at end of _check_and_fuse instead
 
         # Phase 22: persist decision to SQLite
         _persist_decision(coin, sig_type, package)

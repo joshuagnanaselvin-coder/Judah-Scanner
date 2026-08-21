@@ -61,8 +61,9 @@ class SignalStore:
     def get_all(self) -> list:
         now = datetime.now(timezone.utc).timestamp() * 1000
         self._clean_expired(now)
-        return sorted(self.signals.values(),
-                      key=lambda s: s["composite_score"], reverse=True)[:MAX_SIGNALS]
+        results = sorted(self.signals.values(),
+                      key=lambda s: s["composite_score"], reverse=True)
+        return results if MAX_SIGNALS is None else results[:MAX_SIGNALS]
 
     def get_all_decisions(self) -> dict:
         """Return all signals keyed by symbol_engine (for ws_hub initial payload)."""

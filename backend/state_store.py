@@ -202,7 +202,7 @@ class StateStore:
 
         Owner: LTF engine (backend/engines/ltf_engine.py)
         Readers: D3 fusion engine (backend/engines/signal_fusion.py), API
-        Eviction: FIFO when MAX_D2_SIGNALS cap reached (weakest scores dropped first)
+        Eviction: None when MAX_D2_SIGNALS is None (no cap)
         """
         from backend.config import MAX_D2_SIGNALS
         async with self._lock:
@@ -210,7 +210,7 @@ class StateStore:
                 self.d2_signals.pop(coin, None)
             else:
                 # Enforce cap — evict weakest signal if at limit
-                if len(self.d2_signals) >= MAX_D2_SIGNALS:
+                if MAX_D2_SIGNALS is not None and len(self.d2_signals) >= MAX_D2_SIGNALS:
                     weakest = min(self.d2_signals.items(),
                                   key=lambda x: float(getattr(x[1], 'score', 0)))
                     del self.d2_signals[weakest[0]]

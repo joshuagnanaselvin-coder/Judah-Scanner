@@ -15,7 +15,7 @@ from typing import Any
 logger = logging.getLogger("judah.ws_hub")
 
 # Phase 17: bounded delivery constants
-_WS_QUEUE_MAXSIZE = 8           # Max pending messages per client
+_WS_QUEUE_MAXSIZE = 256          # Max pending messages per client (batch mode: 1 msg/cycle)
 _WS_SEND_TIMEOUT = 5.0          # Seconds before a send is considered stuck
 
 

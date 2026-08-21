@@ -490,6 +490,14 @@ function connectWS() {
           if (empty && empty.parentNode) empty.parentNode.removeChild(empty);
         }
       }
+      if (msg.type === 'SIGNALS_BATCH' && msg.signals) {
+        for (const s of msg.signals) {
+          const idx = allSignals.findIndex(x => x.signal_id === s.signal_id);
+          if (idx >= 0) allSignals[idx] = s;
+          else { allSignals.unshift(s); flashNew(s.signal_id); }
+        }
+        renderSignals();
+      }
       if (msg.type === 'signal' && msg.data) {
         const s = msg.data;
         const idx = allSignals.findIndex(x => x.signal_id === s.signal_id);

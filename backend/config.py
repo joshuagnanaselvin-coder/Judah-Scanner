@@ -6,7 +6,7 @@ SIGNAL_TTL_MINUTES = 240          # D1 signal expiry (4 hours — HTF setups on 
                                   # should outlive the candle itself; 15min was wiping D1
                                   # data every cycle and replacing it with REJECTED+0)
 EVIDENCE_TTL_MINUTES = 240        # Evidence expiry in evidence_store (4 hours)
-MAX_SIGNALS = 200
+MAX_SIGNALS = None     # No cap — store all D1 signals
 BOOTSTRAP_CANDLES = 50            # Only need ~50 candles for indicator lookbacks (was 200)
 SCAN_CONCURRENCY = 20             # Max parallel CRT+SMC scans per cycle
 D1_TTL_SECONDS = 120              # D1 signal expiry in state_store
@@ -195,7 +195,7 @@ STALE_SCORE_FACTOR = 0.75
 D2_TIMEFRAME = "15M"
 D2_SIGNAL_TTL_MINUTES = 15
 D2_SCAN_INTERVAL_SECONDS = 5
-MAX_D2_SIGNALS = 200              # Cap D2 signal store (matches D1 cap)
+MAX_D2_SIGNALS = None  # No cap — store all D2 signals
 
 # === D3 FUSION THRESHOLDS ===
 # Used by signal_fusion.classify_signal_type for D1/D2 classification.
