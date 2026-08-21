@@ -186,7 +186,7 @@ class Scanner:
         if full_cycle:
             # === PASS 1: Revalidate + refresh existing signals ===
             snap = SnapshotBuilder(market_data).build(self.symbols, TIMEFRAMES_HTF)
-            state_store.set_snapshot_info(snap.snapshot_id, snap.snapshot_timestamp)
+            await state_store.set_snapshot_info(snap.snapshot_id, snap.snapshot_timestamp)
 
             for key, sig in list(signal_store.signals.items()):
                 quality = snap.candle_quality(sig['symbol'], sig['engine'])
@@ -404,10 +404,7 @@ class Scanner:
         Scans ATR candidates (efficient) but writes REJECTED tier entries for
         all non-candidate coins so D1 tiers exist for every coin D3 may reference.
         """
-        snap = SnapshotBuilder(market_data).build(self.symbols, TIMEFRAMES_HTF)
-        state_store.set_snapshot_info(snap.snapshot_id, snap.snapshot_timestamp)
-        logger.info(f"[scan] [{self.cycle_id}] Full cycle: snapshot {snap.snapshot_id[:8]}")
-
+        logger.info(f"[scan] [{self.cycle_id}] Full cycle: building snapshot")
         # Build candidate list (coins that pass the ATR/movement filter)
         scan_tasks = []
         scanned_pairs: set[str] = set()   # (coin, tf) pairs actually scanned
@@ -665,7 +662,7 @@ class Scanner:
         # Phase 20: Restart/Recovery — also clear StateStore tiers + evidence
         from backend.state_store import state_store
         from backend.evidence_store import evidence_store
-        await state_store.clear(preserve_snapshot_id=False)
+        await state_store.clear()
         # Evidence is regenerated each cycle — wipe to prevent stale cross-snapshot evidence
         ev_stats = evidence_store.get_stats()
         if ev_stats["total_records"] > 0:

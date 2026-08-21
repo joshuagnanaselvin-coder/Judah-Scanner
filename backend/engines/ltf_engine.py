@@ -121,7 +121,7 @@ class LTFEngine:
 
         # Build immutable snapshot (D2's primary timeframe is 15M)
         snap = SnapshotBuilder(market_data).build(scan_targets, htf_timeframes=[], ltf_timeframes=["15M"])
-        state_store.set_snapshot_info(snap.snapshot_id, snap.snapshot_timestamp)
+        await state_store.set_d2_snapshot_info(snap.snapshot_id, snap.snapshot_timestamp)
         logger.info(f"[ltf] Snapshot {snap.snapshot_id[:8]} — "
                     f"{sum(1 for v in snap.data_quality.values() if v == 'VALID')}/{len(snap.data_quality)} pairs VALID")
 

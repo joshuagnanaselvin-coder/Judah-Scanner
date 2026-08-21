@@ -86,6 +86,10 @@ class StateStore:
         self.last_snapshot_id: str = ""
         self.last_snapshot_ts: float = 0.0
 
+        # D2 snapshot (separate from D1 — prevents D2 overwriting D1's snapshot)
+        self.last_d2_snapshot_id: str = ""
+        self.last_d2_snapshot_ts: float = 0.0
+
     async def set_timestamp(self, field: str, ts: float = None):
         """Thread-safe timestamp setter for last_d1_scan / last_d2_scan / last_d3_fusion."""
         if ts is None:
@@ -94,13 +98,25 @@ class StateStore:
             if hasattr(self, field):
                 setattr(self, field, ts)
 
-    def set_snapshot_info(self, snapshot_id: str, snapshot_ts: float):
+    async def set_snapshot_info(self, snapshot_id: str, snapshot_ts: float):
         """Record the latest DecisionSnapshot ID for provenance.
 
         D3 reads this to know which snapshot its decisions were derived from.
+        Thread-safe — protected by the instance lock.
         """
-        self.last_snapshot_id = snapshot_id
-        self.last_snapshot_ts = snapshot_ts
+        async with self._lock:
+            self.last_snapshot_id = snapshot_id
+            self.last_snapshot_ts = snapshot_ts
+
+    async def set_d2_snapshot_info(self, snapshot_id: str, snapshot_ts: float):
+        """Record D2's snapshot ID (separate from D1's).
+
+        D2 builds its own SnapshotBuilder for 15M candle quality checks.
+        This must NOT overwrite D1's snapshot_id — D3 needs both.
+        """
+        async with self._lock:
+            self.last_d2_snapshot_id = snapshot_id
+            self.last_d2_snapshot_ts = snapshot_ts
 
     # ── Phase 11: No Silent Failures — Status Tracking ─────────────────
 
@@ -302,18 +318,16 @@ class StateStore:
     # ── Phase 20: Restart/Recovery ────────────────────────────────────
 
     async def clear(self, clear_signals: bool = True, clear_decisions: bool = True,
-                    clear_regimes: bool = True, preserve_snapshot_id: bool = False):
+                    clear_regimes: bool = True):
         """Full state reset. Called during scanner restart.
 
         Args:
             clear_signals: Clear D1/D2 state (tiers + signals)
             clear_decisions: Clear D3 decisions
             clear_regimes: Clear market regimes
-            preserve_snapshot_id: Keep last_snapshot_id for provenance audit
 
         Safe to call multiple times — idempotent.
         """
-        snap_id = self.last_snapshot_id
         async with self._lock:
             if clear_signals:
                 self.d1_tiers.clear()
@@ -331,13 +345,10 @@ class StateStore:
             self.last_d1_scan = 0.0
             self.last_d2_scan = 0.0
             self.last_d3_fusion = 0.0
-            self.last_d1_scan = 0.0
-            self.last_d2_scan = 0.0
-            if not preserve_snapshot_id:
-                self.last_snapshot_id = ""
-                self.last_snapshot_ts = 0.0
-            else:
-                self.last_snapshot_id = snap_id
+            self.last_snapshot_id = ""
+            self.last_snapshot_ts = 0.0
+            self.last_d2_snapshot_id = ""
+            self.last_d2_snapshot_ts = 0.0
         logger.info("[state_store] State cleared — restart ready")
 
     async def recover(self, snapshot_id: str) -> dict:
