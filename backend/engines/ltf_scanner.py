@@ -31,12 +31,12 @@ class LTFSignal:
         "signal_id", "coin", "timeframe", "direction",
         "score", "tier", "entry", "sl", "tp1", "tp2",
         "rr1", "rr2", "freshness", "born_at", "last_scan",
-        "score_history", "raw_signal", "d1_tier", "d1_score",
+        "score_history", "raw_signal",
         "nascent_move", "entry_precision", "flow_score",
-        "momentum_score", "htf_bonus",
+        "momentum_score",
     )
 
-    def __init__(self, coin: str, raw: dict, d1_tier: str = "", d1_score: float = 0):
+    def __init__(self, coin: str, raw: dict):
         self.signal_id = raw.get("signal_id") or str(uuid.uuid4())[:12]
         self.coin = coin
         self.timeframe = "15M"
@@ -55,14 +55,11 @@ class LTFSignal:
         self.score_history: deque = deque(maxlen=20)
         self.score_history.append((self.born_at.timestamp(), self.score))
         self.raw_signal = raw
-        self.d1_tier = d1_tier
-        self.d1_score = d1_score
         # Nascent Move & Entry Precision
         self.nascent_move = bool(raw.get("nascent_move", False))
         self.entry_precision = float(raw.get("entry_precision", 0.0))
         self.flow_score = float(raw.get("flow_score", 0.0))
         self.momentum_score = float(raw.get("momentum_score", 0.0))
-        self.htf_bonus = float(raw.get("htf_bonus", 0.0))
 
     def update(self, raw: dict):
         self.score = float(raw.get("composite_score", 0))
@@ -81,7 +78,6 @@ class LTFSignal:
         self.entry_precision = float(raw.get("entry_precision", self.entry_precision))
         self.flow_score = float(raw.get("flow_score", self.flow_score))
         self.momentum_score = float(raw.get("momentum_score", self.momentum_score))
-        self.htf_bonus = float(raw.get("htf_bonus", self.htf_bonus))
         self._update_freshness()
 
     def _update_freshness(self):
@@ -123,32 +119,14 @@ class LTFSignal:
             "born_at": self.born_at.isoformat(),
             "last_scan": self.last_scan.isoformat(),
             "score_history": list(self.score_history),
-            "d1_tier": self.d1_tier,
-            "d1_score": self.d1_score,
             "nascent_move": self.nascent_move,
             "entry_precision": self.entry_precision,
             "flow_score": self.flow_score,
             "momentum_score": self.momentum_score,
-            "htf_bonus": self.htf_bonus,
         }
 
 
-def get_d1_approved_coins() -> list[str]:
-    """Get coins that D1 has flagged as SNIPER or OPPORTUNITY.
-
-    This is D2's historical source of coins — now D2 also scans all coins independently.
-    """
-    active = state_store.get_active_coins()
-    approved = []
-    for coin in active:
-        d1 = state_store.get_d1_tier(coin)
-        if d1 and d1.get("tier") in ("SNIPER", "OPPORTUNITY", "WATCH"):
-            approved.append(coin)
-    return approved
-
-
-__all__ = ["LTFSignal", "scan_entry", "get_d1_approved_coins",
-           "detect_nascent_move", "calculate_entry_precision"]
+__all__ = ["LTFSignal", "scan_entry", "detect_nascent_move", "calculate_entry_precision"]
 
 
 def detect_nascent_move(candles: list, direction: str, d1_direction: str = "") -> dict:
@@ -301,10 +279,11 @@ def calculate_entry_precision(candles: list, signal: dict, direction: str) -> fl
     return min(score, 25.0)
 
 
-async def scan_entry(coin: str, d1_tier: str = "", d1_score: float = 0) -> Optional[dict]:
+async def scan_entry(coin: str) -> Optional[dict]:
     """Scan 15M for entry timing on a coin.
 
     Runs the D2 pipeline, adds nascent move detection and entry precision.
+    D2 is fully independent — no D1 context needed.
     """
     from backend.engines.ltf_pipeline import scan_ltf_pipeline
 
@@ -326,10 +305,9 @@ async def scan_entry(coin: str, d1_tier: str = "", d1_score: float = 0) -> Optio
     if not raw:
         return None
 
-    # Nascent Move Detection
+    # Nascent Move Detection (D2 is independent — no D1 direction)
     direction = raw.get("direction", "BULLISH")
-    d1_dir = raw.get("d1_direction", "") or ""
-    nascent = detect_nascent_move(candles, direction, d1_dir)
+    nascent = detect_nascent_move(candles, direction, "")
     raw["nascent_move"] = nascent.get("nascent_move", False)
     raw["nascent_conditions"] = nascent.get("conditions_met", 0)
     raw["nascent_partial"] = nascent.get("partial", False)

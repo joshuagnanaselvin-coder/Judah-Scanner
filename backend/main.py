@@ -1,9 +1,12 @@
 """FastAPI entry point — serves frontend, REST API, and WebSocket.
 
-3 Dimensions:
-  D1 (HTF) → backend/scanner.py — WebSocket /ws for D1 signals
-  D2 (LTF) → backend/engines/ltf_engine.py — runs in background, 15M
-  D3 (Decision) → backend/engines/signal_fusion.py — watches D1+D2, pushes to /ws-fusion
+3 Dimensions (independent, no cross-communication):
+  D1 (4H)    → backend/scanner.py          — 4H candle-close driven, writes to state_store
+  D2 (15M)   → backend/engines/ltf_engine.py — 15M candle-close driven, writes to state_store
+  D3 (Fusion)→ backend/engines/signal_fusion.py — reads from data_layer, pushes to /ws-fusion
+
+Data flow: D1 → state_store → data_layer → D3 (read-only)
+            D2 → state_store → data_layer → D3 (read-only)
 """
 import asyncio
 import logging
@@ -18,6 +21,7 @@ from backend.scanner import scanner
 from backend.signal_store import signal_store
 from backend.performance_tracker import performance_tracker
 from backend.state_store import state_store
+from backend.data_layer import data_layer
 from backend.engines.ltf_engine import ltf_engine
 from backend.engines.signal_fusion import fusion_engine
 from backend import ws_hub
@@ -419,10 +423,16 @@ async def health_detail():
 async def restart_scanner():
     try:
         logger.info("[restart] Initiating full scanner restart...")
-        result = await scanner.restart()
-        return {"ok": True, "msg": "Restart triggered", "detail": result}
+
+        # Restart D1
+        d1_result = await scanner.restart()
+
+        # Restart D2 — immediate scan after restart
+        d2_result = await ltf_engine.restart()
+
+        return {"ok": True, "msg": "Restart triggered", "detail": {**d1_result, **d2_result}}
     except Exception as e:
-        logger.error(f"[api/restart] Error: {e}")
+        logger.error(f"[api\\restart] Error: {e}")
         return JSONResponse(status_code=500, content={"error": "Restart failed", "detail": str(e)})
 
 
@@ -502,6 +512,12 @@ async def _bootstrap():
     try:
         await fusion_engine.start()
         logger.info("[server] D3 Fusion Engine started")
+
+        # Wire D2 → D3 event: D2 calls this after each scan cycle
+        ltf_engine._d3_notify = fusion_engine.notify
+        # Wire D1 → D3 event: D1 calls this after each scan cycle
+        scanner._d3_notify = fusion_engine.notify
+        logger.info("[server] D1→D3 and D2→D3 event channels wired")
     except Exception as e:
         logger.error(f"[server] D3 Fusion Engine failed to start: {e}")
 

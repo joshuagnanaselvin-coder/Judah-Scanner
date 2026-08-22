@@ -34,6 +34,7 @@ from backend.ws_hub import broadcast, get_initial_payload
 from backend.market_evolution import evaluate as me_evaluate, get_dashboard_stats
 from backend.market_evolution.history import history_store
 from backend.alignment_engine import alignment_engine, AlignmentLevel
+from backend.data_layer import data_layer
 from backend.trade_plan_authority import trade_plan_authority
 from backend.risk_authority import risk_authority
 
@@ -209,6 +210,11 @@ class FusionEngine:
         self._last_d1_scan: float = 0.0
         self._last_d2_scan: float = 0.0
         self._prev_signal_cache: dict[str, dict] = {}  # Phase 5: per-signal change detection
+        self._d2_event = asyncio.Event()  # D2 sets this after publishing new signals
+
+    async def notify(self):
+        """Called by D2 after it publishes new signals — wakes D3 immediately."""
+        self._d2_event.set()
 
     async def start(self):
         """Start D3 fusion loop."""
@@ -229,26 +235,40 @@ class FusionEngine:
             self.scan_task.cancel()
 
     async def _scan_loop(self):
-        """Watch for D1/D2 changes and trigger fusion."""
+        """Watch for D1/D2 changes and trigger fusion.
+
+        Uses event-driven wake from D2 + 2-second polling fallback for D1 changes.
+        When D2 publishes new signals, it calls notify() which sets the event,
+        eliminating the 0-2s polling gap.
+        """
         while self.running:
             try:
+                # Wait for D2 event (set by ltf_engine after publishing) with 2s timeout.
+                # D1 changes are caught by the _check_and_fuse timestamp comparison,
+                # but D2's notify() ensures zero-gap fusion after each D2 cycle.
+                await self._d2_event.wait(timeout=2)
+                self._d2_event.clear()
                 await self._check_and_fuse()
             except asyncio.CancelledError:
                 break
             except Exception:
                 logger.exception("[fusion] Scan loop error")
-            await asyncio.sleep(2)
 
-    async def _archive_expired(self):
+    async def _archive_expired(self, valid_d2_coins: set = None):
         """Remove D3 decisions whose D2 signal has expired.
 
-        D2 removes signals at 15-min TTL (ltf_engine PASS 1). D3 must catch
-        the orphaned decisions and clean them up so they don't pile up.
-        Returns list of signal_ids that were removed (for frontend notification).
+        Args:
+            valid_d2_coins: Set of coin symbols from data_layer's validated payload.
+                            If None, falls back to state_store (legacy path).
         """
         archived = []
         signal_ids_to_remove = []
-        d2_coins = set(state_store.get_all_d2_signals().keys())
+
+        # Use validated D2 coins from data_layer if provided
+        if valid_d2_coins is not None:
+            d2_coins = valid_d2_coins
+        else:
+            d2_coins = set(state_store.get_all_d2_signals().keys())
 
         for coin, decision in list(state_store.d3_decisions.items()):
             if coin not in d2_coins:
@@ -267,42 +287,38 @@ class FusionEngine:
         return signal_ids_to_remove
 
     async def _check_and_fuse(self):
-        """Check if D1 or D2 has new data, fuse all D2 signals (independent of D1)."""
-        last_d1 = state_store.last_d1_scan
-        last_d2 = state_store.last_d2_scan
+        """Check if D1 or D2 has new data, fuse all D2 signals via data_layer."""
+        # Read through data layer — validates TTL, filters stale data
+        payload = await data_layer.get_fusion_payload()
 
-        # Always fuse if D2 changed. Only skip if BOTH are stale (system idle).
-        d1_changed = last_d1 != self._last_d1_scan
-        d2_changed = last_d2 != self._last_d2_scan
-        if not d1_changed and not d2_changed:
-            # Log periodically so the D3 log filter always shows D3 is alive
+        # Skip if nothing changed (both scanners idle)
+        if not payload["d1_changed"] and not payload["d2_changed"]:
             import time as _time
             now_ts = _time.time()
             if now_ts - getattr(self, '_last_idle_log', 0) > 30:
                 self._last_idle_log = now_ts
-                logger.debug(f"[fusion] Idle — d1_age={last_d1 and round(now_ts - last_d1, 0) or 'never'}, "
-                             f"d2_age={last_d2 and round(now_ts - last_d2, 0) or 'never'}")
+                logger.debug(f"[fusion] Idle — d1_count={payload['d1_coin_count']}, "
+                             f"d2_count={payload['d2_coin_count']}")
             return
 
-        self._last_d1_scan = last_d1
-        self._last_d2_scan = last_d2
-        logger.info(f"[fusion] Cycle: d1_changed={d1_changed} d2_changed={d2_changed} "
-                    f"d1_ts={last_d1:.0f} d2_ts={last_d2:.0f}")
+        data_layer.mark_consumed()
+        logger.info(f"[fusion] Cycle: d1_changed={payload['d1_changed']} d2_changed={payload['d2_changed']} "
+                    f"d1_coins={payload['d1_coin_count']} d2_coins={payload['d2_coin_count']}")
 
-        # Archive any D3 decisions that lost their D2 signal
-        await self._archive_expired()
+        # Fuse all D2 signals from data layer
+        d2_valid = payload["d2_signals"]
+        d2_coins = set(d2_valid.keys())
 
-        # D2 scans ALL 529 pairs independently — fuse all D2 signals
-        d2_all = state_store.get_all_d2_signals()
-        d2_coins = set(d2_all.keys())
-
-        logger.info(f"[fusion] D2={len(d2_all)} signals to process")
+        logger.info(f"[fusion] D2={len(d2_valid)} signals to process")
         results = []
         type_e_alerts = []
+
+        # Archive expired D3 decisions using validated D2 coin set
+        await self._archive_expired(valid_d2_coins=d2_coins)
+
         for coin in d2_coins:
-            d1 = state_store.get_d1_tier(coin)
-            d2 = d2_all[coin]
-            pkg = await self._fuse_coin(coin, type_e_alerts)
+            d2 = d2_valid[coin]
+            pkg = await self._fuse_coin(coin, d2, type_e_alerts)
             if pkg:
                 results.append(pkg)
 
@@ -388,22 +404,18 @@ class FusionEngine:
         self._prev_signal_cache = current_cache
         return changed_coins, new_coins, removed_coins
 
-    async def _fuse_coin(self, coin: str, type_e_alerts: list | None = None):
+    async def _fuse_coin(self, coin: str, d2, type_e_alerts: list | None = None):
         """Fuse D1 + D2 for one coin. Returns package dict or None.
-
-        D2 is independent — if D1 data is missing, defaults to REJECTED.
-        Type B signals (D1 not approved) still proceed.
 
         Args:
             coin: Trading pair symbol.
+            d2: D2 signal object from data_layer (already validated).
             type_e_alerts: Optional list to append Type E conflict alerts to.
         """
-        d1 = state_store.get_d1_tier(coin)
-        d2 = state_store.get_d2_signal(coin)
-
         if not d2:
             return None
 
+        d1 = state_store.get_d1_tier(coin)
         # Default D1 to REJECTED if no data (D2 is independent)
         if not d1:
             d1 = {"tier": "REJECTED", "score": 0, "direction": "", "timeframes": {}}
@@ -509,76 +521,27 @@ class FusionEngine:
                 "score": data.get("score", 0),
             }
 
-        # ── D1 HTF Structure (from best signal in signal_store) ──────
-        from backend.config import TIMEFRAMES_HTF
-        from backend.signal_store import signal_store as sig_store
-
-        d1_best = None
-        d1_best_score = -1
-        for htf in TIMEFRAMES_HTF:
-            d1_sig = sig_store.get(coin, htf)
-            if d1_sig and d1_sig.get("composite_score", 0) > d1_best_score:
-                d1_best = d1_sig
-                d1_best_score = d1_sig.get("composite_score", 0)
-
-        # Fallback: if signal_store is empty (cold start), use state_store tier
-        if not d1_best:
-            # Cold start — no signal_store data yet. Use state_store tier info.
-            d1_snap = state_store.get_d1_tier(coin)
-            if d1_snap and d1_snap.get("tier") not in ("WATCH", "REJECTED"):
-                d1_structure = {
-                    "direction": d1_snap.get("direction", ""),
-                    "tier": d1_snap.get("tier", "WATCH"),
-                    "score": d1_snap.get("score", 0),
-                    "premium_discount": "EQUILIBRIUM",
-                    "ob_zone": "UNKNOWN", "ob_type": "",
-                    "ob_low": 0, "ob_high": 0, "ob_strength": 0,
-                    "msb_type": "", "msb_level": 0, "msb_direction": "",
-                    "fvg_type": "", "fvg_size_atr": 0, "fvg_filled_pct": 100,
-                    "liq_swept": False, "liq_level": 0, "liq_direction": "",
-                    "poc": 0, "va_high": 0, "va_low": 0,
-                    "session": "", "session_label": "",
-                }
-            else:
-                d1_structure = {}
-        else:
-            d1_ob = d1_best.get("ob", {})
-            d1_liq = d1_best.get("liquidity", {})
-            d1_msb = d1_best.get("msb", {})
-            d1_fvg = d1_best.get("fvg", {})
-            d1_vp = d1_best.get("volume_profile", {})
-
+        # ── D1 4H Structure (from state_store — D1's only TF now) ────
+        # D1 is 4H only. Build minimal structure from state_store tier data.
+        # Detailed structure (OB, MSB, FVG) is available via /api/signals
+        # for the frontend; D3 uses this for alignment scoring.
+        d1_snap = state_store.get_d1_tier(coin)
+        if d1_snap and d1_snap.get("tier") not in ("WATCH", "REJECTED"):
             d1_structure = {
-                "direction": d1_best.get("direction", ""),
-                "tier": d1_best.get("tier", "WATCH"),
-                "score": d1_best.get("composite_score", 0),
-                # OB
-                "ob_type": d1_ob.get("type", "") if d1_ob else "",
-                "ob_zone": d1_ob.get("zone", "UNKNOWN") if d1_ob else "UNKNOWN",
-                "ob_low": d1_ob.get("low", 0) if d1_ob else 0,
-                "ob_high": d1_ob.get("high", 0) if d1_ob else 0,
-                "ob_strength": d1_ob.get("strength", 0) if d1_ob else 0,
-                # MSB
-                "msb_type": d1_msb.get("type", "") if d1_msb else "",
-                "msb_level": d1_msb.get("level", 0) if d1_msb else 0,
-                "msb_direction": d1_msb.get("direction", "") if d1_msb else "",
-                # FVG
-                "fvg_type": d1_fvg.get("type", "") if d1_fvg else "",
-                "fvg_size_atr": d1_fvg.get("size_atr", 0) if d1_fvg else 0,
-                "fvg_filled_pct": d1_fvg.get("filled_pct", 100) if d1_fvg else 100,
-                # Liquidity
-                "liq_swept": d1_liq.get("swept", False) if d1_liq else False,
-                "liq_level": d1_liq.get("level", 0) if d1_liq else 0,
-                "liq_direction": d1_liq.get("direction", "") if d1_liq else "",
-                # Volume profile
-                "poc": d1_vp.get("poc_price", 0) if d1_vp else 0,
-                "va_high": d1_vp.get("va_high", 0) if d1_vp else 0,
-                "va_low": d1_vp.get("va_low", 0) if d1_vp else 0,
-                # CRT
-                "premium_discount": d1_best.get("premium_discount", "EQUILIBRIUM"),
-                "session": d1_best.get("session", ""),
-                "session_label": d1_best.get("session_label", d1_best.get("session", "")),
+                "direction": d1_snap.get("direction", ""),
+                "tier": d1_snap.get("tier", "WATCH"),
+                "score": d1_snap.get("score", 0),
+                "premium_discount": "EQUILIBRIUM",
+                "ob_zone": "UNKNOWN", "ob_type": "",
+                "ob_low": 0, "ob_high": 0, "ob_strength": 0,
+                "msb_type": "", "msb_level": 0, "msb_direction": "",
+                "fvg_type": "", "fvg_size_atr": 0, "fvg_filled_pct": 100,
+                "liq_swept": False, "liq_level": 0, "liq_direction": "",
+                "poc": 0, "va_high": 0, "va_low": 0,
+                "session": "", "session_label": "",
             }
+        else:
+            d1_structure = {}
 
         # ── D2 15M Structure (from raw_signal) ────────────────────────
         raw = getattr(d2, 'raw_signal', {}) or {}

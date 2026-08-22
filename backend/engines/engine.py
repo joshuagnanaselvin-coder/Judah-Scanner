@@ -1,11 +1,18 @@
 """Single engine file — flow-first, structure-confirm, CRT-time.
 
+CRITICAL: NO FILTERING. Every coin that enters must produce a result.
+All 500 coins scan, all results flow to D3 and frontend.
+"REJECTED" / score=0 is a valid result — it means "no actionable setup."
+
 Pipeline order (institutional):
-  1. Flow gate:      Is there volume + sweep + VWAP reclaim or RS vs BTC?
-                     If no flow → SKIP (don't show neutral coins)
-  2. Structure:      CRT + SMC (OB, FVG, MSB, VSP)
-  3. Time:           CRT timing (OTE, displacement, session)
-  4. Signal:         Combine into entry / SL / TP / RR
+  1. Data quality:     Validate candles (warn, don't skip)
+  2. Volatility gate:  ATR check (penalize score, don't skip)
+  3. Range size gate:  Range check (penalize score, don't skip)
+  4. Flow analysis:    Volume/sweep/VWAP/RS analysis (contributes to scoring)
+  5. Structure:        CRT + SMC (fallback to SMC-only if CRT missing)
+  6. Signal build:     Entry / SL / TP / RR
+  7. Scoring:          100-pt: CRT(20) + SMC(25) + Flow(15) + Momentum(15) + Timing(10) + R/R(10) + Confluence(5)
+  8. Tier assignment:  SNIPER/OPPORTUNITY/WATCH/WEAK/REJECTED
 """
 from backend.engines.crt_engine import run_crt
 from backend.engines.smc_engine import run_smc
@@ -37,48 +44,68 @@ _FALLBACK_MIN_CONFIDENCE = 15  # weighted fallback threshold (replaces binary MS
 # Lowered from 30 → 15: HTF (1H/4H/1D) rarely lights all 6 components at once.
 # 15 lets solid setups through (e.g. MSB(8) + OB(5) + flow(8) = 21, or OB+liq+sweep).
 
+# Penalty constants for gate failures (score reductions, NOT skips)
+_ATR_PENALTY = 10          # Points deducted when ATR too low
+_RANGE_PENALTY = 10        # Points deducted when range too small
+_FLOW_PENALTY = 15         # Points deducted when no flow triggers and not fast mover
+_NO_CANDLES_SCORE = 0      # Score when no candles (REJECTED)
 
-async def scan(symbol: str, timeframe: str) -> dict | None:
+
+async def scan(symbol: str, timeframe: str) -> dict:
     """Run full CRT -> SMC -> Signal pipeline for one coin on one timeframe.
 
+    NO FILTERING — every coin produces a result (REJECTED / 0 score is still a result).
     Falls back to SMC-only path if CRT returns None (impulse / fast-moving coins
     where the strict 5-step CRT consolidation pattern doesn't exist yet).
     """
+    penalties = 0  # Accumulate score penalties from gate failures (initialized FIRST)
+
+    # === Candle retrieval + early exit for empty data ===
     candles = market_data.get_candles(symbol, timeframe)
-    if not candles or len(candles) < 25:
-        logger.debug(f"[engine] SKIP {symbol} {timeframe}: no candles ({len(candles) if candles else 0})")
-        return None
+    candle_count = len(candles) if candles else 0
+    last_price = _get(candles[-1], 'close') if candles else 0
 
-    # ── Data Quality Gate ─────────────────────────────────────────────
-    from backend.data_quality_gate import validate_candles
-    quality = validate_candles(candles, timeframe)
-    if quality.state in ("INVALID", "GAPPED", "MISSING"):
-        logger.warning(f"[engine] BLOCK {symbol} {timeframe}: quality={quality.state} issues={quality.issues}")
-        return None
-    if quality.state == "STALE":
-        logger.debug(f"[engine] STALE {symbol} {timeframe}: last candle {quality.last_candle_age_sec:.0f}s old")
-        return None
-    # DEGRADED and INCOMPLETE still proceed (partial data is acceptable)
+    # Guard: empty candles — build minimal REJECTED, no analysis attempted
+    if candle_count == 0:
+        return _build_minimal_rejected(symbol, timeframe, None, None, [], {
+            "boost": 0, "is_flowing": False, "direction": "NEUTRAL",
+            "triggers": [], "killzone": {"zone": "UNKNOWN"},
+        }, penalties, "MISSING")
 
-    last_price = _get(candles[-1], 'close')
+    # === Data Quality Check — warn + penalize, never skip ===
+    quality_state = "VALID"
+    if candles and candle_count >= 25:
+        from backend.data_quality_gate import validate_candles
+        quality = validate_candles(candles, timeframe)
+        if quality.state in ("INVALID", "GAPPED", "MISSING"):
+            logger.warning(f"[engine] QUALITY_WARN {symbol} {timeframe}: {quality.state} issues={quality.issues}")
+            penalties += 25
+            quality_state = quality.state
+        elif quality.state == "STALE":
+            logger.debug(f"[engine] STALE {symbol} {timeframe}: age={quality.last_candle_age_sec:.0f}s — penalty -15")
+            penalties += 15
+            quality_state = "STALE"
+        # DEGRADED and INCOMPLETE proceed without penalty
+    elif candle_count < 25:
+        logger.debug(f"[engine] NO_CANDLES {symbol} {timeframe}: {candle_count} candles")
+        penalties += 100  # Guarantees score=0 → REJECTED (still written!)
 
-    # Volatility gate
+    # Volatility check — penalize score instead of skipping
     atr_val = atr(candles)
     atr_pct = (atr_val / last_price * 100) if last_price > 0 else 0.0
     if atr_pct < MIN_ATR_PERCENT or atr_val < ADAPTIVE_ATR_MIN_ABSOLUTE:
-        logger.debug(f"[engine] SKIP {symbol} {timeframe}: ATR {atr_val:.6f} ({atr_pct:.3f}%) below threshold")
-        return None
+        logger.debug(f"[engine] ATR_LOW {symbol} {timeframe}: {atr_val:.6f} ({atr_pct:.3f}%) — penalty -{_ATR_PENALTY}")
+        penalties += _ATR_PENALTY
 
-    # Range size gate
+    # Range size check — penalize score instead of skipping
     env = calc_envelope(candles, 50)
     range_size = env.get('range_size', 0)
     if range_size < atr_val * MIN_RANGE_MULTIPLIER:
-        logger.debug(f"[engine] SKIP {symbol} {timeframe}: range {range_size:.6f} < {MIN_RANGE_MULTIPLIER}x ATR")
-        return None
+        logger.debug(f"[engine] RANGE_SMALL {symbol} {timeframe}: {range_size:.6f} — penalty -{_RANGE_PENALTY}")
+        penalties += _RANGE_PENALTY
 
-    # === FLOW GATE: skip neutral / coiled coins ===
-    # No flow = no signal. We only show coins where volume/sweep/VWAP/RS
-    # confirm that real money is moving.
+    # === FLOW ANALYSIS — no skipping, contributes to scoring ===
+    # No flow = low score penalty, but coin still gets a REJECTED result.
     swings = detect_swing_points(candles[-30:])
     btc_candles = market_data.get_candles("BTCUSDT", timeframe)
     if btc_candles:
@@ -88,11 +115,10 @@ async def scan(symbol: str, timeframe: str) -> dict | None:
     flow = analyze_flow(symbol, candles, swings, timeframe, btc_candles)
     fast = detect_fast_mover(candles, swings)
 
-    # === FLOW GATE: only skip if ZERO flow triggers (completely neutral) ===
-    # On D1, rarely get multiple triggers — a single meaningful trigger is enough.
+    # === FLOW: penalize score for neutral coins, never skip ===
     if not flow["is_flowing"] and not fast["is_fast_mover"]:
-        logger.debug(f"[engine] SKIP {symbol} {timeframe}: no flow triggers (flat market)")
-        return None
+        logger.debug(f"[engine] FLAT {symbol} {timeframe}: no flow triggers — penalty -{_FLOW_PENALTY}")
+        penalties += _FLOW_PENALTY
 
     logger.debug(f"[engine] FLOW {symbol} {timeframe}: boost=+{flow['boost']} "
                  f"triggers={[t['name'] for t in flow['triggers']]} kz={flow['killzone']['zone']} "
@@ -107,8 +133,8 @@ async def scan(symbol: str, timeframe: str) -> dict | None:
         logger.debug(f"[engine] CRT passed {symbol} {timeframe}: score={crt.get('crt_score',0)} dir={crt.get('displacement',{}).get('crt_trade_direction','?')}")
         smc = run_smc(candles, crt)
         if not smc:
-            logger.debug(f"[engine] SKIP {symbol} {timeframe}: SMC returned None")
-            return None
+            logger.debug(f"[engine] SMC_NONE {symbol} {timeframe}: SMC returned None — using empty SMC")
+            smc = {"smc_score": 0}
         logger.debug(f"[engine] SMC passed {symbol} {timeframe}: score={smc.get('smc_score',0)}")
         path = "CRT+SMC"
     else:
@@ -116,12 +142,14 @@ async def scan(symbol: str, timeframe: str) -> dict | None:
         logger.debug(f"[engine] CRT missing for {symbol} {timeframe} — trying SMC-only fallback")
         fallback_crt = build_smc_only_context(candles)
         if not fallback_crt:
-            logger.debug(f"[engine] SKIP {symbol} {timeframe}: no CRT and no MSB direction")
-            return None
+            logger.debug(f"[engine] FALLBACK_EMPTY {symbol} {timeframe}: no CRT and no MSB direction — "
+                         f"using SMC-only with empty context")
+            fallback_crt = {"crt_score": 0, "trade_direction": None}
         smc = run_smc(candles, fallback_crt)
         if not smc:
-            logger.debug(f"[engine] SKIP {symbol} {timeframe}: SMC-only fallback returned None")
-            return None
+            logger.debug(f"[engine] FALLBACK_EMPTY {symbol} {timeframe}: SMC-only fallback returned None — "
+                         f"using empty SMC")
+            smc = {"smc_score": 0}
 
         # === WEIGHTED FALLBACK CONFIDENCE (no all-or-nothing gates) ===
         fallback_score = 0
@@ -149,9 +177,10 @@ async def scan(symbol: str, timeframe: str) -> dict | None:
                      f"liq={5 if liq_swept else 0} flow={8 if flow.get('boost',0)>18 else 0} "
                      f"mom={8 if fast.get('is_fast_mover') and fast.get('score',0)>15 else 0})")
 
+        # FALLBACK CONFIDENCE → penalty (never skip — all coins flow)
         if fallback_score < _FALLBACK_MIN_CONFIDENCE:
-            logger.debug(f"[engine] SKIP {symbol} {timeframe}: fallback confidence {fallback_score} < {_FALLBACK_MIN_CONFIDENCE}")
-            return None
+            logger.debug(f"[engine] FALLBACK_LOW {symbol} {timeframe}: confidence {fallback_score} < {_FALLBACK_MIN_CONFIDENCE} — penalty -20")
+            penalties += 20
 
         crt = fallback_crt
         path = "SMC-ONLY"
@@ -185,69 +214,65 @@ async def scan(symbol: str, timeframe: str) -> dict | None:
         # --- Confluence Bonus (5 pts) ---
         confluence_score = _confluence_bonus(crt, smc, flow_score, momentum_score, timing_score, rr_score, vp_score)
 
-        # Fatal flaw check
-        if _check_fatal_flaws(signal, flow, smc):
-            logger.info(f"[engine] FATAL FLAW {symbol} {timeframe}: signal disqualified")
-            signal["composite_score"] = 0
-            signal["tier"] = "REJECTED"
-            signal["scoring_breakdown"] = {
-                "crt": crt.get("crt_score", 0),
-                "smc": smc.get("smc_score", 0),
-                "flow": flow_score,
-                "momentum": momentum_score,
-                "timing": timing_score,
-                "rr": rr_score,
-                "confluence": confluence_score,
-                "fatal_flaw": True,
-            }
-        else:
-            # Add Timing + R/R + Confluence to composite
-            base_composite = signal.get("composite_score", 0) + timing_score + rr_score + confluence_score
+        # Fatal flaw check — add penalty (never skip or hard-zero)
+        fatal_flaw = _check_fatal_flaws(signal, flow, smc)
+        fatal_flaw_penalty = 30 if fatal_flaw else 0  # Large penalty = natural REJECTED tier
+        if fatal_flaw:
+            logger.info(f"[engine] FATAL FLAW {symbol} {timeframe}: signal penalized -{fatal_flaw_penalty}")
+            penalties += fatal_flaw_penalty
 
-            # === IMPROVEMENT #4: Conviction Multiplier ===
-            # Hedge fund methodology: when all 4 core dimensions score ≥70% of their max,
-            # it's a high-conviction signal. Apply multiplicative boost (not additive).
-            # This prevents a 100-pt signal from being 4 mediocre scores; it rewards
-            # STRONG scores across all dimensions (CRT ≥14, SMC ≥18, Flow ≥11, Momentum ≥11).
-            crt_raw = crt.get("crt_score", 0)
-            smc_raw = smc.get("smc_score", 0)
-            conviction_mult = 1.0
-            conviction_factors = 0
-            if crt_raw >= 14:       # CRT ≥70% of 20
-                conviction_factors += 1
-            if smc_raw >= 18:       # SMC ≥72% of 25
-                conviction_factors += 1
-            if flow_score >= 11:    # Flow ≥73% of 15
-                conviction_factors += 1
-            if momentum_score >= 11: # Momentum ≥73% of 15
-                conviction_factors += 1
+        # Add Timing + R/R + Confluence to composite (always runs)
+        base_composite = signal.get("composite_score", 0) + timing_score + rr_score + confluence_score
 
-            if conviction_factors >= 4:
-                conviction_mult = 1.15       # All 4 strong: +15% multiplier
-            elif conviction_factors >= 3:
-                conviction_mult = 1.08       # 3 of 4: +8% multiplier
-            elif conviction_factors >= 2:
-                conviction_mult = 1.03       # 2 of 4: +3% minor boost
+        # === IMPROVEMENT #4: Conviction Multiplier ===
+        # Hedge fund methodology: when all 4 core dimensions score ≥70% of their max,
+        # it's a high-conviction signal. Apply multiplicative boost (not additive).
+        # This prevents a 100-pt signal from being 4 mediocre scores; it rewards
+        # STRONG scores across all dimensions (CRT ≥14, SMC ≥18, Flow ≥11, Momentum ≥11).
+        crt_raw = crt.get("crt_score", 0)
+        smc_raw = smc.get("smc_score", 0)
+        conviction_mult = 1.0
+        conviction_factors = 0
+        if crt_raw >= 14:       # CRT ≥70% of 20
+            conviction_factors += 1
+        if smc_raw >= 18:       # SMC ≥72% of 25
+            conviction_factors += 1
+        if flow_score >= 11:    # Flow ≥73% of 15
+            conviction_factors += 1
+        if momentum_score >= 11: # Momentum ≥73% of 15
+            conviction_factors += 1
 
-            final_composite = base_composite * conviction_mult
-            final_composite = min(final_composite, 100)
-            signal["composite_score"] = round(final_composite, 1)
-            signal["conviction_mult"] = round(conviction_mult, 3)
-            signal["conviction_factors"] = conviction_factors
+        if conviction_factors >= 4:
+            conviction_mult = 1.15       # All 4 strong: +15% multiplier
+        elif conviction_factors >= 3:
+            conviction_mult = 1.08       # 3 of 4: +8% multiplier
+        elif conviction_factors >= 2:
+            conviction_mult = 1.03       # 2 of 4: +3% minor boost
 
-            signal["scoring_breakdown"] = {
-                "crt": crt.get("crt_score", 0),
-                "smc": smc.get("smc_score", 0),
-                "flow": flow_score,
-                "momentum": momentum_score,
-                "timing": timing_score,
-                "rr": rr_score,
-                "volume_profile": vp_score,
-                "confluence": confluence_score,
-                "conviction_mult": round(conviction_mult, 3),
-                "conviction_factors": conviction_factors,
-                "fatal_flaw": False,
-            }
+        final_composite = base_composite * conviction_mult
+        final_composite = min(final_composite, 100)
+        # Apply accumulated penalties from gate failures (ATR, range, flow, quality, fallback)
+        final_composite = max(0, final_composite - penalties)
+        signal["composite_score"] = round(final_composite, 1)
+        signal["conviction_mult"] = round(conviction_mult, 3)
+        signal["conviction_factors"] = conviction_factors
+        signal["penalties"] = penalties  # Track what was deducted
+
+        signal["scoring_breakdown"] = {
+            "crt": crt.get("crt_score", 0),
+            "smc": smc.get("smc_score", 0),
+            "flow": flow_score,
+            "momentum": momentum_score,
+            "timing": timing_score,
+            "rr": rr_score,
+            "volume_profile": vp_score,
+            "confluence": confluence_score,
+            "conviction_mult": round(conviction_mult, 3),
+            "conviction_factors": conviction_factors,
+            "fatal_flaw": fatal_flaw,
+            "penalties": penalties,
+            "quality_state": quality_state,
+        }
 
         # Metadata
         signal["flow"] = flow
@@ -282,12 +307,61 @@ async def scan(symbol: str, timeframe: str) -> dict | None:
 
         # === EvidenceRecord: log structural findings (awaited — no fire-and-forget) ===
         await _log_evidence_async(symbol, timeframe, signal, crt, smc, flow, path)
-    else:
-        logger.debug(f"[engine] SKIP {symbol} {timeframe}: build_signal returned None")
+    elif signal is None:
+        # build_signal returned None — create minimal REJECTED signal so coin still flows to D3
+        logger.debug(f"[engine] BUILD_NONE {symbol} {timeframe}: building minimal REJECTED signal")
+        signal = _build_minimal_rejected(symbol, timeframe, crt, smc, candles, flow, penalties, quality_state)
+
     return signal
 
 
-# ── D1 Scoring Helpers ──────────────────────────────────────────────────
+def _build_minimal_rejected(symbol: str, timeframe: str, crt: dict, smc: dict,
+                             candles: list, flow: dict, penalties: int,
+                             quality_state: str) -> dict:
+    """Create a minimal REJECTED signal when build_signal returns None.
+
+    CRITICAL: Never skip a coin — all 500 must produce a result that flows to D3.
+    This ensures every coin has a D1 tier entry, even if it's REJECTED.
+    """
+    last_price = _get(candles[-1], 'close') if candles else 0
+    direction = "BULLISH"  # Default — D3 may override based on data
+
+    # Build minimal SL/TP for completeness (even if 0)
+    sl = last_price * 0.95 if last_price > 0 else 0  # Placeholder 5% below
+    tp = last_price * 1.05 if last_price > 0 else 0  # Placeholder 5% above
+    rr = abs((tp - last_price) / (last_price - sl)) if (last_price - sl) != 0 else 0
+
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "direction": direction,
+        "tier": "REJECTED",
+        "composite_score": 0,
+        "entry": last_price,
+        "stop_loss": sl,
+        "take_profit_1": tp,
+        "rr": round(rr, 2),
+        "crt_score": crt.get("crt_score", 0) if crt else 0,
+        "smc_score": smc.get("smc_score", 0) if smc else 0,
+        "flow_score": flow.get("boost", 0),
+        "scoring_breakdown": {
+            "crt": crt.get("crt_score", 0) if crt else 0,
+            "smc": smc.get("smc_score", 0) if smc else 0,
+            "flow": flow.get("boost", 0),
+            "momentum": 0,
+            "timing": 0,
+            "rr": 0,
+            "confluence": 0,
+            "fatal_flaw": False,
+            "penalties": penalties,
+            "quality_state": quality_state,
+            "minimal_signal": True,
+        },
+        "engine_path": "NONE",
+        "flow_direction": flow.get("direction", "NEUTRAL"),
+        "killzone": flow.get("killzone", {"zone": "UNKNOWN"}),
+    }
+
 
 def _score_timing(candles: list) -> int:
     """Institutional Timing — 10 pts max.

@@ -1,10 +1,8 @@
 """ALL tunable parameters in one place. Edit this to tune the scanner."""
 
 # === SCANNER ===
-SCAN_INTERVAL_SECONDS = 15        # Full D1 scan cycle (candidate filter + CRT+SMC pipeline)
-SIGNAL_TTL_MINUTES = 240          # D1 signal expiry (4 hours — HTF setups on 4H/1D candles
-                                  # should outlive the candle itself; 15min was wiping D1
-                                  # data every cycle and replacing it with REJECTED+0)
+SCAN_INTERVAL_SECONDS = 14400     # D1: 4 hours fallback (candle-close is primary trigger)
+SIGNAL_TTL_MINUTES = 240          # D1 signal expiry (4 hours — matches 4H candle duration)
 EVIDENCE_TTL_MINUTES = 240        # Evidence expiry in evidence_store (4 hours)
 MAX_SIGNALS = None     # No cap — store all D1 signals
 BOOTSTRAP_CANDLES = 50            # Only need ~50 candles for indicator lookbacks (was 200)
@@ -95,7 +93,8 @@ SL_QUALITY_MAX = 4           # Beyond OB+FVG=4, beyond OB=3, beyond swing=2, arb
 # === CONFLUENCE BONUS ===
 CONFLUENCE_MAX = 5           # 1 pt per satisfied factor, max 5
 
-# === D2 HTF CONTEXT BONUS ===
+# === D2 HTF CONTEXT BONUS — REMOVED (D2 is independent, no D1 reading) ===
+# Kept as no-ops for backward compat during migration
 HTF_CONTEXT_SAME = 5         # Same direction as D1
 HTF_CONTEXT_NEUTRAL = 2      # D1 neutral (range-bound)
 HTF_CONTEXT_OPPOSING = -5    # Opposing direction
@@ -193,7 +192,7 @@ STALE_SCORE_FACTOR = 0.75
 # === DIMENSION 2 (LTF Scanner) ===
 D2_TIMEFRAME = "15M"
 D2_SIGNAL_TTL_MINUTES = 15
-D2_SCAN_INTERVAL_SECONDS = 5
+D2_SCAN_INTERVAL_SECONDS = 900   # D2: 15 minutes fallback (candle-close is primary trigger)
 MAX_D2_SIGNALS = None  # No cap — store all D2 signals
 
 # === D3 FUSION THRESHOLDS ===
@@ -221,7 +220,7 @@ ACCELERATION_HOLD_MULT = 1.0       # Full size for existing positions in acceler
 
 
 # === TIMEFRAMES ===
-TIMEFRAMES_HTF = ["1H", "4H", "1D"]  # Dimension 1
+TIMEFRAMES_HTF = ["4H"]  # Dimension 1 — 4H only (1H and 1D removed)
 TIMEFRAMES_LTF = ["15M"]  # Dimension 2
 ALL_TIMEFRAMES = ["15M", "1H", "4H", "1D"]  # All including D2
 # Backward-compat alias (D1 scanner still uses this name)

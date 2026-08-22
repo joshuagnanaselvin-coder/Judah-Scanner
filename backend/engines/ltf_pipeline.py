@@ -24,8 +24,6 @@ from backend.config import (
     MIN_ATR_PERCENT, ADAPTIVE_ATR_MIN_ABSOLUTE, MIN_RANGE_MULTIPLIER,
     TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE, TIER_WEAK_SCORE,
     D2_FLOW_SCORE_MAX, SMC_SCORE_MAX,
-    HTF_CONTEXT_SAME, HTF_CONTEXT_NEUTRAL, HTF_CONTEXT_OPPOSING,
-    HTF_CONTEXT_NO_DATA, HTF_CONTEXT_MAX, HTF_CONTEXT_MIN,
     CONFLUENCE_MAX, D2_MIN_ENTRY_PRECISION, D2_MIN_FLOW, D2_MIN_MOMENTUM,
     IGNORE_MIN_SCORE, TYPE_B_MIN_D2_SCORE, TYPE_B_ENTRY_PRECISION_GATE,
 )
@@ -144,13 +142,6 @@ async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
     if not candles or len(candles) < 25:
         return None
 
-    # ── Data Quality Gate (D2 pipeline) ──────────────────────────────
-    from backend.data_quality_gate import validate_candles
-    quality = validate_candles(candles, timeframe)
-    if quality.state in ("INVALID", "GAPPED", "MISSING", "STALE"):
-        return None
-    # DEGRADED and INCOMPLETE still proceed — partial 15M data is acceptable
-
     last_price = _get(candles[-1], 'close')
     atr_val = atr(candles)
     atr_pct = (atr_val / last_price * 100) if last_price > 0 else 0.0
@@ -259,12 +250,12 @@ async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
 
     _count_stage("scoring_pass")
 
-    # HTF Context (10 pts)
-    htf_context_score = _score_htf_context(symbol, crt, candles)
+    # HTF Context — D2 is independent, no D1 context bonus (always 0)
+    htf_context_score = 0
 
     # --- Nascent Move (15 pts) ---
-    d1_dir = _get_d1_direction(symbol)
-    nascent = detect_nascent_move(candles, crt.get("displacement", {}).get("crt_trade_direction", "BULLISH"), d1_dir)
+    # D2 is independent — no D1 direction context
+    nascent = detect_nascent_move(candles, crt.get("displacement", {}).get("crt_trade_direction", "BULLISH"), "")
     nascent_score = _score_nascent_move(nascent)
 
     # --- Timing (5 pts) ---
@@ -480,48 +471,6 @@ def _log_ltf_evidence(symbol: str, timeframe: str, signal: dict,
 
 # ── D2 Scoring Helpers ──────────────────────────────────────────────────
 
-def _score_htf_context(symbol: str, crt: dict, candles: list) -> int:
-    """HTF Context Bonus — 10 pts max (structured replacement for htf_bonus accumulation).
-
-    Same direction as D1: +5
-    D1 neutral (range-bound): +2
-    Opposing direction to D1: -5
-    No D1 data: +3
-    """
-    from backend.config import TIMEFRAMES_HTF
-    from backend.signal_store import signal_store as sig_store
-
-    d1_dir = ""
-    for htf in TIMEFRAMES_HTF:
-        d1_sig = sig_store.get(symbol, htf)
-        if d1_sig and d1_sig.get("composite_score", 0) > 0:
-            d1_dir = d1_sig.get("direction", "")
-            break
-
-    d2_dir = crt.get("displacement", {}).get("crt_trade_direction", "")
-
-    if not d1_dir:
-        return HTF_CONTEXT_NO_DATA
-    if d1_dir == d2_dir and d2_dir:
-        return HTF_CONTEXT_SAME
-    if d1_dir != d2_dir and d1_dir and d2_dir:
-        return HTF_CONTEXT_OPPOSING
-    return HTF_CONTEXT_NEUTRAL
-
-
-def _get_d1_direction(symbol: str) -> str:
-    """Get D1 direction for nascent move detection."""
-    from backend.config import TIMEFRAMES_HTF
-    from backend.signal_store import signal_store as sig_store
-    for htf in TIMEFRAMES_HTF:
-        d1_sig = sig_store.get(symbol, htf)
-        if d1_sig and d1_sig.get("composite_score", 0) > 0:
-            return d1_sig.get("direction", "")
-    return ""
-
-
-
-
 def _score_nascent_move(nascent: dict) -> int:
     """Score Nascent Move confidence for D2 scoring rubric.
 
@@ -582,7 +531,6 @@ def _confluence_bonus_d2(crt_score: int, smc_score: int, flow_score: int,
         factors += 1
     if nascent_score >= 5:      # Nascent >= 5/10
         factors += 1
-    if htf_context >= 3:        # HTF context >= 3/10
-        factors += 1
+    # htf_context always 0 (D2 independent) — removed from confluence check
 
     return min(factors, CONFLUENCE_MAX)
