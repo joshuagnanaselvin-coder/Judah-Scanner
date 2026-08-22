@@ -460,15 +460,15 @@ async def health_detail():
 @app.post("/api/restart")
 async def restart_scanner():
     try:
-        logger.info("[restart] Initiating full scanner restart...")
+        logger.info("[restart] Soft restart: restarting scan loops only...")
 
-        # Restart D1
-        d1_result = await scanner.restart()
+        # Restart D1 scan loop (keeps symbols, WS, candles intact)
+        d1_result = await scanner.soft_restart()
 
-        # Restart D2 — immediate scan after restart
-        d2_result = await ltf_engine.restart()
+        # Restart D2 scan loop
+        d2_result = await ltf_engine.soft_restart()
 
-        return {"ok": True, "msg": "Restart triggered", "detail": {**d1_result, **d2_result}}
+        return {"ok": True, "msg": "Scanner restarted", "detail": {**d1_result, **d2_result}}
     except Exception as e:
         logger.error(f"[api\\restart] Error: {e}")
         return JSONResponse(status_code=500, content={"error": "Restart failed", "detail": str(e)})

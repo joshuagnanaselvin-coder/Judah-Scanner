@@ -311,6 +311,24 @@ class LTFEngine:
         from backend.engines.ltf_pipeline import _log_stage_summary
         _log_stage_summary()
 
+    async def soft_restart(self) -> dict:
+        """Restart scan loop only — keeps candles, signals, state intact."""
+        logger.info(f"[ltf] [{self.cycle_id}] Soft restarting D2 engine...")
+
+        self.running = False
+        if self.scan_task:
+            self.scan_task.cancel()
+            try:
+                await self.scan_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        self.running = True
+        self.scan_task = asyncio.create_task(self._scan_loop())
+
+        logger.info(f"[ltf] [{self.cycle_id}] D2 scan loop restarted")
+        return {"symbols": len(self.symbols), "mode": "soft_restart"}
+
     async def restart(self) -> dict:
         """Full restart: clear signals, re-bootstrap candles, immediate scan."""
         logger.info(f"[ltf] [{self.cycle_id}] Restarting D2 engine...")

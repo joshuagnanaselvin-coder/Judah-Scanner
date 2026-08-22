@@ -773,7 +773,13 @@ class FusionEngine:
         d1_ob_low = d1_structure.get("ob_low", 0)
         d1_ob_high = d1_structure.get("ob_high", 0)
 
-        confidence_score = round(alignment_result.score, 3)
+        # Confidence: primary driver is D2 scanner score (actual structural quality).
+        # Alignment score is cross-timeframe agreement — used as floor, not ceiling.
+        # D2 score range after penalty fix: 5–40 typical, 50+ rare.
+        # Normalize to 0–1: d2_score/50 gives 0.10–0.80 for most coins.
+        d2_conf = min(1.0, d2_score / 50.0)
+        alignment_conf = alignment_result.score
+        confidence_score = round(max(d2_conf, alignment_conf), 3)
         if sig_type == "C":
             confidence_score = min(1.0, confidence_score + 0.15)
         elif sig_type == "A":

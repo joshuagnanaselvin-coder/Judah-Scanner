@@ -541,6 +541,65 @@ class Scanner:
         if self.scan_task:
             self.scan_task.cancel()
 
+    async def soft_restart(self) -> dict:
+        """Restart scan loop without clearing state or WS.
+        The button the user clicks should use this."""
+        logger.info(f"[soft_restart] Restarting scan loop for {len(self.symbols)} pairs...")
+
+        # Stop scan loop
+        self.running = False
+        if self.scan_task:
+            self.scan_task.cancel()
+            try:
+                await self.scan_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        # Restart scan loop (it does initial scan + periodic 4H-close scans)
+        self.running = True
+        self.scan_task = asyncio.create_task(self._scan_loop())
+
+        logger.info(f"[soft_restart] Scan loop restarted — {len(self.symbols)} pairs live")
+        return {"symbols": len(self.symbols), "mode": "soft_restart"}
+
+    async def soft_restart(self) -> dict:
+        """Restart scan loop only — keeps symbols, WS, candles, state intact.
+        Safe to call from frontend restart button."""
+        logger.info(f"[soft_restart] Restarting scan loop for {len(self.symbols)} pairs...")
+
+        self.running = False
+        if self.scan_task:
+            self.scan_task.cancel()
+            try:
+                await self.scan_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        self.running = True
+        self.scan_task = asyncio.create_task(self._scan_loop())
+
+        logger.info(f"[soft_restart] Scan loop restarted — {len(self.symbols)} pairs live")
+        return {"symbols": len(self.symbols), "mode": "soft_restart"}
+
+    async def soft_restart(self) -> dict:
+        """Restart scan loop only — keeps symbols, WS, candles, state intact.
+        Safe to call from frontend restart button."""
+        logger.info(f"[soft_restart] Restarting scan loop for {len(self.symbols)} pairs...")
+
+        self.running = False
+        if self.scan_task:
+            self.scan_task.cancel()
+            try:
+                await self.scan_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        self.running = True
+        self.scan_task = asyncio.create_task(self._scan_loop())
+
+        logger.info(f"[soft_restart] Scan loop restarted — {len(self.symbols)} pairs live")
+        return {"symbols": len(self.symbols), "mode": "soft_restart"}
+
     async def restart(self) -> dict:
         """Full restart: clear signals + FVG ledger, re-bootstrap candles, reconnect WS.
         Keeps the same symbol list. Safe to call multiple times."""
