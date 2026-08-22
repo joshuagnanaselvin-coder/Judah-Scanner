@@ -45,9 +45,9 @@ _FALLBACK_MIN_CONFIDENCE = 15  # weighted fallback threshold (replaces binary MS
 # 15 lets solid setups through (e.g. MSB(8) + OB(5) + flow(8) = 21, or OB+liq+sweep).
 
 # Penalty constants for gate failures (score reductions, NOT skips)
-_ATR_PENALTY = 10          # Points deducted when ATR too low
-_RANGE_PENALTY = 10        # Points deducted when range too small
-_FLOW_PENALTY = 15         # Points deducted when no flow triggers and not fast mover
+_ATR_PENALTY = 5          # Points deducted when ATR too low (halved from 10)
+_RANGE_PENALTY = 4        # Points deducted when range too small (halved from 10)
+_FLOW_PENALTY = 5         # Points deducted when no flow triggers and not fast mover (halved from 15)
 _NO_CANDLES_SCORE = 0      # Score when no candles (REJECTED)
 
 
@@ -79,11 +79,11 @@ async def scan(symbol: str, timeframe: str) -> dict:
         quality = validate_candles(candles, timeframe)
         if quality.state in ("INVALID", "GAPPED", "MISSING"):
             logger.warning(f"[engine] QUALITY_WARN {symbol} {timeframe}: {quality.state} issues={quality.issues}")
-            penalties += 25
+            penalties += 12
             quality_state = quality.state
         elif quality.state == "STALE":
-            logger.debug(f"[engine] STALE {symbol} {timeframe}: age={quality.last_candle_age_sec:.0f}s — penalty -15")
-            penalties += 15
+            logger.debug(f"[engine] STALE {symbol} {timeframe}: age={quality.last_candle_age_sec:.0f}s — penalty -8")
+            penalties += 8
             quality_state = "STALE"
         # DEGRADED and INCOMPLETE proceed without penalty
     elif candle_count < 25:
@@ -179,8 +179,8 @@ async def scan(symbol: str, timeframe: str) -> dict:
 
         # FALLBACK CONFIDENCE → penalty (never skip — all coins flow)
         if fallback_score < _FALLBACK_MIN_CONFIDENCE:
-            logger.debug(f"[engine] FALLBACK_LOW {symbol} {timeframe}: confidence {fallback_score} < {_FALLBACK_MIN_CONFIDENCE} — penalty -20")
-            penalties += 20
+            penalties += 8
+            logger.debug(f"[engine] FALLBACK_LOW {symbol} {timeframe}: confidence {fallback_score} < {_FALLBACK_MIN_CONFIDENCE} — penalty -8")
 
         crt = fallback_crt
         path = "SMC-ONLY"
@@ -216,7 +216,7 @@ async def scan(symbol: str, timeframe: str) -> dict:
 
         # Fatal flaw check — add penalty (never skip or hard-zero)
         fatal_flaw = _check_fatal_flaws(signal, flow, smc)
-        fatal_flaw_penalty = 30 if fatal_flaw else 0  # Large penalty = natural REJECTED tier
+        fatal_flaw_penalty = 8 if fatal_flaw else 0  # Large penalty = natural REJECTED tier
         if fatal_flaw:
             logger.info(f"[engine] FATAL FLAW {symbol} {timeframe}: signal penalized -{fatal_flaw_penalty}")
             penalties += fatal_flaw_penalty

@@ -110,6 +110,46 @@ body {
 }
 .btn-icon:hover { background: var(--border); color: var(--text); }
 
+/* ── Health Badge (top-right header) ─────────────────────────────── */
+.health-badge {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 20px;
+  background: var(--bg-hover); border: 1px solid var(--border);
+  font-size: 11px; color: var(--text-sec);
+  cursor: pointer; transition: all var(--transition);
+  user-select: none;
+}
+.health-badge:hover { border-color: var(--accent); color: var(--text); }
+.health-badge-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #ef4444; transition: background 0.3s;
+  flex-shrink: 0;
+}
+.health-badge-dot.ok { background: #22c55e; box-shadow: 0 0 4px rgba(34,197,94,0.4); }
+.health-badge-dot.warn { background: #f59e0b; }
+.health-badge-text { font-weight: 600; }
+.health-badge-coins { color: var(--text-muted); font-size: 10px; }
+
+/* ── Health Badge (top-right header) ─────────────────────────────── */
+.health-badge {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 20px;
+  background: var(--bg-hover); border: 1px solid var(--border);
+  font-size: 11px; color: var(--text-sec);
+  cursor: pointer; transition: all var(--transition);
+  user-select: none;
+}
+.health-badge:hover { border-color: var(--accent); color: var(--text); }
+.health-badge-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: #ef4444; transition: background 0.3s;
+  flex-shrink: 0;
+}
+.health-badge-dot.ok { background: #22c55e; box-shadow: 0 0 4px rgba(34,197,94,0.4); }
+.health-badge-dot.warn { background: #f59e0b; }
+.health-badge-text { font-weight: 600; }
+.health-badge-coins { color: var(--text-muted); font-size: 10px; }
+
 /* ── Filter Section ──────────────────────────────────────────────── */
 .filter-section {
   display: flex; align-items: center; gap: 6px;

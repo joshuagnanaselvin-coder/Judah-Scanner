@@ -359,6 +359,26 @@ function initFilters() {
 }
 
 // ── Signal Type Banner Update ─────────────────────────────────────
+function updateHealthBadge(data, stats) {
+  const dot = document.getElementById('healthBadgeDot');
+  const text = document.getElementById('healthBadgeText');
+  if (!dot || !text) return;
+
+  const status = data.status || 'initializing';
+  const isOk = status === 'ok';
+  const isWarn = status === 'initializing';
+
+  dot.className = 'health-badge-dot' + (isOk ? ' ok' : isWarn ? ' warn' : '');
+  text.textContent = isOk ? 'Live' : isWarn ? 'Starting' : 'Error';
+
+  const coins = document.getElementById('healthBadgeCoins');
+  if (coins) {
+    const d1 = stats.d1_coins || 0;
+    const d2 = stats.d2_signals || 0;
+    coins.textContent = d1 > 0 ? `D1:${d1} D2:${d2}` : '';
+  }
+}
+
 function updateStypeBanner(signals) {
   const counts = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
   const freshnessCounts = { HOT: 0, WARM: 0, COOL: 0, STALE: 0 };
@@ -719,6 +739,9 @@ async function checkHealth() {
       setActivity('actD1', stats.last_d1_scan);
       setActivity('actD2', stats.last_d2_scan);
       setActivity('actD3', stats.last_d3_fusion);
+
+      // Update top-right health badge
+      updateHealthBadge(data, stats);
 
       // Update DL activity
       const dlStatus = document.getElementById('actDLStatus');
