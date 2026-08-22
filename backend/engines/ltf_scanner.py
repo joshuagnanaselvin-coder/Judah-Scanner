@@ -33,7 +33,7 @@ class LTFSignal:
         "rr1", "rr2", "freshness", "born_at", "last_scan",
         "score_history", "raw_signal",
         "nascent_move", "entry_precision", "flow_score",
-        "momentum_score",
+        "momentum_score", "_freshness",
     )
 
     def __init__(self, coin: str, raw: dict):
