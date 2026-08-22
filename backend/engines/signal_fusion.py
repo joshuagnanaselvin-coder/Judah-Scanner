@@ -324,6 +324,8 @@ class FusionEngine:
             pkg = await self._fuse_coin(coin, d2, type_e_alerts)
             if pkg:
                 results.append(pkg)
+                # Persist decision so /api/decisions and ws_hub initial payload can serve it
+                await state_store.set_d3_decision(coin, pkg)
 
         if results:
             logger.info(f"[fusion] Fused {len(results)} from {len(d2_coins)} D2 signals")
