@@ -11,6 +11,7 @@ from backend.config import (
     BINANCE_INTERVAL_MAP, BINANCE_FUTURES_BASE,
     WS_RECONNECT_DELAY_SEC, WS_MAX_STREAMS_PER_CONN,
     BOOTSTRAP_CANDLES, TIMEFRAMES_HTF, ALL_TIMEFRAMES,
+    TIMEFRAMES_LTF,
 )
 from backend.schemas import Candle
 
@@ -159,24 +160,23 @@ class MarketData:
 
     def connect_websocket(self, symbols: list):
         # Create the session now if not already created by bootstrap.
-        # In the new non-blocking startup, scanner.start() calls this before
-        # _background_bootstrap() runs bootstrap().
         if self.session is None:
             self.session = aiohttp.ClientSession()
 
-        all_streams = []
-        for symbol in symbols:
-            for tf in ALL_TIMEFRAMES:
-                tf_lower = tf.lower()
-                all_streams.append(f"{symbol.lower()}@kline_{tf_lower}")
+        # Separate WS connections per timeframe — avoids rate limit issues
+        # and makes reconnection per-TF more reliable.
+        # Binance allows up to 1024 streams per connection; 500 symbols fits comfortably.
+        self._ws_tasks = []
+        self._ws_conn_map: dict = {}  # tf -> list of conn_ids
 
-        chunk_size = WS_MAX_STREAMS_PER_CONN
-        chunks = [all_streams[i:i + chunk_size]
-                  for i in range(0, len(all_streams), chunk_size)]
-        self._ws_tasks = [asyncio.create_task(self._ws_connection(i, chunk))
-                          for i, chunk in enumerate(chunks)]
-        logger.info(f"[ws] Created {len(chunks)} WS connections "
-                    f"({len(all_streams)} streams, ~{len(symbols)} pairs x {len(ALL_TIMEFRAMES)} TFs)")
+        for tf in ALL_TIMEFRAMES:
+            tf_lower = tf.lower()
+            streams = [f"{s.lower()}@kline_{tf_lower}" for s in symbols]
+            conn_id = f"ws-{tf_lower}"
+            self._ws_conn_map[tf] = conn_id
+            task = asyncio.create_task(self._ws_connection(conn_id, streams))
+            self._ws_tasks.append(task)
+            logger.info(f"[ws] Scheduled {tf} connection: {len(streams)} streams")
 
     async def _ws_connection(self, conn_id, streams):
         """Runs one persistent WS connection with auto-reconnect."""

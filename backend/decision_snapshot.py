@@ -18,7 +18,6 @@ from typing import Any
 from backend.config import (
     TIMEFRAMES_HTF,
     TIMEFRAMES_LTF,
-    ALL_TIMEFRAMES,
     HOST,
     PORT,
 )

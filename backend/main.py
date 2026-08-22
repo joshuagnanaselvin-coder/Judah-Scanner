@@ -533,28 +533,31 @@ async def _bootstrap():
     scanner.symbols = pairs
     logger.info(f"[server] Found {len(pairs)} USDT pairs")
 
-    # Start D1
+    # === STEP 1: Bootstrap candle data FIRST (before any engine starts scanning) ===
+    # Without this, all scanners run with 0 candles and produce 0 results.
+    try:
+        logger.info(f"[server] Bootstrapping candles for {len(pairs)} pairs "
+                    f"(4H + 15M = {len(pairs)*2} requests)...")
+        count = await market_data.bootstrap(pairs)
+        logger.info(f"[server] Bootstrap complete: {count}/{len(pairs)*2} candle sets downloaded")
+    except Exception as e:
+        logger.error(f"[server] Bootstrap failed: {e}")
+
+    # === STEP 2: Start D1 (4H scanner) — candles are ready, no race ===
     try:
         await scanner.start(pairs)
+        logger.info("[server] D1 scanner started")
     except Exception as e:
         logger.error(f"[server] D1 scanner failed to start: {e}")
 
-    # Start D2 engine (15M — independent, same 4-layer pipeline)
+    # === STEP 3: Start D2 engine (15M — independent of D1) ===
     try:
         await ltf_engine.start(pairs)
         logger.info("[server] D2 LTF engine started")
     except Exception as e:
         logger.error(f"[server] D2 engine failed to start: {e}")
 
-    # Bootstrap historical candle data (critical — without this, zero data exists)
-    try:
-        logger.info(f"[server] Bootstrapping candles for {len(pairs)} pairs...")
-        count = await market_data.bootstrap(pairs)
-        logger.info(f"[server] Bootstrap complete: {count} candle sets downloaded")
-    except Exception as e:
-        logger.error(f"[server] Bootstrap failed: {e}")
-
-    # Start D3 Fusion Engine (watches D1 + D2, pushes to frontend)
+    # === STEP 4: Start D3 Fusion Engine (reads from state_store via data_layer) ===
     try:
         await fusion_engine.start()
         logger.info("[server] D3 Fusion Engine started")

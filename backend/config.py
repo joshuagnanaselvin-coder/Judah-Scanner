@@ -222,7 +222,7 @@ ACCELERATION_HOLD_MULT = 1.0       # Full size for existing positions in acceler
 # === TIMEFRAMES ===
 TIMEFRAMES_HTF = ["4H"]  # Dimension 1 — 4H only (1H and 1D removed)
 TIMEFRAMES_LTF = ["15M"]  # Dimension 2
-ALL_TIMEFRAMES = ["15M", "1H", "4H", "1D"]  # All including D2
+ALL_TIMEFRAMES = ["4H", "15M"]  # D1 (4H) + D2 (15M) only — 1H and 1D removed to avoid rate limits
 # Backward-compat alias (D1 scanner still uses this name)
 TIMEFRAMES = TIMEFRAMES_HTF
 
