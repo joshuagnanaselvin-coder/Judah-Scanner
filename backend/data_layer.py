@@ -131,10 +131,10 @@ class DataLayer:
                 broken_count += 1
                 continue
 
-            # Freshness scoring
+            # Freshness scoring — set on signal object so D3/frontend can filter
             age_min = (now - born_ts) / 60
-            sig_data = sig.to_dict() if hasattr(sig, 'to_dict') else sig
-            sig_data["_freshness"] = self._freshness_label(age_min, D2_SIGNAL_TTL_MINUTES)
+            sig._freshness = self._freshness_label(age_min, D2_SIGNAL_TTL_MINUTES)
+            sig.freshness = sig._freshness
             signals[coin] = sig
 
         if stale_count or broken_count:

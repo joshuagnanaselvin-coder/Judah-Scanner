@@ -346,6 +346,9 @@ class FusionEngine:
             logger.debug(f"[fusion] No signal changes — skipping broadcast")
             return
 
+        # ── Batch broadcast (one message with all signals) ─────────────
+        # Removals are sent independently so they fire even when results is empty
+        # (e.g., all D2 signals expired → only removals need broadcasting).
         messages = []
         if results:
             messages.append({"type": "SIGNALS_BATCH", "signals": results})
@@ -734,6 +737,7 @@ class FusionEngine:
             "regime_mult": regime_mult,
             # Metadata
             "freshness": getattr(d2, 'freshness', 'HOT'),
+            "_freshness": getattr(d2, '_freshness', None) or getattr(d2, 'freshness', 'HOT'),
             "score_history": list(getattr(d2, 'score_history', []))[-10:],
             "born_at": getattr(d2, 'born_at', datetime.now(timezone.utc)).isoformat(),
             "last_scan": getattr(d2, 'last_scan', datetime.now(timezone.utc)).isoformat(),

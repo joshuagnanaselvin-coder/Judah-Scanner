@@ -539,7 +539,7 @@ function calculateNextScanTimes() {
 
   // D2: next 15M candle close
   const nowMin = now.getUTCMinutes();
-  const next15Min = Math.ceil((nowMin + 1) / 15) * 15;
+  const next15Min = Math.ceil(nowMin / 15) * 15;
   const nextD2 = new Date(now);
   if (next15Min >= 60) {
     nextD2.setUTCHours(nextD2.getUTCHours() + 1, 0, 0, 0);
@@ -998,7 +998,7 @@ async function loadHealthDetail(smooth = true) {
         <div class="health-row"><span class="health-key">D1 Valid/Stale</span><span class="health-val ${(health.d1_valid || 0) > 0 ? 'ok' : 'warn'}">${health.d1_valid || 0} / ${health.d1_stale || 0}</span></div>
         <div class="health-row"><span class="health-key">D2 Valid/Stale</span><span class="health-val ${(health.d2_valid || 0) > 0 ? 'ok' : 'warn'}">${health.d2_valid || 0} / ${health.d2_stale || 0}</span></div>
         <div class="health-row"><span class="health-key">D3 Decisions</span><span class="health-val neutral">${health.d3_total || 0}</span></div>
-        <div class="health-row"><span class="health-key">D1 Freshness</span><span class="health-val neutral">${JSON.stringify(health.d1_freshness || {})}</span></div>
+        <div class="health-row"><span class="health-key">D1 Freshness</span><span class="health-val neutral">${typeof health.d1_freshness === 'object' && health.d1_freshness ? Object.entries(health.d1_freshness).map(([k,v]) => k+'='+v).join(', ') : (health.d1_freshness || '—')}</span></div>
       </div>
 
       <!-- Errors -->
