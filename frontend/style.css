@@ -610,6 +610,128 @@ body {
 .status-dot.never { background: var(--red); }
 .status-dot.unknown { background: var(--text-muted); }
 
+/* ── Signal Type Banner ──────────────────────────────────────────── */
+.stype-banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 12px; margin-bottom: 8px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius);
+  flex-wrap: wrap;
+}
+.stype-badges {
+  display: flex; gap: 6px; flex-wrap: wrap; flex: 1;
+}
+.stype-badge {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 8px; border-radius: var(--radius-sm);
+  background: var(--bg-hover); border: 1px solid var(--border);
+  min-width: 100px;
+}
+.stype-icon { font-size: 12px; line-height: 1; }
+.stype-name {
+  font-size: 9px; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.3px;
+  font-weight: 600; white-space: nowrap;
+}
+.stype-count {
+  font-size: 13px; font-weight: 700; color: var(--text);
+  min-width: 20px; text-align: right;
+}
+.stype-bar {
+  width: 40px; height: 4px; background: var(--bg);
+  border-radius: 2px; overflow: hidden;
+}
+.stype-bar-fill {
+  height: 100%; border-radius: 2px;
+  transition: width 0.5s ease; min-width: 0;
+}
+
+/* Signal type summary (pie chart + totals) */
+.stype-summary {
+  display: flex; align-items: center; gap: 10px;
+  flex-shrink: 0;
+}
+#pieChart {
+  display: block;
+  border-radius: var(--radius-sm);
+}
+.stype-totals {
+  display: flex; flex-direction: column; gap: 3px;
+}
+.stype-total-row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; font-size: 11px; white-space: nowrap;
+}
+.stype-total-lbl { color: var(--text-muted); }
+.stype-total-val { font-weight: 700; color: var(--text-sec); min-width: 24px; text-align: right; }
+.stype-pending { color: var(--amber); }
+
+/* ── Scan Timer Group ────────────────────────────────────────────── */
+.timer-group {
+  display: flex; gap: 4px; align-items: center;
+}
+.timer-chip {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 2px 8px; border-radius: var(--radius-sm);
+  background: var(--bg-hover); border: 1px solid var(--border);
+  min-width: 50px;
+}
+.timer-label {
+  font-size: 8px; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700;
+}
+.timer-value {
+  font-size: 11px; font-weight: 600; color: var(--text-sec);
+  font-variant-numeric: tabular-nums;
+}
+.timer-scanning {
+  color: #f59e0b;
+  animation: livePulse 1.5s infinite;
+}
+
+/* ── Filter Chips (signal type & freshness) ─────────────────────── */
+.stype-filter {
+  width: 26px; height: 26px; border-radius: 50%;
+  padding: 0; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 10px; font-weight: 700;
+  background: var(--bg-hover); border: 2px solid var(--border);
+  color: var(--text-sec); cursor: pointer;
+  transition: all var(--transition);
+}
+.stype-filter:hover { border-color: var(--chip-color, var(--accent)); color: var(--text); }
+.stype-filter.active {
+  background: var(--chip-color, var(--accent));
+  border-color: var(--chip-color, var(--accent));
+  color: #fff;
+}
+
+.fresh-filter {
+  padding: 3px 8px; border-radius: 12px;
+  background: var(--bg-hover); border: 1px solid var(--border);
+  color: var(--text-sec); cursor: pointer;
+  font-size: 10px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: 0.3px;
+  transition: all var(--transition);
+}
+.fresh-filter:hover { border-color: var(--accent); color: var(--text); }
+.fresh-filter.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* ── Card Extras (signal type dot, freshness badge) ─────────────── */
+.stype-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  flex-shrink: 0; display: inline-block;
+}
+.freshness-badge {
+  font-size: 8px; font-weight: 700; letter-spacing: 0.5px;
+  padding: 1px 5px; border-radius: 3px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+/* ── Activity Bar Extras ─────────────────────────────────────────── */
+.act-live { color: var(--green); }
+.act-recent { color: var(--amber); }
+
 /* ── Responsive ──────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .obs-log-container { height: 250px; font-size: 10px; }

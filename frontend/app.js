@@ -1,15 +1,18 @@
 // ═══════════════════════════════════════════════════════════════════════
-// Judah — D1/D2 Hybrid Scanner Frontend (V5.2)
+// Judah — D1/D2/D3 Scanner Frontend (V6.0)
 // Consumes signal_fusion.py payload via /ws-fusion
 // ═══════════════════════════════════════════════════════════════════════
 
 // ── State ──────────────────────────────────────────────────────────
 let allSignals = [];
 let ws = null;
-let filters = { direction: 'all', signalType: 'all' };
+let filters = { direction: 'all', signalType: 'all', freshness: 'all' };
 const expandedCards = new Set();
 let stats = { d1_coins: 0, d2_signals: 0, d3_fusion: 0, last_d1_scan: 0, last_d2_scan: 0, last_d3_fusion: 0 };
 let typeEAlerts = [];
+let nextD1Scan = 0;
+let nextD2Scan = 0;
+let timerInterval = null;
 
 // ── Helpers ────────────────────────────────────────────────────────
 function getMEE(s) { return s.marketEvolution || {}; }
@@ -56,11 +59,12 @@ function fmtAge(ts) {
 }
 
 // ── Signal Type colors ────────────────────────────────────────────
-const STYPE_COLORS = { A: '#eab308', B: '#3b82f6', C: '#22c55e', D: '#f97316', E: '#ef4444', F: '#a855f7' };
-const STYPE_BG = { A: '#eab30822', B: '#3b82f622', C: '#22c55e22', D: '#f9731622', E: '#ef444422', F: '#a855f722' };
-const TIER_COLORS = { SNIPER: '#eab308', OPPORTUNITY: '#22c55e', WATCH: '#3b82f6', WEAK: '#a855f7', REJECTED: '#6b7280' };
+const STYPE_COLORS = { A: '#eab508', B: '#3b82f6', C: '#22c55e', D: '#f97316', E: '#ef4444', F: '#a855f7' };
+const STYPE_BG = { A: '#eab50822', B: '#3b82f622', C: '#22c55e22', D: '#f9731622', E: '#ef444422', F: '#a855f722' };
+const TIER_COLORS = { SNIPER: '#eab508', OPPORTUNITY: '#22c55e', WATCH: '#3b82f6', WEAK: '#a855f7', REJECTED: '#6b7280' };
 const SPIRAL_COLORS = { Expansion: '#22c55e', Correction: '#f59e0b', Failure: '#ef4444', Neutral: '#6b7280' };
 const DIR_COLORS = { BULLISH: '#22c55e', BEARISH: '#ef4444', NEUTRAL: '#6b7280' };
+const FRESHNESS_COLORS = { HOT: '#22c55e', WARM: '#f59e0b', COOL: '#f97316', STALE: '#6b7280' };
 
 // ── Card Builder ──────────────────────────────────────────────────
 function buildCard(s) {
@@ -70,13 +74,17 @@ function buildCard(s) {
   const d1Tier = s.d1_tier || '—';
   const d2Tier = s.d2_tier || '—';
   const dir = s.direction || 'NEUTRAL';
+  const signalType = s.signal_type || 'F';
   const spiral = mee.spiral || 'Neutral';
   const spiralColor = SPIRAL_COLORS[spiral] || '#6b7280';
   const meState = mee.state || '—';
   const meConf = mee.confidence ?? 0;
   const ageLabel = fmtAge(s.born_at);
+  const freshness = s._freshness || 'COOL';
+  const freshnessColor = FRESHNESS_COLORS[freshness] || '#6b7280';
   const isExpanded = expandedCards.has(s.signal_id);
   const tierColor = TIER_COLORS[d2Tier] || '#6b7280';
+  const stypeColor = STYPE_COLORS[signalType] || '#6b7280';
 
   // Chart links
   const rawCoin = s.coin || 'BTCUSDT';
@@ -117,7 +125,7 @@ function buildCard(s) {
   const hist = (s.score_history || []).slice(-12);
   const sparkData = hist.map(h => h[1] || h.score || 0).join(',');
 
-  // TF breakdown chips — each TF's score with tier-colored background for visibility
+  // TF breakdown chips
   const tfs = s.d1_timeframes || {};
   const tfHtml = Object.entries(tfs).map(([tf, d]) => {
     const tc = TIER_COLORS[d.tier] || '#6b7280';
@@ -128,7 +136,8 @@ function buildCard(s) {
   const evPct = s.expected_value_pct ?? 0;
   const evColor = evPct >= 1 ? '#22c55e' : evPct >= 0 ? '#f59e0b' : '#ef4444';
 
-  return `<div class="card${isExpanded ? ' card-expanded' : ''}" id="card-${s.signal_id}">
+  return `<div class="card${isExpanded ? ' card-expanded' : ''}" id="card-${s.signal_id}"
+              data-signal-type="${signalType}" data-freshness="${freshness}" data-direction="${dir}">
     <!-- HEADER ROW -->
     <div class="card-header" onclick="toggleExpand('${s.signal_id}')">
       <div class="card-left">
@@ -139,6 +148,7 @@ function buildCard(s) {
         <a class="binance-link" href="${binanceUrl}" target="_blank" rel="noopener" title="Trade ${base} on Binance Futures" onclick="event.stopPropagation()">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18M6 3l12 9-12 9"/><path d="M18 3v18"/></svg>
         </a>
+        <span class="stype-dot" style="background:${stypeColor}" title="Type ${signalType}"></span>
         <span class="me-state-badge">${meState}</span>
         <span class="score-flow">
           <span class="score-d1">D1 ${d1Score}</span>
@@ -146,6 +156,7 @@ function buildCard(s) {
           <span class="score-d2">D2 ${d2Score}</span>
         </span>
         <span class="conf-badge conf-${confLevel(meConf)}">${meConf}%</span>
+        <span class="freshness-badge" style="background:${freshnessColor}22;color:${freshnessColor};border-color:${freshnessColor}44">${freshness}</span>
       </div>
       <div class="card-right">
         <span class="tier-badge tier-${d2Tier.toLowerCase()}">${d2Tier}</span>
@@ -268,7 +279,6 @@ function flashNew(id) {
 
 // ── Type E Alerts ─────────────────────────────────────────────────
 function handleTypeEAlert(alert) {
-  // Only one alert per coin — replace existing if already present
   const existing = typeEAlerts.findIndex(a => a.coin === alert.coin);
   if (existing >= 0) {
     typeEAlerts[existing] = alert;
@@ -293,17 +303,17 @@ function renderTypeEAlerts() {
 }
 
 // ── Filtering ────────────────────────────────────────────────────
-// Show all coins with D2 activity — user plans trades manually
-const DISPLAY_TIERS = null;  // null = no tier filter
-
 function applyFilters() {
   return allSignals.filter(s => {
     if (filters.direction !== 'all' && s.direction !== filters.direction) return false;
+    if (filters.signalType !== 'all' && s.signal_type !== filters.signalType) return false;
+    if (filters.freshness !== 'all' && s._freshness !== filters.freshness) return false;
     return true;
   });
 }
 
 function initFilters() {
+  // Direction filters
   document.querySelectorAll('.dir-chip').forEach(btn => {
     btn.addEventListener('click', () => {
       filters.direction = btn.dataset.filterDir;
@@ -312,10 +322,270 @@ function initFilters() {
       renderSignals();
     });
   });
+
+  // Signal type filters
+  document.querySelectorAll('.stype-filter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      filters.signalType = btn.dataset.filterStype;
+      document.querySelectorAll('.stype-filter').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderSignals();
+    });
+  });
+
+  // Freshness filters
+  document.querySelectorAll('.fresh-filter').forEach(btn => {
+    btn.addEventListener('click', () => {
+      filters.freshness = btn.dataset.filterFresh;
+      document.querySelectorAll('.fresh-filter').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      renderSignals();
+    });
+  });
+
+  // Restart button
   const btn = document.getElementById('btnRestart');
   if (btn) btn.addEventListener('click', async () => {
     await fetch('/api/restart', { method: 'POST' }).catch(() => {});
   });
+}
+
+// ── Signal Type Banner Update ─────────────────────────────────────
+function updateStypeBanner(signals) {
+  const counts = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
+  const freshnessCounts = { HOT: 0, WARM: 0, COOL: 0, STALE: 0 };
+  const totalScanned = 500;
+
+  for (const s of signals) {
+    const st = s.signal_type || 'F';
+    if (counts[st] !== undefined) counts[st]++;
+
+    const f = s._freshness || 'COOL';
+    if (freshnessCounts[f] !== undefined) freshnessCounts[f]++;
+  }
+
+  const processed = signals.length;
+  const pending = totalScanned - processed;
+
+  // Update counts
+  for (const [type, count] of Object.entries(counts)) {
+    const el = document.getElementById('stype' + type);
+    if (el) el.textContent = count;
+  }
+
+  // Update bars — relative to total scanned
+  for (const type of ['A', 'B', 'C', 'D', 'E', 'F']) {
+    const bar = document.getElementById('stypeBar' + type);
+    if (bar) {
+      const pct = totalScanned > 0 ? (counts[type] / totalScanned) * 100 : 0;
+      bar.style.width = pct + '%';
+    }
+  }
+
+  // Totals
+  const totalEl = document.getElementById('stypeTotal');
+  const processedEl = document.getElementById('stypeProcessed');
+  const pendingEl = document.getElementById('stypePending');
+  if (totalEl) totalEl.textContent = totalScanned;
+  if (processedEl) processedEl.textContent = processed;
+  if (pendingEl) pendingEl.textContent = Math.max(0, pending);
+
+  // Draw pie chart
+  drawPieChart(counts, totalScanned);
+}
+
+function drawPieChart(counts, total) {
+  const canvas = document.getElementById('pieChart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  const cx = w / 2;
+  const cy = h / 2;
+  const r = Math.max(1, Math.min(w, h) / 2 - 6);
+
+  ctx.clearRect(0, 0, w, h);
+
+  if (total === 0) {
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = '#1e293b';
+    ctx.fill();
+    ctx.fillStyle = '#546178';
+    ctx.font = '9px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('No data', cx, cy);
+    return;
+  }
+
+  const slices = [];
+  let totalNonZero = 0;
+  const order = ['C', 'A', 'B', 'D', 'E', 'F'];
+  for (const type of order) {
+    const c = counts[type] || 0;
+    if (c > 0) {
+      slices.push({ type, count: c, color: STYPE_COLORS[type] });
+      totalNonZero += c;
+    }
+  }
+
+  let startAngle = -Math.PI / 2;
+  const sliceAngle = (Math.PI * 2) / Math.max(1, totalNonZero);
+
+  for (const slice of slices) {
+    const sweep = slice.count * sliceAngle;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, r, startAngle, startAngle + sweep);
+    ctx.closePath();
+    ctx.fillStyle = slice.color;
+    ctx.fill();
+    startAngle += sweep;
+  }
+
+  // Center hole (donut)
+  ctx.beginPath();
+  ctx.arc(cx, cy, Math.max(1, r * 0.5), 0, Math.PI * 2);
+  ctx.fillStyle = '#0f1520';
+  ctx.fill();
+
+  // Center text
+  ctx.fillStyle = '#e2e8f0';
+  ctx.font = 'bold 14px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(totalNonZero, cx, cy - 2);
+  ctx.fillStyle = '#546178';
+  ctx.font = '7px sans-serif';
+  ctx.fillText('active', cx, cy + 9);
+}
+
+// ── Scan Timers ───────────────────────────────────────────────────
+function updateScanTimers() {
+  const now = Date.now();
+
+  // D1 timer — next 4H candle close
+  const d1El = document.getElementById('d1Timer');
+  if (d1El) {
+    const msLeft = Math.max(0, nextD1Scan - now);
+    if (msLeft <= 0) {
+      d1El.textContent = 'scanning';
+      d1El.classList.add('timer-scanning');
+    } else {
+      d1El.textContent = formatCountdown(msLeft);
+      d1El.classList.remove('timer-scanning');
+    }
+  }
+
+  // D2 timer — next 15M candle close
+  const d2El = document.getElementById('d2Timer');
+  if (d2El) {
+    const msLeft = Math.max(0, nextD2Scan - now);
+    if (msLeft <= 0) {
+      d2El.textContent = 'scanning';
+      d2El.classList.add('timer-scanning');
+    } else {
+      d2El.textContent = formatCountdown(msLeft);
+      d2El.classList.remove('timer-scanning');
+    }
+  }
+}
+
+function formatCountdown(ms) {
+  const totalSec = Math.ceil(ms / 1000);
+  if (totalSec < 60) return totalSec + 's';
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  if (m < 60) return m + 'm ' + s + 's';
+  const h = Math.floor(m / 60);
+  return h + 'h ' + (m % 60) + 'm';
+}
+
+function calculateNextScanTimes() {
+  const now = new Date();
+
+  // D1: next 4H candle close (00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC)
+  const d1Hours = [0, 4, 8, 12, 16, 20];
+  let nextD1 = new Date(now);
+  nextD1.setUTCMinutes(0, 0, 0);
+  for (const h of d1Hours) {
+    const candidate = new Date(now);
+    candidate.setUTCHours(h, 0, 0, 0);
+    if (candidate > now) {
+      nextD1 = candidate;
+      break;
+    }
+  }
+  // If no future hour found today, use tomorrow 00:00
+  if (nextD1 <= now) {
+    nextD1 = new Date(now);
+    nextD1.setUTCDate(nextD1.getUTCDate() + 1);
+    nextD1.setUTCHours(0, 0, 0, 0);
+  }
+  nextD1Scan = nextD1.getTime();
+
+  // D2: next 15M candle close
+  const nowMin = now.getUTCMinutes();
+  const next15Min = Math.ceil((nowMin + 1) / 15) * 15;
+  const nextD2 = new Date(now);
+  if (next15Min >= 60) {
+    nextD2.setUTCHours(nextD2.getUTCHours() + 1, 0, 0, 0);
+  } else {
+    nextD2.setUTCMinutes(next15Min, 0, 0);
+  }
+  nextD2Scan = nextD2.getTime();
+}
+
+function startTimerUpdates() {
+  calculateNextScanTimes();
+  updateScanTimers();
+  if (timerInterval) clearInterval(timerInterval);
+  timerInterval = setInterval(() => {
+    updateScanTimers();
+    // Recalculate at the top of each hour for D2 timer alignment
+    if (new Date().getUTCMinutes() === 0) calculateNextScanTimes();
+  }, 1000);
+}
+
+// ── Data Layer Status ─────────────────────────────────────────────
+async function updateDLStatus() {
+  try {
+    const resp = await fetch('/api/health');
+    const data = await resp.json();
+    if (data.stats) {
+      stats = data.stats;
+      document.getElementById('d1Count').textContent = stats.d1_coins || 0;
+      document.getElementById('d2Count').textContent = stats.d2_signals || 0;
+      document.getElementById('d3Count').textContent = stats.d3_fusion || 0;
+
+      setActivity('actD1', stats.last_d1_scan);
+      setActivity('actD2', stats.last_d2_scan);
+      setActivity('actD3', stats.last_d3_fusion);
+      setActivity('actDL', stats.last_dl_cleanup || stats.last_d3_fusion, 'DL');
+    }
+  } catch (e) { /* silent */ }
+}
+
+function setActivity(prefix, ts, label) {
+  const status = document.getElementById(prefix + 'Status');
+  if (!status) return;
+  if (!ts || ts < 1000000) {
+    status.textContent = '—';
+    status.className = 'act-status';
+    return;
+  }
+  const age = (Date.now() - new Date(ts * 1000).getTime()) / 1000;
+  if (age < 10) {
+    status.textContent = '• Live';
+    status.className = 'act-status act-live';
+  } else if (age < 30) {
+    status.textContent = '• Recent';
+    status.className = 'act-status act-recent';
+  } else {
+    status.textContent = '○ ' + timeAgo(ts);
+    status.className = 'act-status';
+  }
 }
 
 // ── Render ────────────────────────────────────────────────────────
@@ -326,19 +596,18 @@ function renderSignals() {
 
   const filtered = applyFilters();
 
-  // Sort primarily by market evolution confidence, then composite score,
-  // then D2 tier — highest conviction and most established setups first.
-  const tierRank = { SNIPER: 3, OPPORTUNITY: 2, WATCH: 1, REJECTED: 0, '—': 0 };
+  // Sort by ME confidence (desc), then composite score (desc), then D2 tier
+  const tierRank = { SNIPER: 3, OPPORTUNITY: 2, WATCH: 1, WEAK: 0, REJECTED: -1, '—': 0 };
   filtered.sort((a, b) => {
     const ca = (a.marketEvolution || {}).confidence ?? 0;
     const cb = (b.marketEvolution || {}).confidence ?? 0;
-    if (cb !== ca) return cb - ca;                // higher confidence first
+    if (cb !== ca) return cb - ca;
     const sa = b.composite_score ?? b.d2_score ?? 0;
     const sb = a.composite_score ?? a.d2_score ?? 0;
-    if (sb !== sa) return sa - sb;                // higher score first
+    if (sb !== sa) return sa - sb;
     const ta = tierRank[b.d2_tier] || 0;
     const tb = tierRank[a.d2_tier] || 0;
-    if (ta !== tb) return ta - tb;                // higher tier first
+    if (ta !== tb) return ta - tb;
     return 0;
   });
 
@@ -367,20 +636,21 @@ function updateEmptyState(state) {
   if (!title) return;
   if (state === 'scanning') {
     title.textContent = 'Scanning Markets...';
-    msg.textContent = `${stats.d1_coins || 0} HTF coins · 15M LTF · Decision Layer`;
+    msg.textContent = `${stats.d1_coins || 0} HTF coins · 15M LTF · Fusion · 500 coins`;
     if (spinner) spinner.style.display = '';
   } else {
     title.textContent = 'Waiting for signals...';
-    msg.textContent = 'D1 HTF + D2 15M + Decision Layer active';
+    msg.textContent = 'D1 4H HTF + D2 15M LTF + D3 Fusion — scanning 500 coins';
     if (spinner) spinner.style.display = 'none';
   }
 }
 
 function clearFilters() {
-  filters = { direction: 'all', signalType: 'all' };
-  document.querySelectorAll('.dir-chip, .stype-chip').forEach(b => b.classList.remove('active'));
+  filters = { direction: 'all', signalType: 'all', freshness: 'all' };
+  document.querySelectorAll('.dir-chip, .stype-filter, .fresh-filter').forEach(b => b.classList.remove('active'));
   document.querySelector('[data-filter-dir="all"]')?.classList.add('active');
   document.querySelector('[data-filter-stype="all"]')?.classList.add('active');
+  document.querySelector('[data-filter-fresh="all"]')?.classList.add('active');
   renderSignals();
 }
 
@@ -434,21 +704,30 @@ async function checkHealth() {
       document.getElementById('d2Count').textContent = stats.d2_signals || 0;
       document.getElementById('d3Count').textContent = stats.d3_fusion || 0;
 
-      // Activity indicators
       setActivity('actD1', stats.last_d1_scan);
       setActivity('actD2', stats.last_d2_scan);
       setActivity('actD3', stats.last_d3_fusion);
 
-
+      // Update DL activity
+      const dlStatus = document.getElementById('actDLStatus');
+      if (dlStatus) {
+        const dlCleanup = stats.last_dl_cleanup;
+        if (dlCleanup && dlCleanup > 1000000) {
+          const age = (Date.now() - new Date(dlCleanup * 1000).getTime()) / 1000;
+          if (age < 30) {
+            dlStatus.textContent = '• Active';
+            dlStatus.className = 'act-status act-live';
+          } else {
+            dlStatus.textContent = '○ ' + timeAgo(dlCleanup);
+            dlStatus.className = 'act-status';
+          }
+        } else {
+          dlStatus.textContent = '—';
+          dlStatus.className = 'act-status';
+        }
+      }
     }
   } catch (e) { /* silent */ }
-}
-
-function setActivity(prefix, ts) {
-  const status = document.getElementById(prefix + 'Status');
-  if (!status || !ts || ts < 1000000) return;  // skip zero/uninitialized timestamps
-  const age = (Date.now() - new Date(ts * 1000).getTime()) / 1000;
-  status.textContent = age < 10 ? '● Live' : age < 30 ? '● Recent' : '○ ' + timeAgo(ts);
 }
 
 // ── WebSocket ─────────────────────────────────────────────────────
@@ -482,14 +761,17 @@ function connectWS() {
   ws.onmessage = (ev) => {
     try {
       const msg = JSON.parse(ev.data);
+
       if (msg.type === 'INITIAL') {
         allSignals = msg.signals || [];
         renderSignals();
+        updateStypeBanner(allSignals);
         if (allSignals.length > 0) {
           const empty = document.getElementById('emptyState');
           if (empty && empty.parentNode) empty.parentNode.removeChild(empty);
         }
       }
+
       if (msg.type === 'SIGNALS_BATCH' && msg.signals) {
         for (const s of msg.signals) {
           const idx = allSignals.findIndex(x => x.signal_id === s.signal_id);
@@ -497,24 +779,29 @@ function connectWS() {
           else { allSignals.unshift(s); flashNew(s.signal_id); }
         }
         renderSignals();
+        updateStypeBanner(allSignals);
       }
+
       if (msg.type === 'signal' && msg.data) {
         const s = msg.data;
         const idx = allSignals.findIndex(x => x.signal_id === s.signal_id);
         if (idx >= 0) allSignals[idx] = s;
         else { allSignals.unshift(s); flashNew(s.signal_id); }
         renderSignals();
+        updateStypeBanner(allSignals);
       }
+
       if (msg.type === 'TYPE_E_ALERT' && msg.data) {
         handleTypeEAlert(msg.data);
       }
+
       if (msg.type === 'REMOVE_SIGNALS' && msg.signal_ids) {
-        // D3 archived expired signals — remove from active list
         msg.signal_ids.forEach(id => {
           const idx = allSignals.findIndex(x => x.signal_id === id);
           if (idx >= 0) allSignals.splice(idx, 1);
         });
         renderSignals();
+        updateStypeBanner(allSignals);
       }
     } catch (e) { console.error('[WS]', e); }
   };
@@ -667,7 +954,7 @@ async function loadHealthDetail(smooth = true) {
 
       <!-- D1 -->
       <div class="health-card">
-        <div class="health-card-title">📊 D1 — HTF Scanner</div>
+        <div class="health-card-title">📊 D1 — HTF Scanner (4H)</div>
         <div class="health-row"><span class="health-key">Status</span><span class="health-val ${statusClass(d1.status)}"><span class="status-dot ${dotClass(d1.status)}"></span>${statusLabel(d1.status)}</span></div>
         <div class="health-row"><span class="health-key">Last Scan</span><span class="health-val neutral">${d1.age_s != null ? d1.age_s + 's ago' : 'never'}</span></div>
         <div class="health-row"><span class="health-key">Coins in Tier</span><span class="health-val neutral">${d1.coins != null ? d1.coins : '—'}</span></div>
@@ -691,6 +978,15 @@ async function loadHealthDetail(smooth = true) {
         <div class="health-row"><span class="health-key">Last Fusion</span><span class="health-val neutral">${d3.age_s != null ? d3.age_s + 's ago' : 'never'}</span></div>
         <div class="health-row"><span class="health-key">Decisions</span><span class="health-val neutral">${d3.decisions != null ? d3.decisions : '—'}</span></div>
         <div class="health-bar"><div class="health-bar-fill" style="width:${d3.age_s ? Math.max(0, 100 - d3.age_s) : 0}%;background:${d3.status === 'live' ? 'var(--green)' : d3.status === 'never' ? 'var(--red)' : 'var(--amber)'}"></div></div>
+      </div>
+
+      <!-- Data Layer -->
+      <div class="health-card">
+        <div class="health-card-title">📊 Data Layer</div>
+        <div class="health-row"><span class="health-key">D1 Valid/Stale</span><span class="health-val ${(health.d1_valid || 0) > 0 ? 'ok' : 'warn'}">${health.d1_valid || 0} / ${health.d1_stale || 0}</span></div>
+        <div class="health-row"><span class="health-key">D2 Valid/Stale</span><span class="health-val ${(health.d2_valid || 0) > 0 ? 'ok' : 'warn'}">${health.d2_valid || 0} / ${health.d2_stale || 0}</span></div>
+        <div class="health-row"><span class="health-key">D3 Decisions</span><span class="health-val neutral">${health.d3_total || 0}</span></div>
+        <div class="health-row"><span class="health-key">D1 Freshness</span><span class="health-val neutral">${JSON.stringify(health.d1_freshness || {})}</span></div>
       </div>
 
       <!-- Errors -->
@@ -719,5 +1015,9 @@ async function loadHealthDetail(smooth = true) {
 document.addEventListener('DOMContentLoaded', () => {
   connectWS();
   initFilters();
+  startTimerUpdates();
+  updateDLStatus();
   setInterval(checkHealth, 3000);
+  // Recalculate scan timers every minute
+  setInterval(calculateNextScanTimes, 60000);
 });

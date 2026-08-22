@@ -3,15 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="theme-color" content="#0c1220">
+  <meta theme-color" content="#0c1220">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Judah">
   <link rel="manifest" href="/static/manifest.json">
   <link rel="icon" type="image/svg+xml" href="/static/icon-192.svg">
   <link rel="apple-touch-icon" href="/static/icon-192.svg">
-  <title>Judah — D1/D2 Hybrid Scanner</title>
-  <link rel="stylesheet" href="/static/style.css?v=2">
+  <title>Judah — Scanner</title>
+  <link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
   <div class="app">
@@ -24,7 +24,7 @@
           </div>
           <div class="logo-text">
             <h1>Judah</h1>
-            <span>Hybrid Scanner — D1 HTF + D2 15M + Decision Layer</span>
+            <span>D1 4H + D2 15M + Fusion</span>
           </div>
         </div>
       </div>
@@ -42,6 +42,7 @@
           <span id="wsLabel">...</span>
         </div>
 
+        <!-- D1 / D2 / D3 stat chips -->
         <div class="stat-group">
           <div class="stat-chip">
             <span class="stat-label">D1</span>
@@ -57,11 +58,82 @@
           </div>
         </div>
 
+        <!-- Scan timer -->
+        <div class="timer-group">
+          <div class="timer-chip" title="Time until next D1 4H scan">
+            <span class="timer-label">D1</span>
+            <span class="timer-value" id="d1Timer">--</span>
+          </div>
+          <div class="timer-chip" title="Time until next D2 15M scan">
+            <span class="timer-label">D2</span>
+            <span class="timer-value" id="d2Timer">--</span>
+          </div>
+        </div>
+
         <button class="btn-icon" id="btnRestart" title="Restart scanner">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
         </button>
       </div>
     </header>
+
+    <!-- ═══ SIGNAL TYPE BANNER ═══ -->
+    <div class="stype-banner" id="stypeBanner">
+      <div class="stype-badges">
+        <div class="stype-badge" data-type="A">
+          <span class="stype-icon" style="--stype-color:#eab508">🟡</span>
+          <span class="stype-name">HTF Structure</span>
+          <span class="stype-count" id="stypeA">0</span>
+          <div class="stype-bar"><div class="stype-bar-fill" id="stypeBarA"></div></div>
+        </div>
+        <div class="stype-badge" data-type="B">
+          <span class="stype-icon" style="--stype-color:#3b82f6">🔵</span>
+          <span class="stype-name">LTF Momentum</span>
+          <span class="stype-count" id="stypeB">0</span>
+          <div class="stype-bar"><div class="stype-bar-fill" id="stypeBarB"></div></div>
+        </div>
+        <div class="stype-badge" data-type="C">
+          <span class="stype-icon" style="--stype-color:#22c55e">🟢</span>
+          <span class="stype-name">Full Confluence</span>
+          <span class="stype-count" id="stypeC">0</span>
+          <div class="stype-bar"><div class="stype-bar-fill" id="stypeBarC"></div></div>
+        </div>
+        <div class="stype-badge" data-type="D">
+          <span class="stype-icon" style="--stype-color:#f97316">🟠</span>
+          <span class="stype-name">Early Warning</span>
+          <span class="stype-count" id="stypeD">0</span>
+          <div class="stype-bar"><div class="stype-bar-fill" id="stypeBarD"></div></div>
+        </div>
+        <div class="stype-badge" data-type="E">
+          <span class="stype-icon" style="--stype-color:#ef4444">🔴</span>
+          <span class="stype-name">Conflict/Trap</span>
+          <span class="stype-count" id="stypeE">0</span>
+          <div class="stype-bar"><div class="stype-bar-fill" id="stypeBarE"></div></div>
+        </div>
+        <div class="stype-badge" data-type="F">
+          <span class="stype-icon" style="--stype-color:#a855f7">🟣</span>
+          <span class="stype-name">LTF Weak</span>
+          <span class="stype-count" id="stypeF">0</span>
+          <div class="stype-bar"><div class="stype-bar-fill" id="stypeBarF"></div></div>
+        </div>
+      </div>
+      <div class="stype-summary">
+        <canvas id="pieChart" width="90" height="90"></canvas>
+        <div class="stype-totals">
+          <div class="stype-total-row">
+            <span class="stype-total-lbl">Total Scanning</span>
+            <span class="stype-total-val" id="stypeTotal">500</span>
+          </div>
+          <div class="stype-total-row">
+            <span class="stype-total-lbl">Processed</span>
+            <span class="stype-total-val" id="stypeProcessed">0</span>
+          </div>
+          <div class="stype-total-row">
+            <span class="stype-total-lbl">Pending</span>
+            <span class="stype-total-val stype-pending" id="stypePending">500</span>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- FILTER BAR -->
     <div class="filter-section">
@@ -78,6 +150,24 @@
         </button>
 
         <span class="filter-sep"></span>
+
+        <span class="filter-group-label">Type</span>
+        <button class="filter-chip stype-filter active" data-filter-stype="all">All</button>
+        <button class="filter-chip stype-filter" data-filter-stype="A" style="--chip-color:#eab508">A</button>
+        <button class="filter-chip stype-filter" data-filter-stype="B" style="--chip-color:#3b82f6">B</button>
+        <button class="filter-chip stype-filter" data-filter-stype="C" style="--chip-color:#22c55e">C</button>
+        <button class="filter-chip stype-filter" data-filter-stype="D" style="--chip-color:#f97316">D</button>
+        <button class="filter-chip stype-filter" data-filter-stype="E" style="--chip-color:#ef4444">E</button>
+        <button class="filter-chip stype-filter" data-filter-stype="F" style="--chip-color:#a855f7">F</button>
+
+        <span class="filter-sep"></span>
+
+        <span class="filter-group-label">Fresh</span>
+        <button class="filter-chip fresh-filter active" data-filter-fresh="all">All</button>
+        <button class="filter-chip fresh-filter" data-filter-fresh="HOT">HOT</button>
+        <button class="filter-chip fresh-filter" data-filter-fresh="WARM">WARM</button>
+        <button class="filter-chip fresh-filter" data-filter-fresh="COOL">COOL</button>
+        <button class="filter-chip fresh-filter" data-filter-fresh="STALE">STALE</button>
       </div>
     </div>
 
@@ -88,15 +178,19 @@
     <div class="activity-bar" id="activityBar">
       <div class="activity-item" id="actD1">
         <span class="act-label">D1</span>
-        <span class="act-status" id="actD1Status">—</span>
+        <span class="act-status" id="actD1Status">&mdash;</span>
       </div>
       <div class="activity-item" id="actD2">
         <span class="act-label">D2</span>
-        <span class="act-status" id="actD2Status">—</span>
+        <span class="act-status" id="actD2Status">&mdash;</span>
       </div>
       <div class="activity-item" id="actD3">
         <span class="act-label">D3</span>
-        <span class="act-status" id="actD3Status">—</span>
+        <span class="act-status" id="actD3Status">&mdash;</span>
+      </div>
+      <div class="activity-item" id="actDL">
+        <span class="act-label">DL</span>
+        <span class="act-status" id="actDLStatus">&mdash;</span>
       </div>
     </div>
 
@@ -107,15 +201,15 @@
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         </div>
         <h2 id="emptyTitle">Initializing...</h2>
-        <p id="emptyMsg">Scanning markets · D1 HTF + D2 15M + Decision Layer</p>
+        <p id="emptyMsg">D1 4H HTF + D2 15M LTF + D3 Fusion — scanning 500 coins</p>
       </div>
     </div>
 
     <!-- OBSERVABILITY: LOGS + HEALTH TABS -->
     <div class="obs-panel" id="obsPanel" style="display:none;">
       <div class="obs-tabs">
-        <button class="obs-tab active" data-tab="logs" onclick="switchObsTab('logs')">📋 Logs</button>
-        <button class="obs-tab" data-tab="health" onclick="switchObsTab('health')">🩺 Health</button>
+        <button class="obs-tab active" data-tab="logs" onclick="switchObsTab('logs')">&#128203; Logs</button>
+        <button class="obs-tab" data-tab="health" onclick="switchObsTab('health')">&#128138; Health</button>
       </div>
 
       <!-- LOGS TAB -->
@@ -125,9 +219,10 @@
             <label>Source:</label>
             <select id="logSource" onchange="loadLogs()">
               <option value="all">All</option>
-              <option value="d1">D1 (Scanner)</option>
-              <option value="d2">D2 (LTF Pipeline)</option>
+              <option value="d1">D1 (4H Scanner)</option>
+              <option value="d2">D2 (15M Pipeline)</option>
               <option value="d3">D3 (Fusion)</option>
+              <option value="dl">Data Layer</option>
               <option value="errors">Errors Only</option>
             </select>
             <select id="logLines" onchange="loadLogs()">
@@ -135,7 +230,7 @@
               <option value="200" selected>200 lines</option>
               <option value="500">500 lines</option>
             </select>
-            <button class="btn-refresh" onclick="loadLogs()" title="Refresh logs">↻</button>
+            <button class="btn-refresh" onclick="loadLogs()" title="Refresh logs">&#8635;</button>
           </div>
           <div class="obs-filter-info" id="logFilterInfo"></div>
         </div>
@@ -154,9 +249,9 @@
 
   </div>
 
-  <!-- TOGGLE BUTTON (floating, visible always) -->
+  <!-- TOGGLE BUTTON -->
   <button class="obs-toggle" id="obsToggle" onclick="toggleObsPanel()" title="Toggle Observability Panel">
-    📊
+    &#128202;
   </button>
 
   <script>

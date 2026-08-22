@@ -5,7 +5,7 @@ SCAN_INTERVAL_SECONDS = 14400     # D1: 4 hours fallback (candle-close is primar
 SIGNAL_TTL_MINUTES = 240          # D1 signal expiry (4 hours — matches 4H candle duration)
 EVIDENCE_TTL_MINUTES = 240        # Evidence expiry in evidence_store (4 hours)
 MAX_SIGNALS = None     # No cap — store all D1 signals
-BOOTSTRAP_CANDLES = 50            # Only need ~50 candles for indicator lookbacks (was 200)
+BOOTSTRAP_CANDLES = 500            # 4H: 500×4H=83d, 15M: 500×15M=5d (Binance max=1000/req)
 SCAN_CONCURRENCY = 20             # Max parallel CRT+SMC scans per cycle
 
 # === CANDIDATE SELECTION ENGINE (formerly pre-filter) ===
