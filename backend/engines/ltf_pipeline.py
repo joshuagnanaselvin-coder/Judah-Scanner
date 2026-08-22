@@ -110,19 +110,15 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
         flaws.append(f"delta_opposing_{opp_count}_candles")
 
     # Flaw 3: Volume < 0.3x avg on key candle = low conviction
+    # Use AVERAGE of last 3 candles (not min) to avoid penalising
+    # a still-forming 15M candle which naturally has lower volume.
     if candles and len(candles) >= 3:
-        closed = candles  # Use all candles (dict-based in tests, object-based in production)
-        if len(closed) >= 2:
-            # Use min of last 3 completed candles to avoid false positives from
-            # a single partial 15M candle (still-forming candle has low volume by nature)
-            vol_avg = sum(_get(c, 'volume') for c in closed[-20:]) / min(len(closed[-20:]), 20)
-            key_vol = min(_get(c, 'volume') for c in closed[-3:])
-            # Volume must be at least 0.3x avg on key candle.
-            # Below 30% avg = low conviction entry (was <1.0x = way too strict, blocking all signals)
-            if vol_avg > 0 and key_vol < vol_avg * 0.3:
-                flaws.append("low_volume_key_candle")
+        vol_avg = sum(_get(c, 'volume') for c in candles[-20:]) / min(len(candles[-20:]), 20)
+        key_vol_avg = sum(_get(c, 'volume') for c in candles[-3:]) / 3  # avg, not min
+        if vol_avg > 0 and key_vol_avg < vol_avg * 0.3:
+            flaws.append("low_volume_key_candle")
 
-    # Flaw 4: Entry > 2% past OB/FVG zone
+    # Flaw 4: Entry > 8% past OB/FVG zone (was 5% — too strict, blocked valid breakouts)
     last_price = _get(candles[-1], 'close') if candles else 0
     ob = smc.get("ob")
     if ob and last_price > 0:
@@ -131,7 +127,7 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
         if ob_high > 0 and ob_low > 0:
             ob_mid = (ob_high + ob_low) / 2
             deviation = abs(last_price - ob_mid) / ob_mid * 100
-            if deviation > 5.0:
+            if deviation > 8.0:
                 flaws.append(f"entry_far_from_ob_{deviation:.1f}%")
 
     return flaws
