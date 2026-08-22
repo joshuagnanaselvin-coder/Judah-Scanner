@@ -866,6 +866,11 @@ function toggleObsPanel() {
   }
 }
 
+function toggleObsPanelCollapse() {
+  const panel = document.getElementById('obsPanel');
+  panel.classList.toggle('collapsed');
+}
+
 function switchObsTab(tab) {
   obsTab = tab;
   document.querySelectorAll('.obs-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));

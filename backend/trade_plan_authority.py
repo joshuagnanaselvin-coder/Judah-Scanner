@@ -205,7 +205,7 @@ class TradePlanAuthority:
             )
 
         # Zone discipline check
-        zone_status = self._check_zone(direction, entry, d1_zone, d2_zone, ob_low, ob_high)
+        zone_status = self._check_zone(direction, entry, d1_zone, d2_zone, ob_low, ob_high, signal_type)
         if zone_status != PlanStatus.ACCEPTED:
             return TradePlan(
                 status=zone_status,
@@ -270,26 +270,43 @@ class TradePlanAuthority:
         )
 
     def _check_zone(self, direction: str, entry: float, d1_zone: str, d2_zone: str,
-                    ob_low: float, ob_high: float) -> PlanStatus:
+                    ob_low: float, ob_high: float, signal_type: str = "A") -> PlanStatus:
         """Zone discipline guard.
 
-        BULLISH entry MUST be in DISCOUNT (≤ midpoint of OB range).
-        BEARISH entry MUST be in PREMIUM (≥ midpoint of OB range).
+        Primary check: premium_discount from CRT/HTF analysis.
+        OB midpoint is a confirmation, not the gate.
+
+        BULLISH entry should be in DISCOUNT zone.
+        BEARISH entry should be in PREMIUM zone.
+        EQUILIBRIUM is neutral — only reject if the OPPOSITE zone is detected.
+        Type B (LTF Momentum) is lenient: only rejects extreme opposite zone.
         """
+        effective_zone = d2_zone if d2_zone != "EQUILIBRIUM" else d1_zone
+
+        # Type B is momentum-based — only reject if in the OPPOSITE extreme zone
+        if signal_type == "B":
+            if direction.upper() == "BULLISH" and effective_zone == "PREMIUM":
+                return PlanStatus.REJECTED_ZONE_VIOLATION
+            if direction.upper() == "BEARISH" and effective_zone == "DISCOUNT":
+                return PlanStatus.REJECTED_ZONE_VIOLATION
+            return PlanStatus.ACCEPTED  # Type B: accept DISCOUNT, EQUILIBRIUM, or PREMIUM(if not extreme)
+
         if direction.upper() == "BULLISH":
+            if effective_zone == "PREMIUM":
+                return PlanStatus.REJECTED_ZONE_VIOLATION
+            # DISCOUNT or EQUILIBRIUM: check OB midpoint as confirmation
             if ob_low > 0 and ob_high > 0:
                 midpoint = (ob_low + ob_high) / 2
-                if entry > midpoint:
+                if entry > midpoint * 1.05:  # 5% tolerance above midpoint
                     return PlanStatus.REJECTED_ZONE_VIOLATION
-            elif d2_zone == "PREMIUM":
-                return PlanStatus.REJECTED_ZONE_VIOLATION
         elif direction.upper() == "BEARISH":
+            if effective_zone == "DISCOUNT":
+                return PlanStatus.REJECTED_ZONE_VIOLATION
+            # PREMIUM or EQUILIBRIUM: check OB midpoint as confirmation
             if ob_low > 0 and ob_high > 0:
                 midpoint = (ob_low + ob_high) / 2
-                if entry < midpoint:
+                if entry < midpoint * 0.95:  # 5% tolerance below midpoint
                     return PlanStatus.REJECTED_ZONE_VIOLATION
-            elif d2_zone == "DISCOUNT":
-                return PlanStatus.REJECTED_ZONE_VIOLATION
         return PlanStatus.ACCEPTED
 
     def _reject(self, symbol: str, direction: str, entry: float,

@@ -506,8 +506,25 @@ body {
 .obs-panel {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: var(--radius); margin-bottom: 8px;
-  overflow: hidden;
+  overflow: hidden; transition: max-height 0.3s ease;
 }
+.obs-panel.collapsed { max-height: 42px; overflow: hidden; }
+.obs-panel-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px; background: var(--bg-hover);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer; user-select: none;
+}
+.obs-panel-header:hover { background: var(--border); }
+.obs-panel-title {
+  font-size: 11px; font-weight: 700; text-transform: uppercase;
+  color: var(--text-muted); letter-spacing: 0.5px;
+}
+.obs-panel-chevron {
+  font-size: 10px; color: var(--text-muted);
+  transition: transform 0.2s;
+}
+.obs-panel.collapsed .obs-panel-chevron { transform: rotate(-90deg); }
 .obs-tabs {
   display: flex; gap: 0;
   border-bottom: 1px solid var(--border);
