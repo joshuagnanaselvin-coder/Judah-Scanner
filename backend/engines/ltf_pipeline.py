@@ -31,13 +31,13 @@ import logging
 
 logger = logging.getLogger("judah.ltf_pipeline")
 
-_ATR_PENALTY = 10          # Points deducted when ATR too low
-_RANGE_PENALTY = 8         # Points deducted when range too small
-_FLOW_PENALTY = 10         # Points deducted when no flow
-_NO_SMC_PENALTY = 10       # Points deducted when SMC analysis fails
-_FALLBACK_PENALTY = 15     # Points deducted when fallback confidence too low
-_FATAL_FLAW_PENALTY = 20   # Points deducted per fatal flaw
-_NO_CANDLES_PENALTY = 20   # Points deducted when insufficient candles
+_ATR_PENALTY = 5          # Points deducted when ATR too low (was 10)
+_RANGE_PENALTY = 4        # Points deducted when range too small (was 8)
+_FLOW_PENALTY = 5         # Points deducted when no flow (was 10)
+_NO_SMC_PENALTY = 5       # Points deducted when SMC analysis fails (was 10)
+_FALLBACK_PENALTY = 8     # Points deducted when fallback confidence too low (was 15)
+_FATAL_FLAW_PENALTY = 8   # Points deducted per fatal flaw (was 20)
+_NO_CANDLES_PENALTY = 10  # Points deducted when insufficient candles (was 20)
 
 # Stage counters for pipeline bottleneck analysis
 _stage_stats = {}
@@ -113,14 +113,16 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
     if opp_count >= 2:
         flaws.append(f"delta_opposing_{opp_count}_candles")
 
-    # Flaw 3: Volume < 0.3x avg on key candle = low conviction
-    # Use AVERAGE of last 3 candles (not min) to avoid penalising
-    # a still-forming 15M candle which naturally has lower volume.
-    if candles and len(candles) >= 3:
+    # Flaw 3: Volume < 0.5x avg on key candle = low conviction
+    # Use only closed candles — forming 15M candle naturally has lower volume
+    # and would false-trigger this check.
+    if candles and len(candles) >= 6:
         vol_avg = sum(_get(c, 'volume') for c in candles[-20:]) / min(len(candles[-20:]), 20)
-        key_vol_avg = sum(_get(c, 'volume') for c in candles[-3:]) / 3  # avg, not min
-        if vol_avg > 0 and key_vol_avg < vol_avg * 0.3:
-            flaws.append("low_volume_key_candle")
+        key_candles = [c for c in candles[-5:-1] if getattr(c, 'is_closed', True)]
+        if len(key_candles) >= 2:
+            key_vol_avg = sum(_get(c, 'volume') for c in key_candles) / len(key_candles)
+            if vol_avg > 0 and key_vol_avg < vol_avg * 0.5:
+                flaws.append("low_volume_key_candle")
 
     # Flaw 4: Entry > 8% past OB/FVG zone (was 5% — too strict, blocked valid breakouts)
     last_price = _get(candles[-1], 'close') if candles else 0
@@ -131,7 +133,7 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
         if ob_high > 0 and ob_low > 0:
             ob_mid = (ob_high + ob_low) / 2
             deviation = abs(last_price - ob_mid) / ob_mid * 100
-            if deviation > 8.0:
+            if deviation > 12.0:
                 flaws.append(f"entry_far_from_ob_{deviation:.1f}%")
 
     return flaws
@@ -248,6 +250,56 @@ async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict:
 
     _count_stage("fatal_flaw_pass")
 
+    # ── Structural tags for D3 frontend display ────────────────────────
+    # Extract OB/MSB/FVG/Liquidity from SMC result so D3 can render
+    # structure tags on the frontend cards (MSB, OB, FVG, LIQ SWEPT).
+    # D3 reads these at the top level of raw_signal (raw_signal.ob, etc.)
+    # AND under raw_signal.structure for organized access.
+    _d2_structure = {}
+    _d2_ob = None
+    _d2_msb = None
+    _d2_fvg = None
+    _d2_liq = None
+    if smc:
+        msb = smc.get("msb", {})
+        if msb and msb.get("confirmed"):
+            _d2_msb = {
+                "type": msb.get("type", ""),
+                "confirmed": True,
+                "level": msb.get("level", 0),
+                "direction": msb.get("direction", ""),
+            }
+            _d2_structure["msb"] = _d2_msb
+        ob = smc.get("ob")
+        if ob:
+            _d2_ob = {
+                "type": ob.get("type", ""),
+                "zone": ob.get("zone", "UNKNOWN"),
+                "high": ob.get("high", 0),
+                "low": ob.get("low", 0),
+                "strength": ob.get("strength", 0),
+                "proximity": ob.get("proximity", 999),
+            }
+            _d2_structure["ob"] = _d2_ob
+        fvg = smc.get("fvg")
+        if fvg:
+            _d2_fvg = {
+                "type": fvg.get("type", ""),
+                "top": fvg.get("top", 0),
+                "bottom": fvg.get("bottom", 0),
+                "size_atr": fvg.get("size_atr", 0),
+                "filled_pct": fvg.get("filled_pct", 100),
+            }
+            _d2_structure["fvg"] = _d2_fvg
+        liq = smc.get("liquidity")
+        if liq:
+            _d2_liq = {
+                "swept": liq.get("swept", False),
+                "level": liq.get("level", 0),
+                "direction": liq.get("direction", ""),
+            }
+            _d2_structure["liquidity"] = _d2_liq
+
     # ── D2 100-POINT SCORING ────────────────────────────────────────────
     fm = detect_fast_mover(candles, swings) if candles else {"is_fast_mover": False, "score": 0}
     crt_score_input = min(crt.get("crt_score", 0) if crt else 0, 25)
@@ -330,6 +382,11 @@ async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict:
         "penalties": penalties,
         "penalty_reasons": penalty_reasons,
         "engine_path": path,
+        "structure": _d2_structure,
+        "ob": _d2_ob,
+        "msb": _d2_msb,
+        "fvg": _d2_fvg,
+        "liquidity": _d2_liq,
         "flow_direction": flow.get("direction", "NEUTRAL"),
         "killzone": flow.get("killzone", "NONE"),
         "flow_score": flow_score_input,
@@ -342,12 +399,12 @@ async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict:
         "nascent_score": nascent_score,
         "crt_score": crt_score_input,
         "smc_score": smc_score_input,
-        "entry_precision": crt_score_input,
-        "entry_precision_raw": crt_score_input,
+        "entry_precision": entry_precision,
+        "entry_precision_raw": entry_precision,
         "timing_score": timing_score,
         "confluence_score": confluence_score,
         "scoring_breakdown": {
-            "entry_precision": crt_score_input,
+            "entry_precision": entry_precision,
             "ltf_structure": smc_score_input,
             "flow": flow_score_input,
             "nascent_move": nascent_score,
