@@ -402,6 +402,44 @@ async def health_detail():
             "decisions": len(state_store.d3_decisions),
         }
 
+        # Data layer quality stats + stale counts
+        try:
+            payload = await data_layer.get_fusion_payload()
+            h["d1_valid"] = payload["d1_coin_count"]
+            h["d2_valid"] = payload["d2_coin_count"]
+            h["d3_total"] = len(state_store.d3_decisions)
+            now_ts = time.time()
+            d1_stale = 0
+            d1_freshness = {}
+            from backend.config import SIGNAL_TTL_MINUTES, D2_SIGNAL_TTL_MINUTES
+            cutoff_d1 = now_ts - (SIGNAL_TTL_MINUTES * 60)
+            for coin, entry in state_store.d1_tiers.items():
+                updated_at = entry.get("updated_at", 0)
+                if updated_at < cutoff_d1:
+                    d1_stale += 1
+                else:
+                    age_min = (now_ts - updated_at) / 60
+                    label = "HOT" if age_min < 3 else "WARM" if age_min < 8 else "COOL" if age_min < 15 else "STALE"
+                    d1_freshness[label] = d1_freshness.get(label, 0) + 1
+            h["d1_stale"] = d1_stale
+            h["d1_freshness"] = d1_freshness
+            d2_stale = 0
+            cutoff_d2 = now_ts - (D2_SIGNAL_TTL_MINUTES * 60)
+            for coin, sig in state_store.d2_signals.items():
+                born_at = getattr(sig, 'born_at', None)
+                if born_at:
+                    born_ts = born_at.timestamp() if hasattr(born_at, 'timestamp') else float(born_at)
+                    if born_ts < cutoff_d2:
+                        d2_stale += 1
+            h["d2_stale"] = d2_stale
+        except Exception:
+            h.setdefault("d1_valid", 0)
+            h.setdefault("d1_stale", 0)
+            h.setdefault("d2_valid", 0)
+            h.setdefault("d2_stale", 0)
+            h.setdefault("d3_total", 0)
+            h.setdefault("d1_freshness", {})
+
         # Count errors in last ~200 lines of log
         try:
             log_path = os.path.join(_log_dir, "server.log")
