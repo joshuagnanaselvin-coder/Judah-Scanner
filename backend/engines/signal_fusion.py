@@ -246,7 +246,10 @@ class FusionEngine:
                 # Wait for D2 event (set by ltf_engine after publishing) with 2s timeout.
                 # D1 changes are caught by the _check_and_fuse timestamp comparison,
                 # but D2's notify() ensures zero-gap fusion after each D2 cycle.
-                await self._d2_event.wait(timeout=2)
+                try:
+                    await asyncio.wait_for(self._d2_event.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    pass  # timeout expected — continue to check D1 changes
                 self._d2_event.clear()
                 await self._check_and_fuse()
             except asyncio.CancelledError:

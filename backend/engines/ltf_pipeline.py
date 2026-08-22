@@ -31,7 +31,13 @@ import logging
 
 logger = logging.getLogger("judah.ltf_pipeline")
 
-_FALLBACK_MIN_CONFIDENCE = 30  # weighted fallback threshold (was binary MSB + SMC≥15)
+_ATR_PENALTY = 10          # Points deducted when ATR too low
+_RANGE_PENALTY = 8         # Points deducted when range too small
+_FLOW_PENALTY = 10         # Points deducted when no flow
+_NO_SMC_PENALTY = 10       # Points deducted when SMC analysis fails
+_FALLBACK_PENALTY = 15     # Points deducted when fallback confidence too low
+_FATAL_FLAW_PENALTY = 20   # Points deducted per fatal flaw
+_NO_CANDLES_PENALTY = 20   # Points deducted when insufficient candles
 
 # Stage counters for pipeline bottleneck analysis
 _stage_stats = {}
@@ -132,228 +138,260 @@ def _check_d2_fatal_flaws(candles: list, smc: dict, flow: dict) -> list:
 
 
 
-async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict | None:
+async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict:
     """D2's own 4-layer pipeline — independent from D1.
 
     Flow → CRT → SMC → Momentum → Signal Builder
     Falls back to SMC-only for impulse coins.
+    Every coin produces a result (score penalties instead of hard drops).
     """
     candles = market_data.get_candles(symbol, timeframe)
-    if not candles or len(candles) < 25:
-        return None
+    penalties = 0
+    penalty_reasons = []
+    skip_reason = None
 
-    last_price = _get(candles[-1], 'close')
-    atr_val = atr(candles)
+    if not candles or len(candles) < 25:
+        penalties += _NO_CANDLES_PENALTY
+        penalty_reasons.append("insufficient_candles")
+        candles = []
+        skip_reason = "insufficient_candles"
+
+    last_price = _get(candles, 'close', 0) if candles else 0
+    atr_val = atr(candles) if candles else 0
     atr_pct = (atr_val / last_price * 100) if last_price > 0 else 0.0
-    if atr_pct < MIN_ATR_PERCENT or atr_val < ADAPTIVE_ATR_MIN_ABSOLUTE:
-        return None
+    if candles and (atr_pct < MIN_ATR_PERCENT or atr_val < ADAPTIVE_ATR_MIN_ABSOLUTE):
+        penalties += _ATR_PENALTY
+        penalty_reasons.append(f"atr_low({atr_pct:.3f}%)")
 
     env = calc_envelope(candles, 50)
     range_size = env.get('range_size', 0)
-    if range_size < atr_val * MIN_RANGE_MULTIPLIER:
-        return None
+    if candles and range_size < atr_val * MIN_RANGE_MULTIPLIER:
+        penalties += _RANGE_PENALTY
+        penalty_reasons.append(f"range_small({range_size:.6f})")
+        logger.debug(f"[ltf_pipeline] RANGE_SMALL {symbol}: range={range_size:.6f} — penalty -{_RANGE_PENALTY}")
 
     _count_stage("candidate_pass")
 
     # FLOW GATE
-    swings = detect_swing_points(candles[-30:])
-    btc_candles = market_data.get_candles("BTCUSDT", timeframe)
+    swings = detect_swing_points(candles[-30:] if candles else [])
+    btc_candles = market_data.get_candles("BTCUSDT", timeframe) or []
     flow = analyze_flow(symbol, candles, swings, timeframe, btc_candles)
-    fast = detect_fast_mover(candles, swings)
+    fast = detect_fast_mover(candles, swings) if candles else {"is_fast_mover": False, "score": 0}
 
-    if not flow["is_flowing"] and not fast["is_fast_mover"]:
-        return None
+    if not flow.get("is_flowing") and not fast.get("is_fast_mover"):
+        penalties += _FLOW_PENALTY
+        penalty_reasons.append("no_flow")
+        logger.debug(f"[ltf_pipeline] FLOW_OFF {symbol}: no flow, not fast_mover — penalty -{_FLOW_PENALTY}")
 
     _count_stage("flow_gate_pass")
 
     # PRIMARY PATH: CRT + SMC
-    crt = run_crt(candles)
+    crt = run_crt(candles) if candles else None
+    smc = None
+    path = "NONE"
 
     if crt:
         smc = run_smc(candles, crt)
-        if not smc:
-            return None
-        path = "CRT+SMC"
+        if smc:
+            path = "CRT+SMC"
+        else:
+            penalties += _NO_SMC_PENALTY
+            penalty_reasons.append("smc_fail")
+            path = "CRT(no_SMC)"
     else:
-        # FALLBACK: Weighted confidence for impulse coins
-        fallback_crt = build_smc_only_context(candles)
-        if not fallback_crt:
-            return None
-        smc = run_smc(candles, fallback_crt)
-        if not smc:
-            return None
-
-        fallback_score = 0
-        msb_confirmed = (smc.get("msb") or {}).get("confirmed", False)
-        ob = smc.get("ob")
-        fvg = smc.get("fvg")
-        liq_swept = (smc.get("liquidity") or {}).get("swept", False)
-
-        if msb_confirmed:
-            fallback_score += 8
-        if ob and ob.get("strength", 0) >= 3:
-            fallback_score += 5
-        if fvg and fvg.get("proximity", 999) <= 1.0:
-            fallback_score += 4
-        if liq_swept:
-            fallback_score += 5
-        if flow.get("boost", 0) > 18:
-            fallback_score += 8
-        if fast.get("is_fast_mover") and fast.get("score", 0) > 15:
-            fallback_score += 8
-
-        if fallback_score < _FALLBACK_MIN_CONFIDENCE:
-            return None
-
-        crt = fallback_crt
-        path = "SMC-ONLY"
+        # FALLBACK: SMC-only for impulse coins
+        fallback_crt = build_smc_only_context(candles) if candles else None
+        if fallback_crt:
+            smc = run_smc(candles, fallback_crt)
+            if smc:
+                crt = fallback_crt
+                path = "SMC-ONLY"
+            else:
+                penalties += _NO_SMC_PENALTY
+                penalty_reasons.append("smc_fail_fallback")
+                crt = fallback_crt
+                path = "SMC(no_result)"
+        else:
+            penalties += _FALLBACK_PENALTY
+            penalty_reasons.append("no_structure")
+            path = "NO_STRUCTURE"
 
     _count_stage("crt_smc_pass")
 
-    # D2 FATAL FLAW CHECK (auto-disqualify before scoring)
-    # Populate flow proximity flags from SMC data so the precision check is accurate
-    ob = smc.get("ob")
-    fvg_zone = smc.get("fvg")
-    last_price = _get(candles[-1], 'close') if candles else 0
-    if ob and last_price > 0:
-        ob_low = ob.get("low", 0)
-        ob_high = ob.get("high", 0)
-        if ob_low and ob_high:
-            ob_mid = (ob_low + ob_high) / 2
-            flow["ob_proximity"] = (ob_low <= last_price <= ob_high) or \
-                (abs(last_price - ob_mid) / ob_mid * 100 <= 1.5)
-    if fvg_zone and last_price > 0:
-        fvg_bot = fvg_zone.get("bottom", 0)
-        fvg_top = fvg_zone.get("top", 0)
-        if fvg_bot and fvg_top:
-            fvg_mid = (fvg_bot + fvg_top) / 2
-            flow["fvg_proximity"] = (fvg_bot <= last_price <= fvg_top) or \
-                (abs(last_price - fvg_mid) / fvg_mid * 100 <= 1.5)
+    # ── FATAL FLAW (penalty, not hard drop) ─────────────────────────────
+    if crt and smc and candles:
+        ob = smc.get("ob")
+        fvg_zone = smc.get("fvg")
+        last_price_2 = _get(candles[-1], 'close', 0) if candles else 0
+        if ob and last_price_2 > 0:
+            ob_low = ob.get("low", 0)
+            ob_high = ob.get("high", 0)
+            if ob_low and ob_high:
+                ob_mid = (ob_low + ob_high) / 2
+                flow["ob_proximity"] = (ob_low <= last_price_2 <= ob_high) or \
+                    (abs(last_price_2 - ob_mid) / ob_mid * 100 <= 1.5)
+        if fvg_zone and last_price_2 > 0:
+            fvg_bot = fvg_zone.get("bottom", 0)
+            fvg_top = fvg_zone.get("top", 0)
+            if fvg_bot and fvg_top:
+                fvg_mid = (fvg_bot + fvg_top) / 2
+                flow["fvg_proximity"] = (fvg_bot <= last_price_2 <= fvg_top) or \
+                    (abs(last_price_2 - fvg_mid) / fvg_mid * 100 <= 1.5)
 
-    fatal_flaws = _check_d2_fatal_flaws(candles, smc, flow)
-    if fatal_flaws:
-        for f in fatal_flaws:
-            _count_stage(f"fatal_{f}")
-        logger.info(f"[ltf_pipeline] FATAL FLAW {symbol}: {fatal_flaws}")
-        return None
+        fatal_flaws = _check_d2_fatal_flaws(candles, smc, flow)
+        if fatal_flaws:
+            for f in fatal_flaws:
+                _count_stage(f"fatal_{f}")
+            penalties += len(fatal_flaws) * _FATAL_FLAW_PENALTY
+            penalty_reasons.extend(f"fatal:{f}" for f in fatal_flaws)
+            logger.info(f"[ltf_pipeline] FATAL FLAW {symbol}: {fatal_flaws} — penalty -{len(fatal_flaws) * _FATAL_FLAW_PENALTY}")
 
     _count_stage("fatal_flaw_pass")
 
-    # === D2 100-POINT SCORING ===
-    # D2: Entry Precision(20) + LTF Structure(20) + Flow(15) + Momentum(15)
-    #     + Nascent Move(10) + HTF Context(10) + Timing(5) + Confluence(5) = 100
-    fm = detect_fast_mover(candles, swings)
-    crt["crt_score"] = min(crt.get("crt_score", 0), 25)  # Entry Precision: CRT max 25
-    smc["smc_score"] = min(smc.get("smc_score", 0), SMC_SCORE_MAX)
-    flow_score = min(flow["boost"], D2_FLOW_SCORE_MAX)
-    momentum_score = min(fm["score"], 15)  # always use detected score, cap at 15
+    # ── D2 100-POINT SCORING ────────────────────────────────────────────
+    fm = detect_fast_mover(candles, swings) if candles else {"is_fast_mover": False, "score": 0}
+    crt_score_input = min(crt.get("crt_score", 0) if crt else 0, 25)
+    smc_score_input = min(smc.get("smc_score", 0) if smc else 0, SMC_SCORE_MAX)
+    flow_score_input = min(flow.get("boost", 0), D2_FLOW_SCORE_MAX)
+    momentum_score_input = min(fm.get("score", 0), 15)
 
     _count_stage("scoring_pass")
 
-    # HTF Context — D2 is independent, no D1 context bonus (always 0)
     htf_context_score = 0
 
-    # --- Nascent Move (15 pts) ---
-    # D2 is independent — no D1 direction context
-    nascent = detect_nascent_move(candles, crt.get("displacement", {}).get("crt_trade_direction", "BULLISH"), "")
+    nascent = detect_nascent_move(
+        candles,
+        (crt or {}).get("displacement", {}).get("crt_trade_direction", "BULLISH"),
+        ""
+    ) if candles else {"nascent_move": False, "conditions_met": 0, "partial": False}
     nascent_score = _score_nascent_move(nascent)
-
-    # --- Timing (5 pts) ---
-    timing_score = _score_timing_d2(candles)
-
-    # --- Confluence Bonus (5 pts) ---
+    timing_score = _score_timing_d2(candles) if candles else 0
     confluence_score = _confluence_bonus_d2(
-        crt.get("crt_score", 0), smc.get("smc_score", 0),
-        flow_score, momentum_score, nascent_score, htf_context_score, timing_score
+        crt_score_input, smc_score_input, flow_score_input,
+        momentum_score_input, nascent_score, htf_context_score, timing_score
     )
 
-    logger.debug(f"[ltf_pipeline] D2 scores: CRT={crt['crt_score']} SMC={smc['smc_score']} "
-                 f"Flow={flow_score} Mom={momentum_score} HTF={htf_context_score} "
-                 f"Nascent={nascent_score} Timing={timing_score} Confluence={confluence_score}")
+    raw_composite = crt_score_input + smc_score_input + flow_score_input + momentum_score_input + \
+                    nascent_score + htf_context_score + timing_score + confluence_score
+    composite_score = max(0, raw_composite - penalties)
 
-    logger.debug(f"[ltf_pipeline] Building {symbol} ({path}) flow={flow_score} momentum={momentum_score}")
-    signal = build_signal(symbol, timeframe, crt, smc, candles, flow_score, momentum_score)
+    logger.debug(f"[ltf_pipeline] SCORE {symbol} ({path}): raw={raw_composite} "
+                 f"penalties=-{penalties} ({', '.join(penalty_reasons)}) → final={composite_score}")
 
-    if signal:
-        signal["flow_score"] = flow_score
-        signal["fast_mover_boost"] = momentum_score
-        signal["momentum_score"] = momentum_score
-        signal["htf_context"] = htf_context_score
-        signal["nascent_move"] = nascent.get("nascent_move", False)
-        signal["nascent_conditions"] = nascent.get("conditions_met", 0)
-        signal["nascent_partial"] = nascent.get("partial", False)
-        signal["nascent_score"] = nascent_score
+    # ── DIRECTION ───────────────────────────────────────────────────────
+    if crt and "displacement" in crt:
+        direction = crt["displacement"]["crt_trade_direction"]
+    elif smc:
+        msb = smc.get("msb", {})
+        direction = (msb.get("type", "BULLISH").upper() if msb.get("type") else "BULLISH")
+    else:
+        direction = "NEUTRAL"
 
-        # Add D2 scoring breakdown to composite
-        # build_signal composite includes CRT+SMC+Flow+Momentum (up to ~80 pts)
-        # We add HTF Context + Nascent Move + Timing + Confluence to reach 100 max
-        signal["composite_score"] = min(
-            signal.get("composite_score", 0) + htf_context_score + nascent_score + timing_score + confluence_score,
-            100
-        )
-
-        # Entry precision (CRT score serves as the entry timing component)
-        entry_precision = crt.get("crt_score", 0)
-        signal["entry_precision"] = entry_precision
-        signal["entry_precision_raw"] = entry_precision
-
-        # Enforce minimum sub-score gates
-        ep_pass = entry_precision >= D2_MIN_ENTRY_PRECISION
-        flow_pass = flow_score >= D2_MIN_FLOW
-        mom_pass = momentum_score >= D2_MIN_MOMENTUM
-
-        signal["threshold_ep_pass"] = ep_pass
-        signal["threshold_flow_pass"] = flow_pass
-        signal["threshold_momentum_pass"] = mom_pass
-        signal["thresholds_passed"] = all([ep_pass, flow_pass, mom_pass])
-
-        # Tier assignment
-        composite = signal["composite_score"]
-        if composite >= TIER_SNIPER_SCORE:
-            signal["tier"] = "SNIPER"
-        elif composite >= TIER_OPPORTUNITY_SCORE:
-            signal["tier"] = "OPPORTUNITY"
-        elif composite >= TIER_WATCH_SCORE:
-            signal["tier"] = "WATCH"
-        elif composite >= TIER_WEAK_SCORE:
-            signal["tier"] = "WEAK"
+    # ── ENTRY / SL / TP (always build, even for REJECTED) ──────────────
+    entry = _get(candles, 'close', 0) if candles else 0
+    if entry > 0 and direction != "NEUTRAL":
+        atr_sl = atr_val * 1.5 if atr_val > 0 else entry * 0.02
+        if direction == "BULLISH":
+            sl = entry - atr_sl
+            tp1 = entry + atr_sl * 1.0
+            tp2 = entry + atr_sl * 2.0
         else:
-            signal["tier"] = "REJECTED"
+            sl = entry + atr_sl
+            tp1 = entry - atr_sl * 1.0
+            tp2 = entry - atr_sl * 2.0
+        risk = abs(entry - sl)
+        rr = abs(tp1 - entry) / risk if risk > 0 else 0
+    else:
+        sl, tp1, tp2, rr = entry, entry, entry, 0
 
-        # Downgrade to REJECTED if sub-thresholds fail
-        if not signal["thresholds_passed"] and composite < IGNORE_MIN_SCORE:
-            signal["tier"] = "REJECTED"
+    # ── TIER ────────────────────────────────────────────────────────────
+    if composite_score >= TIER_SNIPER_SCORE:
+        tier = "SNIPER"
+    elif composite_score >= TIER_OPPORTUNITY_SCORE:
+        tier = "OPPORTUNITY"
+    elif composite_score >= TIER_WATCH_SCORE:
+        tier = "WATCH"
+    elif composite_score >= TIER_WEAK_SCORE:
+        tier = "WEAK"
+    else:
+        tier = "REJECTED"
 
-        # Scoring breakdown for frontend
-        signal["scoring_breakdown"] = {
-            "entry_precision": crt.get("crt_score", 0),
-            "ltf_structure": smc.get("smc_score", 0),
-            "flow": flow_score,
+    ep_pass = crt_score_input >= D2_MIN_ENTRY_PRECISION
+    flow_pass = flow_score_input >= D2_MIN_FLOW
+    mom_pass = momentum_score_input >= D2_MIN_MOMENTUM
+
+    signal = {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "direction": direction,
+        "tier": tier,
+        "composite_score": composite_score,
+        "raw_composite_score": raw_composite,
+        "penalties": penalties,
+        "penalty_reasons": penalty_reasons,
+        "engine_path": path,
+        "flow_direction": flow.get("direction", "NEUTRAL"),
+        "killzone": flow.get("killzone", "NONE"),
+        "flow_score": flow_score_input,
+        "momentum_score": momentum_score_input,
+        "fast_mover_boost": momentum_score_input,
+        "htf_context": htf_context_score,
+        "nascent_move": nascent.get("nascent_move", False),
+        "nascent_conditions": nascent.get("conditions_met", 0),
+        "nascent_partial": nascent.get("partial", False),
+        "nascent_score": nascent_score,
+        "crt_score": crt_score_input,
+        "smc_score": smc_score_input,
+        "entry_precision": crt_score_input,
+        "entry_precision_raw": crt_score_input,
+        "timing_score": timing_score,
+        "confluence_score": confluence_score,
+        "scoring_breakdown": {
+            "entry_precision": crt_score_input,
+            "ltf_structure": smc_score_input,
+            "flow": flow_score_input,
             "nascent_move": nascent_score,
             "htf_context": htf_context_score,
-            "momentum": momentum_score,
+            "momentum": momentum_score_input,
             "timing": timing_score,
             "confluence": confluence_score,
             "max_entry_precision": 20,
-        }
+        },
+        "threshold_ep_pass": ep_pass,
+        "threshold_flow_pass": flow_pass,
+        "threshold_momentum_pass": mom_pass,
+        "thresholds_passed": all([ep_pass, flow_pass, mom_pass]),
+        "entry": entry,
+        "stop_loss": sl,
+        "tp1": tp1,
+        "tp2": tp2,
+        "rr": rr,
+        "rr1": rr,
+        "rr2": rr * 1.5,
+        "expected_value_pct": round(composite_score * 0.5 * rr, 2),
+        "estimated_win_rate": round(min(composite_score / 100 * 80 + 20, 85), 1),
+        "born_at": candles[-1].get("timestamp", 0) if candles else 0,
+        "confidence": min(composite_score / 100, 1.0),
+        "atr": atr_val,
+        "atr_pct": atr_pct,
+    }
 
-        signal["engine_path"] = path
-        signal["flow_direction"] = flow["direction"]
-        signal["killzone"] = flow["killzone"]
-        _count_stage("final_signal")
-        logger.info(f"[ltf_pipeline] SIGNAL {symbol} {timeframe}: {signal['tier']} score={signal['composite_score']} "
-                     f"dir={signal['direction']} rr={signal['rr']:.1f} path={path} "
-                     f"crt={signal['crt_score']} smc={signal['smc_score']} flow={flow_score} mom={momentum_score} "
-                     f"EP={entry_precision:.0f}/{D2_MIN_ENTRY_PRECISION} nascent={nascent.get('conditions_met',0)}/5")
-
-        # === EvidenceRecord: log D2 structural findings ===
-        _log_ltf_evidence(symbol, timeframe, signal, crt, smc, flow, nascent, path)
+    if tier == "REJECTED":
+        logger.debug(f"[ltf_pipeline] REJECTED {symbol} {timeframe}: score={composite_score} "
+                      f"penalties={penalty_reasons}")
     else:
-        logger.debug(f"[ltf_pipeline] SKIP {symbol}: build_signal returned None")
+        _count_stage("final_signal")
+        logger.info(f"[ltf_pipeline] SIGNAL {symbol} {timeframe}: {tier} score={composite_score} "
+                     f"dir={direction} rr={rr:.1f} path={path} "
+                     f"crt={crt_score_input} smc={smc_score_input} flow={flow_score_input} mom={momentum_score_input} "
+                     f"EP={crt_score_input}/{D2_MIN_ENTRY_PRECISION} nascent={nascent.get('conditions_met',0)}/5 "
+                     f"penalties={penalty_reasons}")
+
+    _count_stage("crt_smc_pass")
+
+    # ── EvidenceRecord: log D2 structural findings ──────────────────────
+    _log_ltf_evidence(symbol, timeframe, signal, crt or {}, smc or {}, flow, nascent, path)
     return signal
-
-
-# ── EvidenceRecord Logger ──────────────────────────────────────────────
 
 async def _log_ltf_evidence_async(symbol: str, timeframe: str, signal: dict,
                                    crt: dict, smc: dict, flow: dict, nascent: dict, path: str):

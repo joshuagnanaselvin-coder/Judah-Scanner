@@ -218,10 +218,7 @@ class LTFEngine:
             # Skip if recently scanned
             if _was_recently_scanned(coin):
                 continue
-            # Gate 1: skip stale/invalid/gapped candle data (Snapshot quality)
-            if snap.candle_quality(coin, "15M") in ("STALE", "INVALID", "GAPPED"):
-                continue
-            # No pre-filters — pipeline handles ATR/range/quality gates internally
+            # Pipeline handles ATR/range/quality gates internally — no pre-filters
 
             scan_tasks.append(coin)
 

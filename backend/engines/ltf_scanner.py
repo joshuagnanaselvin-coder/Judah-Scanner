@@ -279,31 +279,32 @@ def calculate_entry_precision(candles: list, signal: dict, direction: str) -> fl
     return min(score, 25.0)
 
 
-async def scan_entry(coin: str) -> Optional[dict]:
+async def scan_entry(coin: str) -> dict:
     """Scan 15M for entry timing on a coin.
 
     Runs the D2 pipeline, adds nascent move detection and entry precision.
     D2 is fully independent — no D1 context needed.
+    Every coin produces a result (no silent drops).
     """
     from backend.engines.ltf_pipeline import scan_ltf_pipeline
 
     candles = market_data.get_candles(coin, "15M")
     if not candles or len(candles) < 25:
-        logger.debug(f"[ltf] SKIP {coin}: insufficient 15M candles ({len(candles) if candles else 0})")
-        return None
+        logger.debug(f"[ltf] SCAN {coin}: insufficient 15M candles ({len(candles) if candles else 0}) — pipeline will handle penalty")
+        candles = []  # Let pipeline handle with penalty
 
-    # ── Data Quality Gate (D2) ────────────────────────────────────────
+    # Quality gate — DEGRADED/INCOMPLETE proceed; INVALID/GAPPED/MISSING go through with penalty
     from backend.data_quality_gate import validate_candles
-    quality = validate_candles(candles, "15M")
-    if quality.state in ("INVALID", "GAPPED", "MISSING", "STALE"):
-        logger.debug(f"[ltf] BLOCK {coin}: quality={quality.state} issues={quality.issues[:2]}")
-        return None
-    # DEGRADED and INCOMPLETE still proceed — partial 15M data is acceptable
+    if candles:
+        quality = validate_candles(candles, "15M")
+        if quality.state in ("INVALID", "GAPPED", "MISSING", "STALE"):
+            logger.debug(f"[ltf] SCAN {coin}: quality={quality.state} issues={quality.issues[:2]} — pipeline will handle penalty")
+            candles = []  # Let pipeline handle with penalty
 
-    # Run D2's own pipeline on 15M
+    # Run D2's own pipeline on 15M — always returns a dict
     raw = await scan_ltf_pipeline(coin, "15M")
     if not raw:
-        return None
+        raw = {"symbol": coin, "timeframe": "15M", "tier": "REJECTED", "composite_score": 0, "direction": "NEUTRAL"}
 
     # Nascent Move Detection (D2 is independent — no D1 direction)
     direction = raw.get("direction", "BULLISH")
