@@ -84,24 +84,19 @@ class Scanner:
     async def _scan_loop(self):
         """D1 4H scan loop — candle-close driven.
 
-        Waits for the next 4H candle to close, then runs a full deep scan
-        of all 500 coins on the 4H timeframe. No WS event queue needed —
-        we sleep until the next candle close and scan everything then.
+        Does an immediate scan on startup (using the most recent closed 4H candle),
+        then sleeps until the next 4H candle close and repeats.
         """
         # Wait for bootstrap to complete before first scan
         await self._wait_for_candles()
 
+        # Always do an immediate scan on startup — no need to wait for candle close
+        logger.info(f"[scan] [{self.cycle_id}] Initial scan on startup — "
+                    f"scanning {len(self.symbols)} coins now")
+        await self._run_batch_scan()
+
         while self.running:
             try:
-                # On restart, do an immediate scan first (the restart() method
-                # already triggered one, but we also scan here to ensure D1
-                # produces data even if the background scan failed silently)
-                if getattr(self, '_immediate_scan_requested', False):
-                    self._immediate_scan_requested = False
-                    logger.info(f"[scan] [{self.cycle_id}] Immediate scan requested — "
-                                f"scanning {len(self.symbols)} coins now")
-                    await self._run_batch_scan()
-
                 # Calculate and sleep until next 4H candle close
                 sleep_sec = self._seconds_until_next_close("4H")
                 logger.info(f"[scan] [{self.cycle_id}] Sleeping {sleep_sec / 3600:.1f}h "
