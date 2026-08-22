@@ -60,18 +60,22 @@
 
         <!-- Scan timer -->
         <div class="timer-group">
-          <select class="timer-format" id="timerFormat" title="Timer display format">
-            <option value="auto">Auto</option>
-            <option value="hm">H M</option>
-            <option value="min">Min</option>
-            <option value="sec">Sec</option>
-          </select>
-          <div class="timer-chip" title="Time until next D1 4H scan">
+          <div class="timer-chip" title="Time until next D1 4H scan (every 4H)">
             <span class="timer-label">D1</span>
+            <select class="timer-format" id="d1TimerFmt" title="D1 timer format">
+              <option value="hm">H M</option>
+              <option value="min" selected>Min</option>
+              <option value="sec">Sec</option>
+            </select>
             <span class="timer-value" id="d1Timer">--</span>
           </div>
-          <div class="timer-chip" title="Time until next D2 15M scan">
+          <div class="timer-chip" title="Time until next D2 15M scan (every 15M)">
             <span class="timer-label">D2</span>
+            <select class="timer-format" id="d2TimerFmt" title="D2 timer format">
+              <option value="hm">H M</option>
+              <option value="min">Min</option>
+              <option value="sec" selected>Sec</option>
+            </select>
             <span class="timer-value" id="d2Timer">--</span>
           </div>
         </div>

@@ -13,7 +13,8 @@ let typeEAlerts = [];
 let nextD1Scan = 0;
 let nextD2Scan = 0;
 let timerInterval = null;
-let timerFormat = 'auto';
+let d1TimerFmt = 'min';
+let d2TimerFmt = 'sec';
 
 // ── Helpers ────────────────────────────────────────────────────────
 function getMEE(s) { return s.marketEvolution || {}; }
