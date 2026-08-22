@@ -333,7 +333,7 @@ def _build_minimal_rejected(symbol: str, timeframe: str, crt: dict, smc: dict,
 
     return {
         "symbol": symbol,
-        "timeframe": timeframe,
+        "engine": timeframe,
         "direction": direction,
         "tier": "REJECTED",
         "composite_score": 0,

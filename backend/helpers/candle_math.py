@@ -76,6 +76,9 @@ def calc_envelope(candles: list, period: int = 20) -> dict:
     Uses candles[-period:] (last N candles), NOT candles[:period].
     Rounds to 5 decimal places for precision.
     """
+    if not candles:
+        return {'high': 0, 'low': 0, 'midpoint': 0, 'range_size': 0}
+
     subset = candles[-period:] if len(candles) >= period else candles
 
     highs = [_get(c, 'high') for c in subset]
