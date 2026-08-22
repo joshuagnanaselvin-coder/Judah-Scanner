@@ -13,6 +13,7 @@ let typeEAlerts = [];
 let nextD1Scan = 0;
 let nextD2Scan = 0;
 let timerInterval = null;
+let timerFormat = 'auto';
 
 // ── Helpers ────────────────────────────────────────────────────────
 function getMEE(s) { return s.marketEvolution || {}; }
@@ -348,6 +349,13 @@ function initFilters() {
   if (btn) btn.addEventListener('click', async () => {
     await fetch('/api/restart', { method: 'POST' }).catch(() => {});
   });
+
+  // Timer format
+  const sel = document.getElementById('timerFormat');
+  if (sel) sel.addEventListener('change', () => {
+    timerFormat = sel.value;
+    updateScanTimers();
+  });
 }
 
 // ── Signal Type Banner Update ─────────────────────────────────────
@@ -494,6 +502,11 @@ function updateScanTimers() {
 
 function formatCountdown(ms) {
   const totalSec = Math.ceil(ms / 1000);
+  const fmt = timerFormat;
+  if (fmt === 'sec') return totalSec + 's';
+  if (fmt === 'min') return Math.ceil(totalSec / 60) + 'm';
+  if (fmt === 'hm') return Math.floor(totalSec / 3600) + 'h ' + Math.floor((totalSec % 3600) / 60) + 'm';
+  // auto
   if (totalSec < 60) return totalSec + 's';
   const m = Math.floor(totalSec / 60);
   const s = totalSec % 60;
