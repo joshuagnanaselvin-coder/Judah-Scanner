@@ -1,10 +1,10 @@
 """Pure math functions — no side effects, no API calls, fully testable."""
 
-def _get(candle, key):
+def _get(candle, key, default=0):
     """Get value from candle whether it's a dict or object."""
     if isinstance(candle, dict):
-        return candle.get(key, 0)
-    return getattr(candle, key, 0)
+        return candle.get(key, default)
+    return getattr(candle, key, default)
 
 def body_ratio(candle, avg_body: float) -> float:
     if avg_body <= 0: return 0.0

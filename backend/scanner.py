@@ -93,6 +93,15 @@ class Scanner:
 
         while self.running:
             try:
+                # On restart, do an immediate scan first (the restart() method
+                # already triggered one, but we also scan here to ensure D1
+                # produces data even if the background scan failed silently)
+                if getattr(self, '_immediate_scan_requested', False):
+                    self._immediate_scan_requested = False
+                    logger.info(f"[scan] [{self.cycle_id}] Immediate scan requested — "
+                                f"scanning {len(self.symbols)} coins now")
+                    await self._run_batch_scan()
+
                 # Calculate and sleep until next 4H candle close
                 sleep_sec = self._seconds_until_next_close("4H")
                 logger.info(f"[scan] [{self.cycle_id}] Sleeping {sleep_sec / 3600:.1f}h "
