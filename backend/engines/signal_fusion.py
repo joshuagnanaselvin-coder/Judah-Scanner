@@ -127,12 +127,12 @@ def classify_signal_type(d1_tier: str, d1_score: float, d2_tier: str, d2_score: 
     if d1_approved and d2_score >= D3_D2_MODERATE_THRESHOLD and directions_align:
         return "A"
 
-    # Type B: D1 not approved, D2 LTF momentum play
-    # nascent_move gate: required for weak D2 (WATCH), waived for strong D2 (OPP+)
-    # Rationale: a D2 score at OPPORTUNITY+ already implies genuine momentum;
-    # nascent_move adds confidence but should not block high-quality D2 signals.
-    type_b_nascent_ok = nascent_move or d2_score >= D3_D1_APPROVED_THRESHOLD
-    if not d1_approved and d2_min_b and type_b_nascent_ok and ep_gate:
+    # Type B: D1 not approved, D2 LTF-only momentum play
+    # D2 pipeline already runs nascent_move detection and scores it (10 pts max).
+    # We use it as a confidence signal (logged) but don't hard-gate — EP >= gate
+    # is sufficient quality control. This lets WATCH/OPP coins with structure + EP
+    # through without requiring a rare 5/5 nascent event.
+    if not d1_approved and d2_min_b and ep_gate:
         return "B"
 
     # Type E: both valid but opposing directions (check before Type D — more specific)

@@ -207,7 +207,7 @@ D3_TYPE_D_D1_THRESHOLD = 50       # D1 score >= this for Type D (D1 approved, D2
 
 # === TYPE B MINIMUMS ===
 TYPE_B_MIN_D2_SCORE = 25          # minimum D2 score for Type B (matches WATCH tier floor, was 35)
-TYPE_B_ENTRY_PRECISION_GATE = 10   # minimum Entry Precision sub-score out of 20 (was 16)
+TYPE_B_ENTRY_PRECISION_GATE = 5    # minimum Entry Precision sub-score out of 20 (was 10)
 
 # === D2 MINIMUM THRESHOLDS ===
 D2_MIN_ENTRY_PRECISION = 10        # min sub-score out of 20 (lowered from 12)
