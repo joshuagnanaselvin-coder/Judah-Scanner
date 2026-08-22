@@ -351,12 +351,11 @@ function initFilters() {
     await fetch('/api/restart', { method: 'POST' }).catch(() => {});
   });
 
-  // Timer format
-  const sel = document.getElementById('timerFormat');
-  if (sel) sel.addEventListener('change', () => {
-    timerFormat = sel.value;
-    updateScanTimers();
-  });
+  // Timer format selectors (per-chip)
+  const d1Fmt = document.getElementById('d1TimerFmt');
+  if (d1Fmt) d1Fmt.addEventListener('change', () => { d1TimerFmt = d1Fmt.value; });
+  const d2Fmt = document.getElementById('d2TimerFmt');
+  if (d2Fmt) d2Fmt.addEventListener('change', () => { d2TimerFmt = d2Fmt.value; });
 }
 
 // ── Signal Type Banner Update ─────────────────────────────────────
@@ -482,7 +481,7 @@ function updateScanTimers() {
       d1El.textContent = 'scanning';
       d1El.classList.add('timer-scanning');
     } else {
-      d1El.textContent = formatCountdown(msLeft);
+      d1El.textContent = formatCountdown(msLeft, d1TimerFmt);
       d1El.classList.remove('timer-scanning');
     }
   }
@@ -495,15 +494,14 @@ function updateScanTimers() {
       d2El.textContent = 'scanning';
       d2El.classList.add('timer-scanning');
     } else {
-      d2El.textContent = formatCountdown(msLeft);
+      d2El.textContent = formatCountdown(msLeft, d2TimerFmt);
       d2El.classList.remove('timer-scanning');
     }
   }
 }
 
-function formatCountdown(ms) {
+function formatCountdown(ms, fmt) {
   const totalSec = Math.ceil(ms / 1000);
-  const fmt = timerFormat;
   if (fmt === 'sec') return totalSec + 's';
   if (fmt === 'min') return Math.ceil(totalSec / 60) + 'm';
   if (fmt === 'hm') return Math.floor(totalSec / 3600) + 'h ' + Math.floor((totalSec % 3600) / 60) + 'm';
