@@ -35,7 +35,7 @@ from backend.market_evolution import evaluate as me_evaluate, get_dashboard_stat
 from backend.market_evolution.history import history_store
 from backend.alignment_engine import alignment_engine, AlignmentLevel
 from backend.data_layer import data_layer
-from backend.trade_plan_authority import trade_plan_authority, PlanStatus, TradePlan
+from backend.trade_plan_authority import trade_plan_authority
 from backend.risk_authority import risk_authority
 
 logger = logging.getLogger("judah.fusion")
@@ -787,28 +787,22 @@ class FusionEngine:
         elif sig_type == "E":
             confidence_score = max(0.0, confidence_score - 0.20)
 
-        # ── Skip D2-tier=REJECTED coins — no entry setup, no plan to build ──
-        # These coins have no valid D2 entry/SL/TP and should be shown as WATCH
-        # (visible to user) rather than generating a rejected trade plan that
-        # wastes a slot on the frontend cards.
+        # D2-tier=REJECTED coins still get a trade plan — derive entry/SL from
+        # D1 structure so the user sees every coin on the frontend.
         if d2_tier_name == "REJECTED":
-            package["trade_plan"] = TradePlan(
-                status=PlanStatus.REJECTED_INSUFFICIENT_DATA,
-                symbol=coin, direction=d2_dir, entry=0,
-                sl=0, tp1=0, tp2=0, rr1=0, rr2=0,
-                position_size_mult=0, confidence_score=0,
-                zone="EQUILIBRIUM", atr_sl_mult=0, atr_tp_mult=0,
-                rejection_reason="D2 tier=REJECTED — no valid entry setup",
-            ).to_dict()
-            package["tradeable"] = False
-            package["rejection_reason"] = "D2 tier=REJECTED"
-            await state_store.set_d3_decision(coin, package)
-            return package
+            fallback_entry = d2_entry
+            if fallback_entry == 0:
+                if d1_ob_low > 0:
+                    fallback_entry = d1_ob_low * 1.005  # 0.5% above OB
+                elif d1_ob_high > 0:
+                    fallback_entry = d1_ob_high * 0.995  # 0.5% below OB
+                else:
+                    fallback_entry = 0  # triggers INSUFFICIENT_DATA in TradePlanAuthority
 
         plan = trade_plan_authority.propose(
             symbol=coin,
             direction=d2_dir,
-            entry=d2_entry,
+            entry=d2_entry if d2_tier_name != "REJECTED" else fallback_entry,
             atr=d2_atr if d2_atr > 0 else 0.0001,
             d1_zone=d1_structure.get("premium_discount", "EQUILIBRIUM"),
             d2_zone=d2_structure.get("premium_discount", "EQUILIBRIUM"),

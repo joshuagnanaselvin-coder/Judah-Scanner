@@ -87,7 +87,7 @@ class TradePlanAuthority:
     ATR_SL_MULT_TYPE_B = 1.0
     ATR_TP_MULT_TYPE_B = 2.0
     MAX_SL_PCT = 0.04  # Max SL width as % of price (4%)
-    MIN_CONFIDENCE = 0.3
+    MIN_CONFIDENCE = 0.15  # Low enough for D2=REJECTED fallback coins, still requires real signal
 
     # Signal type → position size multiplier
     TYPE_POSITION_MULT = {"A": 0.75, "B": 0.35, "C": 1.0, "D": 0.0, "E": 0.0}
