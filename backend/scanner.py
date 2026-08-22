@@ -64,7 +64,12 @@ class Scanner:
         asyncio.create_task(self._background_bootstrap(symbols))
 
     async def _background_bootstrap(self, symbols: list):
-        """Download historical candle data without blocking the scanner."""
+        """Download historical candle data without blocking the scanner.
+
+        The scan_loop handles the actual scanning (initial scan after
+        _wait_for_candles + periodic 4H-close scans). This method only
+        ensures candle data is available.
+        """
         try:
             logger.info(f"[scanner] [{self.cycle_id}] Background bootstrap starting "
                   f"({len(symbols)} pairs x 4H)...")
@@ -73,11 +78,7 @@ class Scanner:
 
             dropped = self._drop_incomplete_candles()
             logger.info(f"[scanner] [{self.cycle_id}] Dropped {dropped} incomplete 4H candles")
-
-            # Run initial full scan now that we have historical data
-            logger.info(f"[scanner] [{self.cycle_id}] Initial full scan (post-bootstrap)...")
-            await self._run_batch_scan()
-            logger.info(f"[scanner] [{self.cycle_id}] Initial scan complete")
+            logger.info(f"[scanner] [{self.cycle_id}] Candle data ready — scan_loop will handle scanning")
         except Exception as e:
             logger.error(f"[scanner] [{self.cycle_id}] Background bootstrap failed: {e}")
 
@@ -610,16 +611,9 @@ class Scanner:
         market_data.connect_websocket(self.symbols)
         market_data.on_candle_close = self._on_candle_close
 
-        # 6. Restart the scan loop
+        # 6. Restart the scan loop (it does initial scan + periodic 4H-close scans)
         self.running = True
         self.scan_task = asyncio.create_task(self._scan_loop())
-
-        # Kick off an immediate D1 full scan so last_d1_scan gets set
-        scan_task = asyncio.create_task(self._run_batch_scan())
-        scan_task.add_done_callback(
-            lambda t: logger.error(f"[restart] D1 full scan failed: {t.exception()}")
-            if t.exception() else None
-        )
 
         logger.info(f"[restart] Restart complete — {count} candle sets, "
                     f"{len(self.symbols)} pairs live")

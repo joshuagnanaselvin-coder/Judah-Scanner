@@ -334,16 +334,9 @@ class LTFEngine:
         count = await market_data.bootstrap(self.symbols)
         logger.info(f"[ltf] [{self.cycle_id}] Bootstrapped {count} candle sets")
 
-        # 4. Restart scan loop
+        # 4. Restart scan loop (it does initial scan + periodic 15M-close scans)
         self.running = True
         self.scan_task = asyncio.create_task(self._scan_loop())
-
-        # 5. Trigger immediate scan (fire-and-forget)
-        scan_task = asyncio.create_task(self._run_batch_scan())
-        scan_task.add_done_callback(
-            lambda t: logger.error(f"[ltf] [{self.cycle_id}] Immediate scan failed: {t.exception()}")
-            if t.exception() else None
-        )
 
         return {"symbols": len(self.symbols), "candle_sets": count}
 
