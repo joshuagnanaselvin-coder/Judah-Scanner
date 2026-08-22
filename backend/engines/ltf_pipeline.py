@@ -156,7 +156,7 @@ async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict:
         candles = []
         skip_reason = "insufficient_candles"
 
-    last_price = _get(candles, 'close', 0) if candles else 0
+    last_price = _get(candles[-1], 'close', 0) if candles else 0
     atr_val = atr(candles) if candles else 0
     atr_pct = (atr_val / last_price * 100) if last_price > 0 else 0.0
     if candles and (atr_pct < MIN_ATR_PERCENT or atr_val < ADAPTIVE_ATR_MIN_ABSOLUTE):
@@ -288,7 +288,7 @@ async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict:
         direction = "NEUTRAL"
 
     # ── ENTRY / SL / TP (always build, even for REJECTED) ──────────────
-    entry = _get(candles, 'close', 0) if candles else 0
+    entry = _get(candles[-1], 'close', 0) if candles else 0
     if entry > 0 and direction != "NEUTRAL":
         atr_sl = atr_val * 1.5 if atr_val > 0 else entry * 0.02
         if direction == "BULLISH":
@@ -370,7 +370,7 @@ async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict:
         "rr2": rr * 1.5,
         "expected_value_pct": round(composite_score * 0.5 * rr, 2),
         "estimated_win_rate": round(min(composite_score / 100 * 80 + 20, 85), 1),
-        "born_at": candles[-1].get("timestamp", 0) if candles else 0,
+        "born_at": _get(candles[-1], 'time', 0) if candles else 0,
         "confidence": min(composite_score / 100, 1.0),
         "atr": atr_val,
         "atr_pct": atr_pct,

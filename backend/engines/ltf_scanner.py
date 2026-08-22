@@ -197,15 +197,18 @@ def detect_nascent_move(candles: list, direction: str, d1_direction: str = "") -
         if total_range > 0 and (body / total_range) >= 0.6:
             conditions_met += 1
 
-    # Condition 4: Liquidity sweep (check if recent swing was swept)
-    from backend.liquidity_map import detect_liquidity_pools
-    liq_pools = detect_liquidity_pools(swings) if swings else {"pools": []}
-    for pool in liq_pools.get("pools", []):
-        level = pool.get("level", 0)
+    # Condition 4: Liquidity sweep
+    all_pools = []
+    if swings:
+        from backend.liquidity_map import detect_liquidity_pools
+        liq_pools = detect_liquidity_pools(swings)
+        all_pools = liq_pools.get("buyside", []) + liq_pools.get("sellside", [])
+    for pool in all_pools:
+        level = pool.get("price", 0)
         if level > 0 and abs(last_price - level) / last_price * 100 >= 0.5:
-            if pool.get("swept", False):
-                conditions_met += 1
-                break
+            # Price has moved significantly past the pool level → pool was swept
+            conditions_met += 1
+            break
 
     # Condition 5: No opposing HTF structure
     if d1_direction and d1_direction == direction:

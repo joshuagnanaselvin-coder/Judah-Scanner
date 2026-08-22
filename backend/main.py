@@ -546,6 +546,14 @@ async def _bootstrap():
     except Exception as e:
         logger.error(f"[server] D2 engine failed to start: {e}")
 
+    # Bootstrap historical candle data (critical — without this, zero data exists)
+    try:
+        logger.info(f"[server] Bootstrapping candles for {len(pairs)} pairs...")
+        count = await market_data.bootstrap(pairs)
+        logger.info(f"[server] Bootstrap complete: {count} candle sets downloaded")
+    except Exception as e:
+        logger.error(f"[server] Bootstrap failed: {e}")
+
     # Start D3 Fusion Engine (watches D1 + D2, pushes to frontend)
     try:
         await fusion_engine.start()
