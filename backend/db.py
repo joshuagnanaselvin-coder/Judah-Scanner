@@ -344,11 +344,14 @@ async def insert_decision(row: dict) -> int | None:
 async def prune_old(older_than_days: int = 90) -> dict:
     """Delete records older than `older_than_days` from hot tables.
 
-    Keeps signal_outcomes and bayes_calibration indefinitely.
-    Prunes state_transitions and decisions.
+    Prunes state_transitions, decisions, and signal_outcomes.
+    Keeps bayes_calibration indefinitely.
+    Runs VACUUM to reclaim disk space.
     """
     cutoff = datetime.now(timezone.utc).timestamp() - (older_than_days * 86400)
     cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
+    outcomes_cutoff = datetime.now(timezone.utc).timestamp() - (30 * 86400)  # 30 days for outcomes
+    outcomes_iso = datetime.fromtimestamp(outcomes_cutoff, tz=timezone.utc).isoformat()
     results = {}
 
     try:
@@ -362,6 +365,11 @@ async def prune_old(older_than_days: int = 90) -> dict:
                 "DELETE FROM decisions WHERE created_at < ?", (cutoff_iso,)
             )
             results["decisions_deleted"] = cur.rowcount
+
+            cur = await conn.execute(
+                "DELETE FROM signal_outcomes WHERE created_at < ?", (outcomes_iso,)
+            )
+            results["outcomes_deleted"] = cur.rowcount
 
             await conn.execute("VACUUM")
             await conn.commit()

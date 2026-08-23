@@ -50,6 +50,7 @@ from backend.auth import (
     list_invites,
     _create_session,
 )
+from backend.db import prune_old
 from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE, TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE
 
 logging.basicConfig(

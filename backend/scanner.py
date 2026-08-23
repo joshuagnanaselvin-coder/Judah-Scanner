@@ -21,6 +21,7 @@ from backend.config import (
 )
 from backend.performance_tracker import performance_tracker
 from backend.decision_snapshot import SnapshotBuilder
+from backend.db import prune_old
 
 logger = logging.getLogger("judah.scanner")
 
@@ -142,6 +143,9 @@ class Scanner:
                 await self._run_batch_scan()
                 elapsed = _time_module.time() - t0
                 logger.info(f"[scan] [{self.cycle_id}] 4H cycle complete in {elapsed:.1f}s")
+
+                # Auto-prune old DB records every 2 days
+                await _maybe_prune()
 
             except asyncio.CancelledError:
                 break
@@ -681,3 +685,26 @@ class Scanner:
         }
 
 scanner = Scanner()
+
+
+# ── Periodic DB cleanup ────────────────────────────────────────────
+
+_LAST_PRUNE_TS: float = 0.0
+_PRUNE_INTERVAL_SEC = 2 * 86400  # every 2 days
+
+
+async def _maybe_prune():
+    """Prune old DB records every 2 days — called from the scan loop."""
+    global _LAST_PRUNE_TS
+    import time as _time
+    now = _time.time()
+    if now - _LAST_PRUNE_TS < _PRUNE_INTERVAL_SEC:
+        return
+    _LAST_PRUNE_TS = now
+    try:
+        results = await prune_old(older_than_days=90)
+        deleted = sum(v for v in results.values() if isinstance(v, int))
+        logger.info(f"[db] Pruned {deleted} old records: {results}")
+        state_store.last_db_cleanup = now
+    except Exception:
+        logger.exception("[db] Auto-prune failed")

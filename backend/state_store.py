@@ -73,6 +73,7 @@ class StateStore:
         self.last_d2_scan: float = 0.0
         self.last_d3_fusion: float = 0.0
         self.last_regime_update: float = 0.0
+        self.last_db_cleanup: float = 0.0  # Last DB prune timestamp
 
         # Phase 11: No Silent Failures — D1/D2 status tracking
         self.d1_status: str = "UNKNOWN"
