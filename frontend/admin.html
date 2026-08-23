@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Judah — Admin Panel</title>
+  <link rel="icon" type="image/svg+xml" href="/static/icon-192.svg">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0c1220;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+    .admin-header {
+      background: #141c2e;
+      border-bottom: 1px solid #1e293b;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .admin-header h1 {
+      font-size: 18px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #60a5fa, #a78bfa);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .admin-header h1 span { font-size: 11px; color: #ef4444; -webkit-text-fill-color: #ef4444; margin-left: 8px; font-weight: 600; }
+    .admin-header-right { display: flex; align-items: center; gap: 12px; }
+    .admin-user { font-size: 12px; color: #94a3b8; }
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-primary { background: linear-gradient(135deg, #2563eb, #7c3aed); color: white; }
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-danger { background: #7f1d1d; color: #fca5a5; border: 1px solid #991b1b; }
+    .btn-danger:hover { background: #991b1b; }
+    .btn-success { background: #065f46; color: #6ee7b7; border: 1px solid #047857; }
+    .btn-success:hover { background: #047857; }
+    .btn-sm { padding: 4px 10px; font-size: 11px; }
+    .btn-back { background: transparent; color: #94a3b8; border: 1px solid #1e293b; }
+    .btn-back:hover { color: #e2e8f0; border-color: #3b82f6; }
+
+    .admin-nav {
+      background: #141c2e;
+      border-bottom: 1px solid #1e293b;
+      display: flex;
+      padding: 0 24px;
+      gap: 0;
+    }
+    .admin-nav-btn {
+      padding: 12px 20px;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: #64748b;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .admin-nav-btn:hover { color: #94a3b8; }
+    .admin-nav-btn.active { color: #60a5fa; border-bottom-color: #60a5fa; }
+
+    .admin-main { max-width: 1200px; margin: 0 auto; padding: 24px; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    .card {
+      background: #141c2e;
+      border: 1px solid #1e293b;
+      border-radius: 10px;
+      padding: 20px;
+      margin-bottom: 16px;
+    }
+    .card h2 {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      color: #e2e8f0;
+    }
+
+    .form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-group label { font-size: 11px; color: #94a3b8; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; }
+    .form-group input, .form-group select {
+      padding: 8px 12px;
+      border: 1px solid #1e293b;
+      border-radius: 6px;
+      background: #0c1220;
+      color: #e2e8f0;
+      font-size: 13px;
+      outline: none;
+    }
+    .form-group input:focus, .form-group select:focus { border-color: #3b82f6; }
+
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: 10px 12px; text-align: left; font-size: 13px; border-bottom: 1px solid #1e293b; }
+    th { color: #64748b; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    td { color: #cbd5e1; }
+    tr:hover td { background: #0f1520; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-admin { background: #7c3aed22; color: #a78bfa; border: 1px solid #7c3aed44; }
+    .badge-user { background: #2563eb22; color: #60a5fa; border: 1px solid #2563eb44; }
+    .badge-active { background: #065f4622; color: #6ee7b7; border: 1px solid #065f4644; }
+    .badge-inactive { background: #7f1d1d22; color: #fca5a5; border: 1px solid #7f1d1d44; }
+    .badge-used { background: #1e293b; color: #64748b; }
+    .badge-unused { background: #065f4622; color: #6ee7b7; }
+    .badge-expired { background: #7f1d1d22; color: #fca5a5; }
+    .text-muted { color: #64748b; font-size: 12px; }
+    .text-green { color: #6ee7b7; }
+    .text-red { color: #fca5a5; }
+    .text-amber { color: #fcd34d; }
+
+    .alert {
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 16px;
+      display: none;
+    }
+    .alert-error { background: #1c1017; border: 1px solid #7f1d1d; color: #fca5a5; }
+    .alert-success { background: #0c1c17; border: 1px solid #065f46; color: #6ee7b7; }
+    .alert.visible { display: block; }
+
+    .health-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+    .health-card {
+      background: #0c1220;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .health-card .hc-label { font-size: 11px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; }
+    .health-card .hc-value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+    .health-card .hc-sub { font-size: 11px; color: #64748b; margin-top: 4px; }
+
+    .restart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+    .restart-card {
+      background: #0c1220;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .restart-card .rc-title { font-weight: 600; font-size: 14px; }
+    .restart-card .rc-desc { font-size: 12px; color: #64748b; }
+    .restart-card .rc-status { font-size: 12px; padding: 4px 8px; border-radius: 4px; display: inline-block; width: fit-content; }
+
+    .empty-state { text-align: center; padding: 40px; color: #64748b; }
+    .code-display {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #0c1220;
+      padding: 8px 12px;
+      border-radius: 6px;
+      border: 1px solid #1e293b;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      color: #6ee7b7;
+      user-select: all;
+    }
+    .code-display button {
+      background: none;
+      border: none;
+      color: #64748b;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0;
+    }
+    .code-display button:hover { color: #e2e8f0; }
+  </style>
+</head>
+<body>
+  <!-- HEADER -->
+  <div class="admin-header">
+    <h1>Judah Admin <span>RESTRICTED</span></h1>
+    <div class="admin-header-right">
+      <span class="admin-user" id="adminUser">Loading...</span>
+      <button class="btn btn-back" onclick="window.location.href='/'">← Dashboard</button>
+      <button class="btn btn-sm btn-danger" onclick="doLogout()">Logout</button>
+    </div>
+  </div>
+
+  <!-- NAV -->
+  <div class="admin-nav">
+    <button class="admin-nav-btn active" onclick="showTab('overview')">Overview</button>
+    <button class="admin-nav-btn" onclick="showTab('invites')">Invite Codes</button>
+    <button class="admin-nav-btn" onclick="showTab('users')">Users</button>
+    <button class="admin-nav-btn" onclick="showTab('scanner')">Scanner</button>
+  </div>
+
+  <div class="admin-main">
+    <div id="alertError" class="alert alert-error"></div>
+    <div id="alertSuccess" class="alert alert-success"></div>
+
+    <!-- OVERVIEW TAB -->
+    <div class="tab-panel active" id="tab-overview">
+      <div class="card">
+        <h2>System Health</h2>
+        <div class="health-grid" id="healthGrid">
+          <div class="empty-state">Loading...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- INVITE CODES TAB -->
+    <div class="tab-panel" id="tab-invites">
+      <div class="card">
+        <h2>Generate Invite Code</h2>
+        <div class="form-row">
+          <div class="form-group" style="flex:1;">
+            <label>Bind to Email (optional)</label>
+            <input type="email" id="inviteEmail" placeholder="Leave empty for any email">
+          </div>
+          <div class="form-group">
+            <label>&nbsp;</label>
+            <button class="btn btn-primary" onclick="generateInvite()">Generate Invite</button>
+          </div>
+        </div>
+        <div id="newInviteResult" style="margin-top:12px;"></div>
+      </div>
+      <div class="card">
+        <h2>All Invite Codes</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Code</th><th>Bound Email</th><th>Created By</th><th>Used By</th><th>Status</th><th>Expires</th><th>Created</th></tr>
+            </thead>
+            <tbody id="invitesTable">
+              <tr><td colspan="7" class="empty-state">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- USERS TAB -->
+    <div class="tab-panel" id="tab-users">
+      <div class="card">
+        <h2>All Users</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Email</th><th>Role</th><th>Status</th><th>Created</th><th>Last Login</th><th>Action</th></tr>
+            </thead>
+            <tbody id="usersTable">
+              <tr><td colspan="7" class="empty-state">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- SCANNER TAB -->
+    <div class="tab-panel" id="tab-scanner">
+      <div class="card">
+        <h2>Scanner Control</h2>
+        <div class="restart-grid">
+          <div class="restart-card">
+            <div class="rc-title">D1 — 4H HTF Scanner</div>
+            <div class="rc-desc">Soft restart: restarts scan loop, keeps candles & signals intact</div>
+            <span class="rc-status" id="d1Status">Loading...</span>
+            <button class="btn btn-primary btn-sm" onclick="restartScanner('d1')">Restart D1</button>
+          </div>
+          <div class="restart-card">
+            <div class="rc-title">D2 — 15M LTF Pipeline</div>
+            <div class="rc-desc">Soft restart: restarts scan loop, keeps candles & signals intact</div>
+            <span class="rc-status" id="d2Status">Loading...</span>
+            <button class="btn btn-primary btn-sm" onclick="restartScanner('d2')">Restart D2</button>
+          </div>
+          <div class="restart-card">
+            <div class="rc-title">D1 + D2 Full Restart</div>
+            <div class="rc-desc">Full restart: clears signals, re-bootstraps candles, immediate scan</div>
+            <span class="rc-status" id="fullStatus">Loading...</span>
+            <button class="btn btn-danger btn-sm" onclick="restartScanner('full')">Full Restart</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Recent Activity</h2>
+        <div id="activityLog" class="text-muted">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API = "";
+    let token = getCookie("session_token") || "";
+    let currentUser = null;
+
+    function getCookie(name) {
+      const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+      return m ? m[2] : null;
+    }
+
+    function apiHeaders() {
+      return {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + token,
+      };
+    }
+
+    function showAlert(type, msg) {
+      const el = document.getElementById(type === "error" ? "alertError" : "alertSuccess");
+      el.textContent = msg;
+      el.classList.add("visible");
+      setTimeout(() => el.classList.remove("visible"), 5000);
+    }
+
+    function showTab(name) {
+      document.querySelectorAll(".admin-nav-btn").forEach(b => b.classList.remove("active"));
+      document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+      event.target.classList.add("active");
+      document.getElementById("tab-" + name).classList.add("active");
+      if (name === "invites") loadInvites();
+      if (name === "users") loadUsers();
+      if (name === "scanner") loadScannerStatus();
+      if (name === "overview") loadHealth();
+    }
+
+    async function checkAdmin() {
+      try {
+        const r = await fetch(API + "/auth/me", { headers: apiHeaders() });
+        if (!r.ok) { window.location.href = "/login"; return; }
+        currentUser = await r.json();
+        document.getElementById("adminUser").textContent = currentUser.email;
+        if (currentUser.role !== "admin") {
+          document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#fca5a5;font-size:18px;">⛔ Admin access required</div>';
+        }
+        loadHealth();
+      } catch (e) {
+        window.location.href = "/login";
+      }
+    }
+
+    // ── HEALTH / OVERVIEW ───────────────────────────────────────────
+    async function loadHealth() {
+      try {
+        const [h, d] = await Promise.all([
+          fetch(API + "/api/health").then(r => r.json()),
+          fetch(API + "/api/health/detail", { headers: apiHeaders() }).then(r => r.json()),
+        ]);
+        const grid = document.getElementById("healthGrid");
+        const items = [
+          { label: "Status", value: (d.status || h.status || "—").toUpperCase(), sub: d.ws?.connected ? "WS Connected" : "WS Disconnected" },
+          { label: "D1 Coins", value: d.d1?.coins || h.stats?.d1_coins || 0, sub: d.d1?.status || "—" },
+          { label: "D2 Signals", value: d.d2?.signals || h.stats?.d2_signals || 0, sub: d.d2?.status || "—" },
+          { label: "D3 Decisions", value: d.d3?.decisions || h.stats?.d3_fusion || 0, sub: d.d3?.status || "—" },
+          { label: "D1 Stale", value: d.d1_stale || 0, sub: "coins past TTL" },
+          { label: "D2 Stale", value: d.d2_stale || 0, sub: "signals past TTL" },
+          { label: "Errors (1h)", value: d.errors_1h || 0, sub: "in recent logs" },
+          { label: "WS Clients", value: d.ws?.clients || 0, sub: "connected" },
+        ];
+        grid.innerHTML = items.map(i => {
+          const color = i.value === 0 && i.label !== "WS Clients" ? "#6ee7b7" : i.value > 0 && i.label.includes("Stale") ? "#fcd34d" : i.value > 0 && i.label.includes("Errors") ? "#fca5a5" : "#e2e8f0";
+          return `<div class="health-card"><div class="hc-label">${i.label}</div><div class="hc-value" style="color:${color}">${i.value}</div><div class="hc-sub">${i.sub}</div></div>`;
+        }).join("");
+        // Update scanner status chips
+        updateStatusChip("d1Status", d.d1);
+        updateStatusChip("d2Status", d.d2);
+        updateStatusChip("fullStatus", { status: d.status, ws: d.ws });
+      } catch (e) {
+        showAlert("error", "Failed to load health: " + e.message);
+      }
+    }
+
+    function updateStatusChip(id, data) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const s = (data && data.status) || "unknown";
+      if (s === "live") { el.className = "rc-status"; el.style.cssText = "background:#065f46;color:#6ee7b7;"; el.textContent = "● Live"; }
+      else if (s === "stale") { el.className = "rc-status"; el.style.cssText = "background:#78350f;color:#fcd34d;"; el.textContent = "○ Stale"; }
+      else if (s === "never") { el.className = "rc-status"; el.style.cssText = "background:#7f1d1d;color:#fca5a5;"; el.textContent = "● Never"; }
+      else { el.className = "rc-status"; el.style.cssText = "background:#1e293b;color:#64748b;"; el.textContent = "— " + s; }
+    }
+
+    // ── INVITE CODES ───────────────────────────────────────────────
+    async function generateInvite() {
+      const email = document.getElementById("inviteEmail").value.trim();
+      const resultDiv = document.getElementById("newInviteResult");
+      try {
+        const r = await fetch(API + "/auth/invite", {
+          method: "POST",
+          headers: apiHeaders(),
+          body: JSON.stringify({ email: email || undefined }),
+        });
+        const data = await r.json();
+        if (!r.ok) { showAlert("error", data.error || "Failed to create invite"); return; }
+        resultDiv.innerHTML = `
+          <div class="code-display">
+            <span>${data.code}</span>
+            <button onclick="navigator.clipboard.writeText(this.parentElement.querySelector('span').textContent);this.textContent='✓';setTimeout(()=>this.textContent='📋',1500)">📋</button>
+          </div>
+          <p class="text-muted" style="margin-top:6px;">Expires: ${new Date(data.expires_at).toLocaleString()}</p>
+        `;
+        showAlert("success", "Invite code created!");
+        document.getElementById("inviteEmail").value = "";
+        loadInvites();
+      } catch (e) { showAlert("error", e.message); }
+    }
+
+    async function loadInvites() {
+      try {
+        const r = await fetch(API + "/auth/invites", { headers: apiHeaders() });
+        const data = await r.json();
+        const tbody = document.getElementById("invitesTable");
+        if (!data.invites || data.invites.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No invite codes yet</td></tr>';
+          return;
+        }
+        tbody.innerHTML = data.invites.map(inv => {
+          const now = Date.now();
+          const exp = new Date(inv.expires_at).getTime();
+          const isExpired = now > exp;
+          const isUsed = !!inv.used_by;
+          let statusBadge = isUsed ? '<span class="badge badge-used">USED</span>' : isExpired ? '<span class="badge badge-expired">EXPIRED</span>' : '<span class="badge badge-unused">UNUSED</span>';
+          return `<tr>
+            <td style="font-family:monospace;font-size:12px;">${inv.code.substring(0, 16)}...</td>
+            <td>${inv.email || "<span class='text-muted'>Any</span>"}</td>
+            <td>${inv.created_by}</td>
+            <td>${inv.used_by || "<span class='text-muted'>—</span>"}</td>
+            <td>${statusBadge}</td>
+            <td class="text-muted">${new Date(inv.expires_at).toLocaleString()}</td>
+            <td class="text-muted">${new Date(inv.created_at).toLocaleString()}</td>
+          </tr>`;
+        }).join("");
+      } catch (e) { showAlert("error", "Failed to load invites: " + e.message); }
+    }
+
+    // ── USERS ──────────────────────────────────────────────────────
+    async function loadUsers() {
+      try {
+        const r = await fetch(API + "/auth/users", { headers: apiHeaders() });
+        const data = await r.json();
+        const tbody = document.getElementById("usersTable");
+        if (!data.users || data.users.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No users found</td></tr>';
+          return;
+        }
+        tbody.innerHTML = data.users.map(u => {
+          const roleBadge = u.role === "admin" ? '<span class="badge badge-admin">ADMIN</span>' : '<span class="badge badge-user">USER</span>';
+          const statusBadge = u.is_active ? '<span class="badge badge-active">ACTIVE</span>' : '<span class="badge badge-inactive">INACTIVE</span>';
+          const actionBtn = u.is_active
+            ? `<button class="btn btn-danger btn-sm" onclick="toggleUser(${u.id}, false)">Deactivate</button>`
+            : `<button class="btn btn-success btn-sm" onclick="toggleUser(${u.id}, true)">Activate</button>`;
+          return `<tr>
+            <td>${u.id}</td>
+            <td>${u.email}</td>
+            <td>${roleBadge}</td>
+            <td>${statusBadge}</td>
+            <td class="text-muted">${u.created_at || "—"}</td>
+            <td class="text-muted">${u.last_login || "Never"}</td>
+            <td>${u.email === currentUser?.email ? '<span class="text-muted">(you)</span>' : actionBtn}</td>
+          </tr>`;
+        }).join("");
+      } catch (e) { showAlert("error", "Failed to load users: " + e.message); }
+    }
+
+    async function toggleUser(userId, activate) {
+      if (!confirm(activate ? "Activate this user?" : "Deactivate this user? Their sessions will be revoked.")) return;
+      try {
+        const method = activate ? "POST" : "DELETE";
+        const r = await fetch(API + "/auth/users/" + userId, {
+          method: method,
+          headers: apiHeaders(),
+        });
+        const data = await r.json();
+        if (!r.ok) { showAlert("error", data.error || "Action failed"); return; }
+        showAlert("success", activate ? "User activated" : "User deactivated");
+        loadUsers();
+      } catch (e) { showAlert("error", e.message); }
+    }
+
+    // ── SCANNER ────────────────────────────────────────────────────
+    async function loadScannerStatus() {
+      try {
+        const r = await fetch(API + "/api/health/detail", { headers: apiHeaders() });
+        const d = await r.json();
+        updateStatusChip("d1Status", d.d1);
+        updateStatusChip("d2Status", d.d2);
+        updateStatusChip("fullStatus", { status: d.status, ws: d.ws });
+
+        // Activity log
+        const logEl = document.getElementById("activityLog");
+        const lines = [];
+        if (d.d1) lines.push(`<b>D1:</b> ${d.d1.status} — last scan ${d.d1.age_s ? d.d1.age_s.toFixed(0) + 's ago' : 'never'} — ${d.d1.coins} coins`);
+        if (d.d2) lines.push(`<b>D2:</b> ${d.d2.status} — last scan ${d.d2.age_s ? d.d2.age_s.toFixed(0) + 's ago' : 'never'} — ${d.d2.signals} signals`);
+        if (d.d3) lines.push(`<b>D3:</b> ${d.d3.status} — last fusion ${d.d3.age_s ? d.d3.age_s.toFixed(0) + 's ago' : 'never'} — ${d.d3.decisions} decisions`);
+        logEl.innerHTML = lines.join("<br>") || "No data available";
+      } catch (e) { showAlert("error", "Failed to load scanner status: " + e.message); }
+    }
+
+    async function restartScanner(type) {
+      if (!confirm(type === "full"
+        ? "Full restart: clears all signals and re-bootstraps candles. Continue?"
+        : "Soft restart scan loop? Signals and candles preserved.")) return;
+      try {
+        const btn = event.target;
+        btn.disabled = true;
+        btn.textContent = "Restarting...";
+        const r = await fetch(API + "/api/restart", {
+          method: "POST",
+          headers: apiHeaders(),
+        });
+        const data = await r.json();
+        if (!r.ok) { showAlert("error", data.error || "Restart failed"); return; }
+        showAlert("success", data.msg || "Scanner restarted");
+        setTimeout(() => loadScannerStatus(), 3000);
+      } catch (e) { showAlert("error", e.message); }
+      finally {
+        const btns = document.querySelectorAll("#tab-scanner .btn-primary, #tab-scanner .btn-danger");
+        btns.forEach(b => { b.disabled = false; b.textContent = b.classList.contains("btn-danger") ? "Full Restart" : "Restart " + b.textContent.replace("Restart ", "").replace("ing...", ""); });
+      }
+    }
+
+    // ── LOGOUT ─────────────────────────────────────────────────────
+    async function doLogout() {
+      try { await fetch(API + "/auth/logout", { method: "POST", headers: apiHeaders() }); } catch {}
+      document.cookie = "session_token=; path=/; max-age=0";
+      window.location.href = "/login";
+    }
+
+    // ── INIT ──────────────────────────────────────────────────────
+    checkAdmin();
+  </script>
+</body>
+</html>

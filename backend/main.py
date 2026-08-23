@@ -327,6 +327,23 @@ async def login_page():
         return HTMLResponse(content="<h1>Login</h1><p>Login page not found.</p>")
 
 
+@app.get("/admin")
+async def admin_panel(request: Request):
+    """Serve admin panel if authenticated as admin, otherwise redirect to login."""
+    try:
+        token = request.cookies.get("session_token", "")
+        if not token:
+            raise HTTPException(status_code=401)
+        user = await validate_token(token)
+        if not user or user.get("role") != "admin":
+            raise HTTPException(status_code=403)
+        with open(os.path.join(frontend_dir, "admin.html"), encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    except HTTPException:
+        return HTMLResponse(content='<script>window.location.href="/login"</script>', status_code=200)
+    except FileNotFoundError:
+        return HTMLResponse(content="<h1>Admin Panel</h1><p>admin.html not found.</p>")
+
 @app.get("/")
 async def dashboard(request: Request):
     """Serve dashboard if authenticated, otherwise redirect to login."""

@@ -355,6 +355,12 @@ function initFilters() {
     await fetch('/api/restart', { method: 'POST' }).catch(() => {});
   });
 
+  // Admin panel button
+  const btnAdmin = document.getElementById('btnAdmin');
+  if (btnAdmin) btnAdmin.addEventListener('click', () => {
+    window.location.href = '/admin';
+  });
+
   // Timer format selectors (per-chip)
   const d1Fmt = document.getElementById('d1TimerFmt');
   if (d1Fmt) d1Fmt.addEventListener('change', () => { d1TimerFmt = d1Fmt.value; });
