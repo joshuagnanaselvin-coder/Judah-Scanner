@@ -1068,7 +1068,8 @@ let levPanelOpen = false;
 
 let currentRisk = 0;
 
-function toggleLevPanel() {
+function toggleLevPanel(e) {
+  if (e) e.stopPropagation();
   levPanelOpen = !levPanelOpen;
   const panel = document.getElementById('levPanel');
   const toggle = document.getElementById('levToggle');
@@ -1082,6 +1083,21 @@ function toggleLevPanel() {
     toggle.style.color = '';
   }
 }
+
+// Close panel when clicking outside
+document.addEventListener('click', function(e) {
+  if (!levPanelOpen) return;
+  const panel = document.getElementById('levPanel');
+  const toggle = document.getElementById('levToggle');
+  if (panel && !panel.contains(e.target) && !toggle.contains(e.target)) {
+    levPanelOpen = false;
+    panel.classList.remove('open');
+    if (toggle) {
+      toggle.style.background = '';
+      toggle.style.color = '';
+    }
+  }
+});
 
 function setRisk(amount) {
   currentRisk = amount;
