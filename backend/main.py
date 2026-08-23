@@ -12,8 +12,18 @@ import asyncio
 import logging
 import json
 import os
+from typing import Optional
 from datetime import datetime, timezone
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+
+# Load .env file (no external deps needed — use stdlib or python-dotenv)
+try:
+    from dotenv import load_dotenv
+    _env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    load_dotenv(_env_path)
+except Exception:
+    pass
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Depends, Query
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 from backend.market_data import market_data
@@ -26,6 +36,20 @@ from backend.engines.ltf_engine import ltf_engine
 from backend.engines.signal_fusion import fusion_engine
 from backend import ws_hub
 from backend import db
+from backend.auth import (
+    ensure_bootstrap,
+    authenticate,
+    create_user,
+    validate_invite,
+    create_invite,
+    validate_token,
+    revoke_token,
+    list_users,
+    deactivate_user,
+    prune_old_sessions,
+    list_invites,
+    _create_session,
+)
 from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE, TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE
 
 logging.basicConfig(
@@ -92,6 +116,13 @@ if os.path.exists(frontend_dir):
 
 @app.websocket("/ws-fusion")
 async def ws_fusion(ws: WebSocket):
+    token = ws.query_params.get("token", "")
+    if token:
+        user = await validate_token(token)
+        if not user:
+            await ws.close(code=4001, reason="Unauthorized")
+            return
+
     await ws.accept()
     await ws_hub.add_client(ws)
     logger.info(f"[ws-fusion] Client connected ({len(ws_hub._clients)} total)")
@@ -143,17 +174,177 @@ async def ws_endpoint(ws: WebSocket):
         logger.info("[ws] Client disconnected")
 
 
-# ---- REST API ----
+# ---- AUTH ----
+
+async def _get_token(request: Request, credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer(auto_error=False))) -> Optional[str]:
+    """Extract token from Authorization header or cookie."""
+    if credentials and credentials.credentials:
+        return credentials.credentials
+    token = request.cookies.get("session_token", "")
+    return token or None
+
+
+async def get_current_user(request: Request, credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer(auto_error=False))) -> dict:
+    """FastAPI dependency: require authenticated user."""
+    token = await _get_token(request, credentials)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = await validate_token(token)
+    if not user:
+        raise HTTPException(status_code=401, detail="Invalid or expired session")
+    return user
+
+
+async def get_current_admin(request: Request, credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer(auto_error=False))) -> dict:
+    """FastAPI dependency: require admin user."""
+    user = await get_current_user(request, credentials)
+    if user.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+@app.post("/auth/signup")
+async def auth_signup(request: Request):
+    """Sign up with invite code. Returns session token on success."""
+    try:
+        body = await request.json()
+        email = (body.get("email") or "").strip().lower()
+        password = body.get("password", "")
+        code = (body.get("invite_code") or "").strip()
+
+        if not email or "@" not in email:
+            return JSONResponse(status_code=400, content={"error": "Valid email required"})
+        if not password or len(password) < 6:
+            return JSONResponse(status_code=400, content={"error": "Password must be at least 6 characters"})
+        if not code:
+            return JSONResponse(status_code=400, content={"error": "Invite code required"})
+
+        # Validate invite
+        valid = await validate_invite(code, email)
+        if not valid:
+            return JSONResponse(status_code=400, content={"error": "Invalid or expired invite code"})
+
+        # Create user
+        user = await create_user(email, password, role="user")
+        token = await _create_session(user["user_id"], user["email"], user["role"])
+        logger.info("[auth] Signup: %s", email)
+        return {"token": token, "user": {"email": user["email"], "role": user["role"]}}
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:
+        logger.error(f"[auth/signup] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Signup failed"})
+
+
+@app.post("/auth/login")
+async def auth_login(request: Request):
+    """Login with email + password. Returns session token."""
+    try:
+        body = await request.json()
+        email = (body.get("email") or "").strip().lower()
+        password = body.get("password", "")
+
+        if not email or not password:
+            return JSONResponse(status_code=400, content={"error": "Email and password required"})
+
+        user = await authenticate(email, password)
+        if not user:
+            logger.warning(f"[auth] Failed login: {email}")
+            return JSONResponse(status_code=401, content={"error": "Invalid credentials"})
+
+        token = await _create_session(user["user_id"], user["email"], user["role"])
+        logger.info("[auth] Login: %s", email)
+        return {"token": token, "user": {"email": user["email"], "role": user["role"]}}
+    except Exception as e:
+        logger.error(f"[auth/login] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": "Login failed"})
+
+
+@app.post("/auth/logout")
+async def auth_logout(request: Request):
+    """Logout — revoke session token."""
+    try:
+        token = await _get_token(request)
+        if token:
+            await revoke_token(token)
+        return {"ok": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/auth/me")
+async def auth_me(user: dict = Depends(get_current_user)):
+    """Return current user info."""
+    return {"email": user["email"], "role": user["role"], "user_id": user["user_id"]}
+
+
+@app.post("/auth/invite")
+async def auth_invite(request: Request, admin: dict = Depends(get_current_admin)):
+    """Admin: generate invite code."""
+    try:
+        body = await request.json()
+        bound_email = body.get("email")
+        invite = await create_invite(admin["email"], bound_email=bound_email)
+        return invite
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/auth/invites")
+async def auth_list_invites(admin: dict = Depends(get_current_admin)):
+    """Admin: list invite codes."""
+    invites = await list_invites()
+    return {"invites": invites}
+
+
+@app.get("/auth/users")
+async def auth_list_users(admin: dict = Depends(get_current_admin)):
+    """Admin: list all users."""
+    users = await list_users()
+    return {"users": users}
+
+
+@app.delete("/auth/users/{user_id}")
+async def auth_deactivate_user(user_id: int, admin: dict = Depends(get_current_admin)):
+    """Admin: deactivate a user."""
+    ok = await deactivate_user(user_id)
+    if not ok:
+        return JSONResponse(status_code=404, content={"error": "User not found"})
+    return {"ok": True}
+
+
+# ---- AUTH-PROTECTED REST API ----
+
+@app.get("/login")
+async def login_page():
+    """Serve login page."""
+    try:
+        with open(os.path.join(frontend_dir, "login.html"), encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    except FileNotFoundError:
+        return HTMLResponse(content="<h1>Login</h1><p>Login page not found.</p>")
+
 
 @app.get("/")
-async def dashboard():
+async def dashboard(request: Request):
+    """Serve dashboard if authenticated, otherwise redirect to login."""
     try:
+        token = request.cookies.get("session_token", "")
+        if not token:
+            raise HTTPException(status_code=401)
+        user = await validate_token(token)
+        if not user:
+            raise HTTPException(status_code=401)
         with open(os.path.join(frontend_dir, "index.html"), encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
+    except HTTPException:
+        return HTMLResponse(content='<script>window.location.href="/login"</script>', status_code=200)
     except FileNotFoundError:
         return HTMLResponse(content="<h1>Judah Scanner</h1><p>Frontend not found.</p>")
 
-@app.get("/api/signals")
+@app.get("/api/signals", dependencies=[Depends(get_current_user)])
 async def get_signals():
     """D1 signals (HTF)."""
     try:
@@ -165,7 +356,7 @@ async def get_signals():
         return JSONResponse(status_code=500, content={"error": "Failed to fetch signals", "detail": str(e)})
 
 
-@app.get("/api/fusion")
+@app.get("/api/fusion", dependencies=[Depends(get_current_user)])
 async def get_fusion():
     """D3 decision signals (frontend display)."""
     try:
@@ -178,7 +369,7 @@ async def get_fusion():
         return JSONResponse(status_code=500, content={"error": "Failed to fetch fusion data", "detail": str(e)})
 
 
-@app.get("/api/pairs")
+@app.get("/api/pairs", dependencies=[Depends(get_current_user)])
 async def get_pairs():
     try:
         return {"pairs": scanner.symbols, "timeframes": TIMEFRAMES_HTF}
@@ -187,7 +378,7 @@ async def get_pairs():
         return JSONResponse(status_code=500, content={"error": "Failed to fetch pairs", "detail": str(e)})
 
 
-@app.get("/api/stats")
+@app.get("/api/stats", dependencies=[Depends(get_current_user)])
 async def get_stats():
     try:
         return performance_tracker.get_stats()
@@ -196,7 +387,7 @@ async def get_stats():
         return JSONResponse(status_code=500, content={"error": "Failed to fetch stats", "detail": str(e)})
 
 
-@app.get("/api/debug-fusion")
+@app.get("/api/debug-fusion", dependencies=[Depends(get_current_user)])
 async def debug_fusion():
     """Diagnostic: show D1/D2 overlap and decision layer output."""
     try:
@@ -247,7 +438,7 @@ async def debug_fusion():
         return JSONResponse(status_code=500, content={"error": "Failed to fetch debug data", "detail": str(e)})
 
 
-@app.get("/api/performance")
+@app.get("/api/performance", dependencies=[Depends(get_current_user)])
 async def get_performance():
     try:
         return performance_tracker.get_stats()
@@ -258,7 +449,7 @@ async def get_performance():
 
 # ── Analytics REST API (Phase 6) ──────────────────────────────────────────
 
-@app.get("/api/analytics/outcomes")
+@app.get("/api/analytics/outcomes", dependencies=[Depends(get_current_user)])
 async def analytics_outcomes():
     """Signal outcome stats from SQLite — aggregate win rates by type/tier/session."""
     try:
@@ -269,7 +460,7 @@ async def analytics_outcomes():
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.get("/api/analytics/evolution/{coin}")
+@app.get("/api/analytics/evolution/{coin}", dependencies=[Depends(get_current_user)])
 async def analytics_evolution(coin: str):
     """State transition history for a specific coin."""
     try:
@@ -280,7 +471,7 @@ async def analytics_evolution(coin: str):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.get("/api/analytics/bayes")
+@app.get("/api/analytics/bayes", dependencies=[Depends(get_current_user)])
 async def analytics_bayes():
     """Bayesian calibration table — win rates per state+signal type."""
     try:
@@ -291,7 +482,7 @@ async def analytics_bayes():
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.get("/api/analytics/decisions")
+@app.get("/api/analytics/decisions", dependencies=[Depends(get_current_user)])
 async def analytics_decisions():
     """Recent D3 fusion decisions from SQLite."""
     try:
@@ -302,7 +493,7 @@ async def analytics_decisions():
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.get("/api/analytics/db")
+@app.get("/api/analytics/db", dependencies=[Depends(get_current_user)])
 async def analytics_db():
     """DB file size + row counts for all tables."""
     try:
@@ -313,7 +504,7 @@ async def analytics_db():
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.get("/api/logs")
+@app.get("/api/logs", dependencies=[Depends(get_current_user)])
 async def api_logs(lines: int = 200, source: str = "all"):
     """Tail the server log file.
 
@@ -363,7 +554,7 @@ async def api_logs(lines: int = 200, source: str = "all"):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.get("/api/health/detail")
+@app.get("/api/health/detail", dependencies=[Depends(get_current_user)])
 async def health_detail():
     """Richer health: scan cycle ages, error counts from logs, uptime."""
     try:
@@ -457,7 +648,7 @@ async def health_detail():
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/restart")
+@app.post("/api/restart", dependencies=[Depends(get_current_admin)])
 async def restart_scanner():
     try:
         logger.info("[restart] Soft restart: restarting scan loops only...")
@@ -476,7 +667,7 @@ async def restart_scanner():
 
 @app.get("/api/health")
 async def health():
-    """Instant health check — always responds, even during startup."""
+    """Instant health check — public (no auth required) for monitoring."""
     try:
         import time
         ready = state_store.last_d1_scan > 0
@@ -584,6 +775,13 @@ async def startup():
         logger.info("[startup] SQLite schema initialized")
     except Exception:
         logger.exception("[startup] DB schema init failed")
+
+    # Create admin user if not exists (idempotent)
+    try:
+        await ensure_bootstrap()
+        logger.info("[startup] Auth bootstrap complete")
+    except Exception:
+        logger.exception("[startup] Auth bootstrap failed")
 
     asyncio.create_task(_bootstrap())
 

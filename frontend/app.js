@@ -17,6 +17,10 @@ let d1TimerFmt = 'min';
 let d2TimerFmt = 'sec';
 
 // ── Helpers ────────────────────────────────────────────────────────
+function getCookie(name) {
+  const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
+  return m ? m[2] : null;
+}
 function getMEE(s) { return s.marketEvolution || {}; }
 
 function fmtMomentum(v) {
@@ -768,7 +772,9 @@ async function checkHealth() {
 // ── WebSocket ─────────────────────────────────────────────────────
 function connectWS() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/ws-fusion`);
+  const token = getCookie("session_token");
+  const tokenParam = token ? `?token=${encodeURIComponent(token)}` : "";
+  ws = new WebSocket(`${proto}//${location.host}/ws-fusion${tokenParam}`);
 
   ws.onopen = () => {
     document.getElementById('wsDot').style.background = '#22c55e';
