@@ -226,13 +226,34 @@ class FusionEngine:
             logger.exception("[fusion] Bayes rehydration failed")
 
         self.running = True
-        self.scan_task = asyncio.create_task(self._scan_loop())
+        # Start the fusion loop supervisor (restarts on crash)
+        self.scan_task = asyncio.create_task(self._fusion_supervisor())
         logger.info("[fusion] D3 Fusion Engine started (Signal Types A/B/C/D/E)")
 
     async def stop(self):
         self.running = False
         if self.scan_task:
             self.scan_task.cancel()
+
+    async def _fusion_supervisor(self):
+        """Supervisor that keeps the fusion loop alive forever."""
+        backoff = 10
+        while self.running:
+            try:
+                await self._scan_loop()
+            except asyncio.CancelledError:
+                logger.info("[fusion] Fusion supervisor cancelled")
+                break
+            except Exception as e:
+                logger.exception(f"[fusion] Fusion loop crashed — restarting in {backoff}s: {e}")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 300)
+                continue
+            if not self.running:
+                break
+            logger.warning(f"[fusion] Fusion loop exited — restarting in {backoff}s")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 300)
 
     async def _scan_loop(self):
         """Watch for D1/D2 changes and trigger fusion.

@@ -54,7 +54,29 @@ class LTFEngine:
 
         logger.info(f"[ltf] [{self.cycle_id}] Starting D2 engine — {len(symbols)} coins on 15M "
                     f"(candle-close driven, ~15min cycle)")
-        self.scan_task = asyncio.create_task(self._scan_loop())
+        # Start the scan loop supervisor (restarts on crash)
+        self.scan_task = asyncio.create_task(self._scan_supervisor())
+
+    async def _scan_supervisor(self):
+        """Supervisor that keeps the D2 scan loop alive forever."""
+        backoff = 10
+        while self.running:
+            try:
+                await self._scan_loop()
+            except asyncio.CancelledError:
+                logger.info(f"[ltf] [{self.cycle_id}] Scan supervisor cancelled")
+                break
+            except Exception as e:
+                logger.exception(f"[ltf] [{self.cycle_id}] Scan loop crashed — "
+                                 f"restarting in {backoff}s: {e}")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 300)
+                continue
+            if not self.running:
+                break
+            logger.warning(f"[ltf] [{self.cycle_id}] Scan loop exited — restarting in {backoff}s")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 300)
 
     async def _scan_loop(self):
         """D2 15M scan loop — candle-close driven.

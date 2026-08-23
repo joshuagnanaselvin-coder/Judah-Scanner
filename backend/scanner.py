@@ -55,8 +55,8 @@ class Scanner:
         # is timer-driven — WS keeps our candle cache fresh)
         market_data.connect_websocket(symbols)
 
-        # Start the scan loop
-        self.scan_task = asyncio.create_task(self._scan_loop())
+        # Start the scan loop supervisor (restarts on crash)
+        self.scan_task = asyncio.create_task(self._scan_supervisor())
         logger.info(f"[scanner] [{self.cycle_id}] Live - {len(symbols)} coins x 4H "
                     f"(candle-close driven, ~4h cycle)")
 
@@ -81,6 +81,34 @@ class Scanner:
             logger.info(f"[scanner] [{self.cycle_id}] Candle data ready — scan_loop will handle scanning")
         except Exception as e:
             logger.error(f"[scanner] [{self.cycle_id}] Background bootstrap failed: {e}")
+
+    async def _scan_supervisor(self):
+        """Supervisor that keeps the scan loop alive forever.
+
+        Restarts the scan loop if it crashes for any reason (unhandled
+        exception, asyncio.CancelledError, etc.). Logs every restart so
+        the user can see when D1 recovers from a failure.
+        """
+        backoff = 10  # seconds before first restart after crash
+        while self.running:
+            try:
+                await self._scan_loop()
+            except asyncio.CancelledError:
+                logger.info(f"[scanner] [{self.cycle_id}] Scan supervisor cancelled")
+                break
+            except Exception as e:
+                logger.exception(f"[scanner] [{self.cycle_id}] Scan loop crashed — "
+                                 f"restarting in {backoff}s: {e}")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 300)  # cap at 5 minutes
+                continue
+            # If loop exits normally (self.running = False), stop
+            if not self.running:
+                break
+            # Unexpected exit — restart
+            logger.warning(f"[scanner] [{self.cycle_id}] Scan loop exited — restarting in {backoff}s")
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 300)
 
     async def _scan_loop(self):
         """D1 4H scan loop — candle-close driven.
