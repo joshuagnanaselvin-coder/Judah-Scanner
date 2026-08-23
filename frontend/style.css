@@ -525,6 +525,117 @@ body {
   transition: transform 0.2s;
 }
 .obs-panel.collapsed .obs-panel-chevron { transform: rotate(-90deg); }
+
+/* ── Leverage Calculator Floating Window ──────────────────────────── */
+.lev-toggle {
+  position: fixed; bottom: 20px; right: 74px;
+  width: 44px; height: 44px; border-radius: 50%;
+  background: var(--bg-card); border: 2px solid var(--border);
+  color: var(--amber); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: 800; z-index: 100;
+  transition: all var(--transition);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+}
+.lev-toggle:hover { border-color: var(--amber); color: #fff; transform: scale(1.05); }
+
+.lev-panel {
+  position: fixed; bottom: 74px; right: 20px;
+  width: 300px;
+  background: #111827; border: 1px solid #374151;
+  border-radius: 12px; z-index: 100;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  display: none; overflow: hidden;
+}
+.lev-panel.open { display: block; }
+
+.lev-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #1e293b, #1a1a2e);
+  border-bottom: 1px solid #374151;
+}
+.lev-title { font-size: 13px; font-weight: 700; color: #f1f5f9; letter-spacing: 0.3px; }
+.lev-title span { color: var(--amber); }
+.lev-close {
+  background: none; border: none; color: #64748b; cursor: pointer;
+  font-size: 18px; line-height: 1; padding: 0; width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 4px; transition: all 0.15s;
+}
+.lev-close:hover { color: #fff; background: #374151; }
+
+.lev-body { padding: 14px 16px; }
+
+.lev-row { margin-bottom: 12px; }
+.lev-label {
+  font-size: 10px; font-weight: 600; color: #64748b;
+  text-transform: uppercase; letter-spacing: 0.8px;
+  margin-bottom: 5px;
+}
+.lev-input {
+  width: 100%; padding: 8px 10px; border-radius: 6px;
+  background: #0f172a; border: 1px solid #374151;
+  color: #f1f5f9; font-size: 14px; font-weight: 600;
+  outline: none; transition: border-color 0.15s;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.lev-input:focus { border-color: var(--amber); }
+.lev-input::placeholder { color: #475569; font-weight: 400; }
+
+.lev-input-row { display: flex; gap: 8px; }
+.lev-input-row .lev-row { flex: 1; margin-bottom: 0; }
+
+.lev-sl-btns {
+  display: flex; gap: 6px; margin-top: 5px;
+}
+.lev-sl-btn {
+  flex: 1; padding: 7px 4px; border-radius: 6px;
+  background: #0f172a; border: 1px solid #374151;
+  color: #94a3b8; font-size: 13px; font-weight: 700;
+  cursor: pointer; transition: all 0.15s;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.lev-sl-btn:hover { border-color: var(--amber); color: #f1f5f9; }
+.lev-sl-btn.active {
+  background: #b45309; border-color: var(--amber);
+  color: #fff; box-shadow: 0 0 8px rgba(245,158,11,0.25);
+}
+
+.lev-result {
+  margin-top: 10px; padding: 10px;
+  background: #0f172a; border: 1px solid #374151;
+  border-radius: 8px; text-align: center;
+  min-height: 50px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 2px;
+}
+.lev-result.sl-active { border-color: #3b82f6; background: #0c1a2e; }
+.lev-result.has-leverage { border-color: var(--amber); background: #1c1917; }
+.lev-result-label { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px; }
+.lev-result-value {
+  font-size: 24px; font-weight: 800; color: #64748b;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.lev-result.sl-active .lev-result-value { color: #60a5fa; }
+.lev-result.has-leverage .lev-result-value { color: var(--amber); }
+.lev-result-detail {
+  font-size: 11px; color: #475569; margin-top: 2px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  line-height: 1.5;
+}
+.lev-result-detail span { color: #94a3b8; }
+
+.lev-divider {
+  height: 1px; background: #1e293b; margin: 12px 0;
+}
+.lev-formula {
+  font-size: 10px; color: #475569; text-align: center;
+  padding: 6px; background: #0f172a; border-radius: 4px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  line-height: 1.5;
+}
+.lev-formula .hl { color: var(--amber); }
 .obs-tabs {
   display: flex; gap: 0;
   border-bottom: 1px solid var(--border);
