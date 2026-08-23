@@ -1063,6 +1063,104 @@ async function loadHealthDetail(smooth = true) {
   }
 }
 
+// ── Leverage Calculator ──────────────────────────────────────────────
+let levPanelOpen = false;
+
+let currentRisk = 0;
+
+function toggleLevPanel() {
+  levPanelOpen = !levPanelOpen;
+  const panel = document.getElementById('levPanel');
+  const toggle = document.getElementById('levToggle');
+  if (levPanelOpen) {
+    panel.classList.add('open');
+    toggle.style.background = 'var(--amber)';
+    toggle.style.color = '#000';
+  } else {
+    panel.classList.remove('open');
+    toggle.style.background = '';
+    toggle.style.color = '';
+  }
+}
+
+function setRisk(amount) {
+  currentRisk = amount;
+
+  // Highlight active button
+  document.querySelectorAll('.lev-sl-btn').forEach(btn => {
+    const btnAmt = parseInt(btn.textContent.replace(/[^0-9]/g, ''));
+    btn.classList.toggle('active', btnAmt === amount);
+  });
+
+  calcLeverage();
+}
+
+function calcLeverage() {
+  const entry = parseFloat(document.getElementById('levEntry').value);
+  const slPrice = parseFloat(document.getElementById('levSLPrice').value);
+  const margin = parseFloat(document.getElementById('levMargin').value);
+  const risk = currentRisk;
+
+  const slPctEl = document.getElementById('levSLPct');
+  const resultEl = document.getElementById('levResult');
+  const valEl = document.getElementById('levValue');
+  const detailEl = document.getElementById('levDetail');
+
+  // ── Calculate SL% from Entry and SL Price ──
+  let slPct = null;
+  if (entry > 0 && slPrice > 0) {
+    if (slPrice < entry) {
+      slPct = ((entry - slPrice) / entry) * 100;
+    } else if (slPrice > entry) {
+      slPct = ((slPrice - entry) / entry) * 100;
+    }
+  }
+
+  // Show SL% in result box
+  if (slPct !== null && slPct > 0) {
+    slPctEl.textContent = slPct.toFixed(2) + '%';
+    resultEl.classList.add('sl-active');
+  } else {
+    slPctEl.innerHTML = '&#8212;';
+    resultEl.classList.remove('sl-active');
+  }
+
+  // ── Calculate Leverage ──
+  if (!margin || !risk || !slPct || margin <= 0 || risk <= 0 || slPct <= 0) {
+    document.getElementById('levResult2').classList.remove('has-leverage');
+    valEl.innerHTML = '&#8212;';
+    detailEl.textContent = '';
+    return;
+  }
+
+  const leverage = risk / (margin * slPct / 100);
+  const safeLev = Math.min(leverage, 125);
+
+  if (safeLev > 100) {
+    valEl.textContent = safeLev.toFixed(0) + 'x';
+  } else if (safeLev > 10) {
+    valEl.textContent = safeLev.toFixed(1) + 'x';
+  } else {
+    valEl.textContent = safeLev.toFixed(2) + 'x';
+  }
+
+  const maxLoss = margin * slPct / 100;
+  const dir = slPrice < entry ? 'LONG' : 'SHORT';
+  detailEl.innerHTML =
+    `${dir} | SL: <span>${slPct.toFixed(2)}%</span> | Margin: <span>&#8377;${margin.toLocaleString()}</span><br>` +
+    `Max Loss: <span>&#8377;${maxLoss.toFixed(0)}</span> | Risk: <span>&#8377;${risk}</span><br>` +
+    `Leverage: <span style="color:var(--amber);font-weight:700">${safeLev.toFixed(2)}x</span>`;
+
+  document.getElementById('levResult2').classList.add('has-leverage');
+}
+
+// Live calc on any input change
+document.addEventListener('input', (e) => {
+  if (e.target.classList.contains('lev-input')) {
+    calcLeverage();
+  }
+});
+
 // ── Init ───────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   connectWS();

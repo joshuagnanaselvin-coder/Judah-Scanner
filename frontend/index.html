@@ -277,6 +277,57 @@
     &#128202;
   </button>
 
+  <!-- LEVERAGE CALCULATOR FLOATING WINDOW -->
+  <button class="lev-toggle" id="levToggle" onclick="toggleLevPanel()" title="Leverage Calculator">&#8734;</button>
+  <div class="lev-panel" id="levPanel">
+    <div class="lev-header">
+      <div class="lev-title"><span>Leverage</span> Calculator</div>
+      <button class="lev-close" onclick="toggleLevPanel()">&times;</button>
+    </div>
+    <div class="lev-body">
+      <div class="lev-row">
+        <div class="lev-label">Entry Price</div>
+        <input type="number" class="lev-input" id="levEntry" placeholder="e.g. 0.06000" step="any" min="0">
+      </div>
+      <div class="lev-row">
+        <div class="lev-label">SL Price</div>
+        <input type="number" class="lev-input" id="levSLPrice" placeholder="e.g. 0.05715" step="any" min="0">
+      </div>
+      <div class="lev-row">
+        <div class="lev-label">Margin (&#8377;)</div>
+        <input type="number" class="lev-input" id="levMargin" placeholder="e.g. 10000" step="1000" min="0">
+      </div>
+
+      <div class="lev-divider"></div>
+
+      <div class="lev-row">
+        <div class="lev-label">Risk (&#8377;)</div>
+        <div class="lev-sl-btns">
+          <button class="lev-sl-btn" onclick="setRisk(3)">&#8377;3</button>
+          <button class="lev-sl-btn" onclick="setRisk(6)">&#8377;6</button>
+          <button class="lev-sl-btn" onclick="setRisk(9)">&#8377;9</button>
+          <button class="lev-sl-btn" onclick="setRisk(12)">&#8377;12</button>
+        </div>
+      </div>
+
+      <div class="lev-result" id="levResult">
+        <div class="lev-result-label">SL%</div>
+        <div class="lev-result-value" id="levSLPct">&mdash;</div>
+      </div>
+
+      <div class="lev-result has-leverage" id="levResult2">
+        <div class="lev-result-label">Required Leverage</div>
+        <div class="lev-result-value" id="levValue">&mdash;</div>
+        <div class="lev-result-detail" id="levDetail"></div>
+      </div>
+
+      <div class="lev-formula">
+        <span class="hl">SL%</span> = |Entry &minus; SL| &divide; Entry &times; 100<br>
+        <span class="hl">Lev</span> = Risk &#8377; &divide; (Margin &#8377; &times; SL%)
+      </div>
+    </div>
+  </div>
+
   <script>
     // Unregister stale service worker caches on load
     if ('serviceWorker' in navigator) {
