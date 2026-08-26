@@ -105,6 +105,9 @@ class LTFEngine:
                 await self._run_batch_scan()
                 elapsed = _time_module.time() - t0
                 logger.info(f"[ltf] [{self.cycle_id}] 15M cycle complete in {elapsed:.1f}s")
+                # Also trigger prune from D2 side (has its own 2-day guard)
+                from backend.scanner import _maybe_prune
+                await _maybe_prune()
 
             except asyncio.CancelledError:
                 break

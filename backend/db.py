@@ -341,18 +341,20 @@ async def insert_decision(row: dict) -> int | None:
 
 # ── Retention ──────────────────────────────────────────────────
 
-async def prune_old(older_than_days: int = 90) -> dict:
+async def prune_old(older_than_days: int = 14) -> dict:
     """Delete records older than `older_than_days` from hot tables.
 
     Prunes state_transitions, decisions, and signal_outcomes.
     Keeps bayes_calibration indefinitely.
     Runs VACUUM to reclaim disk space.
+    Also trims oversized log files.
     """
     cutoff = datetime.now(timezone.utc).timestamp() - (older_than_days * 86400)
     cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
-    outcomes_cutoff = datetime.now(timezone.utc).timestamp() - (30 * 86400)  # 30 days for outcomes
+    outcomes_cutoff = datetime.now(timezone.utc).timestamp() - (7 * 86400)  # 7 days for outcomes
     outcomes_iso = datetime.fromtimestamp(outcomes_cutoff, tz=timezone.utc).isoformat()
     results = {}
+    log_bytes_freed = 0
 
     try:
         async with _PooledConn() as conn:
@@ -373,9 +375,33 @@ async def prune_old(older_than_days: int = 90) -> dict:
 
             await conn.execute("VACUUM")
             await conn.commit()
+
+        # Trim log files if they exceed 50 MB
+        log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+        if os.path.isdir(log_dir):
+            max_log_size = 50 * 1024 * 1024  # 50 MB
+            for fname in os.listdir(log_dir):
+                fpath = os.path.join(log_dir, fname)
+                if not os.path.isfile(fpath):
+                    continue
+                try:
+                    fsize = os.path.getsize(fpath)
+                    if fsize > max_log_size:
+                        with open(fpath, "r", encoding="utf-8", errors="replace") as f:
+                            lines = f.readlines()
+                        # Keep last 2000 lines
+                        trimmed = lines[-2000:]
+                        with open(fpath, "w", encoding="utf-8") as f:
+                            f.writelines(trimmed)
+                        log_bytes_freed = fsize - os.path.getsize(fpath)
+                        results[f"log_{fname}_trimmed"] = f"freed {log_bytes_freed / 1024 / 1024:.1f}MB"
+                except Exception:
+                    pass
     except Exception:
         logger.exception("[db] Prune failed")
 
+    total_freed = sum(v for v in results.values() if isinstance(v, int))
+    results["total_rows_deleted"] = total_freed
     return results
 
 

@@ -702,7 +702,7 @@ async def _maybe_prune():
         return
     _LAST_PRUNE_TS = now
     try:
-        results = await prune_old(older_than_days=90)
+        results = await prune_old(older_than_days=14)
         deleted = sum(v for v in results.values() if isinstance(v, int))
         logger.info(f"[db] Pruned {deleted} old records: {results}")
         state_store.last_db_cleanup = now
