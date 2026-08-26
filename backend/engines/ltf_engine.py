@@ -206,6 +206,18 @@ class LTFEngine:
                 await state_store.set_d2_signal(coin, None)
                 continue
 
+            # EP drift check — if market moved far from entry, signal is invalid
+            candles = market_data.get_candles(coin, "15M")
+            if candles and sig.entry > 0:
+                last_candle = candles[-1]
+                current_price = (last_candle["high"] + last_candle["low"]) / 2
+                drift_pct = abs(current_price - sig.entry) / sig.entry * 100
+                if drift_pct > 2.0:
+                    logger.info(f"[ltf] DRIFT {coin}: EP={sig.entry:.6f} "
+                                f"market={current_price:.6f} drift={drift_pct:.1f}% — invalidating")
+                    await state_store.set_d2_signal(coin, None)
+                    continue
+
             # Revalidate at checkpoints
             if _should_revalidate(sig):
                 logger.info(f"[ltf] [revalidate] {coin} at {_age_minutes(sig):.0f}min...")
@@ -233,16 +245,16 @@ class LTFEngine:
         reval_awaitables = []
         failed_coins = []
 
-        for coin in scan_targets:
-            # Skip if already have a D2 signal
-            if state_store.get_d2_signal(coin):
-                continue
-            # Skip if recently scanned
-            if _was_recently_scanned(coin):
-                continue
-            # Pipeline handles ATR/range/quality gates internally — no pre-filters
-
-            scan_tasks.append(coin)
+        # === PASS 2: Scan ALL symbols for 15M entry (no cooldown gates) ===
+        # Previously: Gate 1 skipped coins with existing signals, Gate 2 skipped
+        # recently-scanned coins. Both caused coins to accumulate as "no signal"
+        # for multiple cycles. Now: every coin is always a candidate.
+        # Coins with valid signals get re-scanned to catch market drift and
+        # broken setups. Coins with no signal get fresh scans every cycle.
+        BATCH_SIZE = 50
+        new_signals = []
+        scan_tasks = list(scan_targets)  # ALL coins, no gates
+        failed_coins = []
 
         logger.debug(f"[ltf] Batch: {len(scan_tasks)} candidates to scan in "
                      f"{(len(scan_tasks) + BATCH_SIZE - 1) // BATCH_SIZE} batches of {BATCH_SIZE}")
@@ -257,6 +269,16 @@ class LTFEngine:
                     logger.warning(f"[ltf] Error {coin}: {e}")
                     return None
 
+        async def _scan_with_retry(coin, max_retries=2):
+            """Scan with up to max_retries attempts on failure."""
+            for attempt in range(max_retries + 1):
+                result = await _scan_with_limit(coin)
+                if result is not None:
+                    return result, attempt
+                if attempt < max_retries:
+                    await asyncio.sleep(2.0)  # brief backoff before retry
+            return None, max_retries
+
         # Scan + publish in batches for incremental data_layer updates
         total_batches = (len(scan_tasks) + BATCH_SIZE - 1) // BATCH_SIZE
         for batch_idx in range(total_batches):
@@ -267,15 +289,19 @@ class LTFEngine:
             logger.debug(f"[ltf] Scanning batch {batch_idx + 1}/{total_batches}: "
                          f"coins {batch_start + 1}-{batch_end}")
 
-            results = await asyncio.gather(
-                *[_scan_with_limit(c) for c in batch],
+            # Scan with retry
+            scan_results = await asyncio.gather(
+                *[_scan_with_retry(c) for c in batch],
             )
 
             batch_published = 0
-            for coin, result in zip(batch, results):
+            batch_retried = 0
+            for coin, (result, retry_count) in zip(batch, scan_results):
                 if isinstance(result, Exception) or not result:
                     failed_coins.append(coin)
                     _mark_scanned(coin)
+                    if retry_count > 0:
+                        batch_retried += 1
                     continue
 
                 # scan_entry returns raw dict — wrap in LTFSignal
@@ -284,8 +310,11 @@ class LTFEngine:
                 new_signals.append(ltf_sig)
                 _mark_scanned(coin)
                 batch_published += 1
+                if retry_count > 0:
+                    batch_retried += 1
 
-            logger.debug(f"[ltf] Batch {batch_idx + 1}: published {batch_published}/{len(batch)} signals")
+            logger.debug(f"[ltf] Batch {batch_idx + 1}: published {batch_published}/{len(batch)} "
+                         f"signals ({batch_retried} after retry)")
 
         # Phase 11: No Silent Failures — propagate DEGRADED if any scans failed
         if failed_coins:

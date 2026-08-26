@@ -104,6 +104,7 @@
       <div class="obs-tabs">
         <button class="obs-tab active" data-tab="logs" onclick="switchObsTab('logs')">&#128203; Logs</button>
         <button class="obs-tab" data-tab="health" onclick="switchObsTab('health')">&#128138; Health</button>
+        <button class="obs-tab" data-tab="inspector" onclick="switchObsTab('inspector')">&#128270; Inspector</button>
       </div>
 
       <!-- LOGS TAB -->
@@ -137,6 +138,13 @@
       <div class="obs-tab-panel" id="tab-health" style="display:none;">
         <div class="health-grid" id="healthGrid">
           <div class="obs-log-loading">Loading health data...</div>
+        </div>
+      </div>
+
+      <!-- INSPECTOR TAB -->
+      <div class="obs-tab-panel" id="tab-inspector" style="display:none;">
+        <div class="inspector-grid" id="inspectorGrid">
+          <div class="obs-log-loading">Loading inspector data...</div>
         </div>
       </div>
     </div>

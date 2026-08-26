@@ -142,7 +142,9 @@ function buildCard(s) {
   const evPct = s.expected_value_pct ?? 0;
   const evColor = evPct >= 1 ? '#22c55e' : evPct >= 0 ? '#f59e0b' : '#ef4444';
 
-  return `<div class="card${isExpanded ? ' card-expanded' : ''}" id="card-${s.signal_id}"
+  const isStale = freshness === 'STALE';
+
+  return `<div class="card${isExpanded ? ' card-expanded' : ''}${isStale ? ' card-stale' : ''}" id="card-${s.signal_id}"
               data-signal-type="${signalType}" data-freshness="${freshness}" data-direction="${dir}">
     <!-- HEADER ROW -->
     <div class="card-header" onclick="toggleExpand('${s.signal_id}')">
@@ -892,17 +894,20 @@ function switchObsTab(tab) {
 
   if (tab === 'logs') loadLogs();
   if (tab === 'health') loadHealthDetail();
+  if (tab === 'inspector') loadInspector();
 }
 
 function startObsRefresh() {
   stopObsRefresh();
   logRefreshTimer = setInterval(() => { if (obsTab === 'logs') loadLogs(false); }, 5000);
   healthRefreshTimer = setInterval(() => { if (obsTab === 'health') loadHealthDetail(false); }, 3000);
+  inspectorRefreshTimer = setInterval(() => { if (obsTab === 'inspector') loadInspector(false); }, 5000);
 }
 
 function stopObsRefresh() {
   if (logRefreshTimer) { clearInterval(logRefreshTimer); logRefreshTimer = null; }
   if (healthRefreshTimer) { clearInterval(healthRefreshTimer); healthRefreshTimer = null; }
+  if (inspectorRefreshTimer) { clearInterval(inspectorRefreshTimer); inspectorRefreshTimer = null; }
 }
 
 async function loadLogs(scroll = true) {
@@ -1063,7 +1068,85 @@ async function loadHealthDetail(smooth = true) {
   }
 }
 
-// ── Leverage Calculator ──────────────────────────────────────────────
+// ── Inspector ────────────────────────────────────────────────────────
+const STATUS_COLORS = { OK: '#22c55e', HEALTHY: '#22c55e', WARNING: '#f59e0b', DEGRADED: '#ef4444', STALE: '#f97316' };
+
+async function loadInspector(smooth = true) {
+  const grid = document.getElementById('inspectorGrid');
+  if (!grid) return;
+  try {
+    const resp = await fetch('/api/inspector');
+    const data = await resp.json();
+
+    if (data.status === 'starting' || !data.d1) {
+      grid.innerHTML = '<div class="obs-log-loading">Inspector starting — first cycle in progress...</div>';
+      return;
+    }
+
+    grid.innerHTML = renderInspector(data);
+  } catch (e) {
+    grid.innerHTML = '<div class="obs-log-loading">Failed to load inspector data</div>';
+  }
+}
+
+function renderInspector(data) {
+  const overallColor = STATUS_COLORS[data.overall] || '#6b7280';
+
+  let html = `<div class="inspector-header">
+    <div class="inspector-overall" style="color:${overallColor}">Overall: ${data.overall}</div>
+    <div class="inspector-ts">${data.timestamp || '—'}</div>
+  </div>
+  <div class="inspector-cards">
+    <div class="inspector-card ${data.d1.status}">
+      <div class="ic-header"><span class="ic-title">&#128202; D1 (4H Scanner)</span><span class="ic-status" style="color:${STATUS_COLORS[data.d1.status]}">${data.d1.status}</span></div>
+      <div class="ic-rows">
+        <div class="ic-row"><span>Coverage</span><span>${data.d1.coverage_pct}% (${data.d1.coins_covered}/${data.d1.coins_total})</span></div>
+        <div class="ic-row"><span>Scan Age</span><span>${fmtAgeShort(data.d1.scan_age_sec)}</span></div>
+        <div class="ic-row"><span>Engine Status</span><span>${data.d1.engine_status}</span></div>
+      </div>
+      ${data.d1.issues.length ? `<div class="ic-issues">${data.d1.issues.map(i => '<span class="ic-issue">⚠ ' + i + '</span>').join('')}</div>` : ''}
+    </div>
+    <div class="inspector-card ${data.d2.status}">
+      <div class="ic-header"><span class="ic-title">&#127919; D2 (15M LTF)</span><span class="ic-status" style="color:${STATUS_COLORS[data.d2.status]}">${data.d2.status}</span></div>
+      <div class="ic-rows">
+        <div class="ic-row"><span>Signals</span><span>${data.d2.signal_count} (avg age ${data.d2.avg_age_min}m)</span></div>
+        <div class="ic-row"><span>No Signal</span><span class="${data.d2.no_signal_count > 50 ? 'text-amber' : ''}">${data.d2.no_signal_count} coins</span></div>
+        <div class="ic-row"><span>Stale</span><span>${data.d2.stale_count} (${data.d2.stale_pct}%)</span></div>
+        <div class="ic-row"><span>EP Drift</span><span class="${data.d2.drift_count > 0 ? 'text-red' : ''}">${data.d2.drift_count} signals</span></div>
+        <div class="ic-row"><span>Engine</span><span>${data.d2.engine_status}</span></div>
+      </div>
+      ${data.d2.issues.length ? `<div class="ic-issues">${data.d2.issues.map(i => '<span class="ic-issue">⚠ ' + i + '</span>').join('')}</div>` : ''}
+    </div>
+    <div class="inspector-card ${data.d3.status}">
+      <div class="ic-header"><span class="ic-title">&#128170; D3 (Fusion)</span><span class="ic-status" style="color:${STATUS_COLORS[data.d3.status]}">${data.d3.status}</span></div>
+      <div class="ic-rows">
+        <div class="ic-row"><span>Decisions</span><span>${data.d3.decision_count}</span></div>
+        <div class="ic-row"><span>Stale Decisions</span><span class="${data.d3.stale_decisions > 0 ? 'text-amber' : ''}">${data.d3.stale_decisions}</span></div>
+        <div class="ic-row"><span>Conflicts (E)</span><span>${data.d3.conflict_count}</span></div>
+      </div>
+      ${data.d3.issues.length ? `<div class="ic-issues">${data.d3.issues.map(i => '<span class="ic-issue">⚠ ' + i + '</span>').join('')}</div>` : ''}
+    </div>
+    <div class="inspector-card ${data.datalayer.status}">
+      <div class="ic-header"><span class="ic-title">&#128190; Data Layer</span><span class="ic-status" style="color:${STATUS_COLORS[data.datalayer.status]}">${data.datalayer.status}</span></div>
+      <div class="ic-rows">
+        <div class="ic-row"><span>D1 Tiers</span><span>${data.datalayer.d1_tier_count}</span></div>
+        <div class="ic-row"><span>D2 Signals</span><span>${data.datalayer.d2_signal_count}</span></div>
+        <div class="ic-row"><span>Orphan D1</span><span class="${data.datalayer.orphan_d1_count > 0 ? 'text-amber' : ''}">${data.datalayer.orphan_d1_count}</span></div>
+        <div class="ic-row"><span>Orphan D2</span><span class="${data.datalayer.orphan_d2_count > 0 ? 'text-amber' : ''}">${data.datalayer.orphan_d2_count}</span></div>
+      </div>
+      ${data.datalayer.issues.length ? `<div class="ic-issues">${data.datalayer.issues.map(i => '<span class="ic-issue">⚠ ' + i + '</span>').join('')}</div>` : ''}
+    </div>
+  </div>
+  ${data.actions.length ? `<div class="inspector-actions"><div class="ic-action-title">&#128736; Auto-remediation (${data.actions.length} actions this cycle)</div>${data.actions.slice(0, 5).map(a => '<div class="ic-action">&#10003; ' + a + '</div>').join('')}</div>` : ''}
+  <div class="inspector-footer">Interval: ${data.cycle_interval_sec}s</div>`;
+  return html;
+}
+
+function fmtAgeShort(sec) {
+  if (sec < 60) return sec + 's';
+  if (sec < 3600) return Math.floor(sec / 60) + 'm';
+  return (sec / 3600).toFixed(1) + 'h';
+}
 let levPanelOpen = false;
 
 let currentRisk = 0;

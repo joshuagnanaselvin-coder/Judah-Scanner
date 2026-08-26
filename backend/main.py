@@ -34,6 +34,7 @@ from backend.state_store import state_store
 from backend.data_layer import data_layer
 from backend.engines.ltf_engine import ltf_engine
 from backend.engines.signal_fusion import fusion_engine
+from backend import inspector as inspector_module
 from backend import ws_hub
 from backend import db
 from backend.auth import (
@@ -694,11 +695,28 @@ async def health():
             "ready": ready,
             "ws_connected": market_data.ws_connected if hasattr(market_data, 'ws_connected') else False,
             "signal_count": len(signal_store.get_all()),
-            "decision_count": len(state_store.d3_decisions),
+            "decision_count": len(state_store.get_all_decisions()),
             "stats": state_store.get_stats(),
         }
     except Exception as e:
         logger.error(f"[api/health] Error: {e}")
+        return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
+
+
+@app.get("/api/inspector")
+async def inspector_report():
+    """Inspector health report — latest audit results from background Inspector."""
+    try:
+        report = getattr(state_store, '_inspector_report', None)
+        if report is None:
+            return {
+                "status": "starting",
+                "message": "Inspector hasn't completed first cycle yet",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+        return report
+    except Exception as e:
+        logger.error(f"[api/inspector] Error: {e}")
         return JSONResponse(status_code=500, content={"status": "error", "detail": str(e)})
 
 
@@ -778,6 +796,13 @@ async def _bootstrap():
         logger.info("[server] D1→D3 and D2→D3 event channels wired")
     except Exception as e:
         logger.error(f"[server] D3 Fusion Engine failed to start: {e}")
+
+    # === STEP 5: Start Inspector (background audit + self-healing) ===
+    try:
+        await inspector_module.inspector.start(pairs)
+        logger.info("[server] Inspector started — auditing D1/D2/D3/DataLayer every 60s")
+    except Exception as e:
+        logger.error(f"[server] Inspector failed to start: {e}")
 
     logger.info(f" Judah Scanner running — {len(pairs)} pairs on {BINANCE_REST_BASE}")
 
