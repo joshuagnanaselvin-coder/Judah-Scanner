@@ -14,7 +14,7 @@ let nextD1Scan = 0;
 let nextD2Scan = 0;
 let timerInterval = null;
 let d1TimerFmt = 'min';
-let d2TimerFmt = 'sec';
+let d2TimerFmt = 'min';
 
 // ── Helpers ────────────────────────────────────────────────────────
 function getCookie(name) {
@@ -60,7 +60,7 @@ function fmtAge(ts) {
   const s = Math.floor((Date.now() - ms) / 1000);
   if (s < 5) return 'LIVE';
   if (s < 30) return 'NEW';
-  if (s < 120) return Math.floor(s / 15) * 15 + 's';
+  if (s < 120) return Math.ceil(s / 60) + 'm';
   return Math.floor(s / 60) + 'm';
 }
 
@@ -537,11 +537,9 @@ function formatCountdown(ms, fmt) {
   if (fmt === 'sec') return totalSec + 's';
   if (fmt === 'min') return Math.ceil(totalSec / 60) + 'm';
   if (fmt === 'hm') return Math.floor(totalSec / 3600) + 'h ' + Math.floor((totalSec % 3600) / 60) + 'm';
-  // auto
-  if (totalSec < 60) return totalSec + 's';
-  const m = Math.floor(totalSec / 60);
-  const s = totalSec % 60;
-  if (m < 60) return m + 'm ' + s + 's';
+  // auto: always min-based
+  const m = Math.ceil(totalSec / 60);
+  if (m < 60) return m + 'm';
   const h = Math.floor(m / 60);
   return h + 'h ' + (m % 60) + 'm';
 }
@@ -1138,14 +1136,14 @@ function renderInspector(data) {
     </div>
   </div>
   ${data.actions.length ? `<div class="inspector-actions"><div class="ic-action-title">&#128736; Auto-remediation (${data.actions.length} actions this cycle)</div>${data.actions.slice(0, 5).map(a => '<div class="ic-action">&#10003; ' + a + '</div>').join('')}</div>` : ''}
-  <div class="inspector-footer">Interval: ${data.cycle_interval_sec}s</div>`;
+  <div class="inspector-footer">Interval: ${(data.cycle_interval_sec / 60).toFixed(0)}m</div>`;
   return html;
 }
 
 function fmtAgeShort(sec) {
-  if (sec < 60) return sec + 's';
-  if (sec < 3600) return Math.floor(sec / 60) + 'm';
-  return (sec / 3600).toFixed(1) + 'h';
+  const m = Math.ceil(sec / 60);
+  if (m < 60) return m + 'm';
+  return (m / 60).toFixed(1) + 'h';
 }
 let levPanelOpen = false;
 

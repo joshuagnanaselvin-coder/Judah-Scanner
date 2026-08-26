@@ -40,7 +40,7 @@ def _audit_d1(symbols: list) -> dict:
     coverage_pct = (covered / total * 100) if total > 0 else 0
 
     d1_status = state_store.get_d1_status()
-    last_scan_ts = state_store._get("last_d1_scan", 0)
+    last_scan_ts = state_store.last_d1_scan
     scan_age_sec = 0
     if last_scan_ts:
         scan_age_sec = datetime.now(timezone.utc).timestamp() - last_scan_ts
