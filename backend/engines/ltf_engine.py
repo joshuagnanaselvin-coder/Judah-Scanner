@@ -213,7 +213,7 @@ class LTFEngine:
             candles = market_data.get_candles(coin, "15M")
             if candles and sig.entry > 0:
                 last_candle = candles[-1]
-                current_price = (last_candle["high"] + last_candle["low"]) / 2
+                current_price = (last_candle.high + last_candle.low) / 2
                 drift_pct = abs(current_price - sig.entry) / sig.entry * 100
                 if drift_pct > 2.0:
                     logger.info(f"[ltf] DRIFT {coin}: EP={sig.entry:.6f} "

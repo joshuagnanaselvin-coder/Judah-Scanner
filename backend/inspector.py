@@ -92,7 +92,7 @@ def _audit_d2(symbols: list) -> dict:
             candles = market_data.get_candles(coin, "15M")
             if candles:
                 last = candles[-1]
-                mid_price = (last["high"] + last["low"]) / 2
+                mid_price = (last.high + last.low) / 2
                 drift = abs(mid_price - sig.entry) / sig.entry * 100
                 if drift > _D2_EP_DRIFT_PCT:
                     drift_count += 1

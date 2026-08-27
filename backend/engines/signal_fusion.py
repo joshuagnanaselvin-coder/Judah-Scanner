@@ -424,6 +424,7 @@ class FusionEngine:
                 round(float(pkg.get("sl", 0) or 0), 6),
                 round(float(pkg.get("tp1", 0) or 0), 6),
                 round(float(pkg.get("tp2", 0) or 0), 6),
+                pkg.get("_freshness", pkg.get("freshness", "HOT")),
             )
             current_cache[coin] = key
             prev_key = self._prev_signal_cache.get(coin)
