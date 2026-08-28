@@ -132,9 +132,9 @@ class DataLayer:
                 broken_count += 1
                 continue
 
-            # Freshness scoring — set on signal object so D3/frontend can filter
+            # Freshness scoring — D2 uses absolute min thresholds (not TTL %)
             age_min = (now - born_ts) / 60
-            sig._freshness = self._freshness_label(age_min, D2_SIGNAL_TTL_MINUTES)
+            sig._freshness = self._freshness_label_d2(age_min)
             sig.freshness = sig._freshness
             signals[coin] = sig
 
@@ -196,7 +196,7 @@ class DataLayer:
         return False
 
     def _freshness_label(self, age_min: float, ttl_min: float) -> str:
-        """Assign freshness label based on age relative to TTL.
+        """Assign freshness label based on age relative to TTL (D1 / percentage-based).
 
         HOT     : < 25% of TTL age → very recent, high confidence
         WARM    : 25-50% of TTL age → recent, normal confidence
@@ -209,6 +209,26 @@ class DataLayer:
         elif ratio < 0.50:
             return "WARM"
         elif ratio < 0.75:
+            return "COOL"
+        else:
+            return "STALE"
+
+    def _freshness_label_d2(self, age_min: float) -> str:
+        """Assign freshness label using absolute minute thresholds (D2 only).
+
+        D2 cycles every 15 min. Percentage-based TTL would mark every signal
+        STALE by the next cycle. Absolute thresholds keep cards bright for
+        multiple cycles.
+        """
+        from backend.config import (
+            D2_FRESHNESS_HOT_MIN, D2_FRESHNESS_WARM_MIN,
+            D2_FRESHNESS_COOL_MIN, D2_FRESHNESS_STALE_MIN,
+        )
+        if age_min < D2_FRESHNESS_HOT_MIN:
+            return "HOT"
+        elif age_min < D2_FRESHNESS_WARM_MIN:
+            return "WARM"
+        elif age_min < D2_FRESHNESS_COOL_MIN:
             return "COOL"
         else:
             return "STALE"

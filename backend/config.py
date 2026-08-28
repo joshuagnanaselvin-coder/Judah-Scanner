@@ -191,9 +191,16 @@ STALE_SCORE_FACTOR = 0.75
 
 # === DIMENSION 2 (LTF Scanner) ===
 D2_TIMEFRAME = "15M"
-D2_SIGNAL_TTL_MINUTES = 30          # Signals survive 2 full cycles before STALE
+D2_SIGNAL_TTL_MINUTES = 55          # Hard expiry — matches STALE threshold (50m) + buffer
 D2_SCAN_INTERVAL_SECONDS = 900   # D2: 15 minutes fallback (candle-close is primary trigger)
 MAX_D2_SIGNALS = None  # No cap — store all D2 signals
+
+# D2 freshness labels with absolute minute thresholds (not TTL %).
+# Cards dim (STALE) only after signal reaches STALE_AFTER_MIN minutes.
+D2_FRESHNESS_HOT_MIN = 16           # 0-16 min → HOT (green badge)
+D2_FRESHNESS_WARM_MIN = 30          # 16-30 min → WARM (blue badge)
+D2_FRESHNESS_COOL_MIN = 45          # 30-45 min → COOL (amber badge)
+D2_FRESHNESS_STALE_MIN = 50         # 50+ min → STALE (card dimmed)
 
 # === D3 FUSION THRESHOLDS ===
 # Used by signal_fusion.classify_signal_type for D1/D2 classification.
