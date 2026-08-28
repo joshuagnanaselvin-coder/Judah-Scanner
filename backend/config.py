@@ -191,7 +191,7 @@ STALE_SCORE_FACTOR = 0.75
 
 # === DIMENSION 2 (LTF Scanner) ===
 D2_TIMEFRAME = "15M"
-D2_SIGNAL_TTL_MINUTES = 15
+D2_SIGNAL_TTL_MINUTES = 30          # Signals survive 2 full cycles before STALE
 D2_SCAN_INTERVAL_SECONDS = 900   # D2: 15 minutes fallback (candle-close is primary trigger)
 MAX_D2_SIGNALS = None  # No cap — store all D2 signals
 

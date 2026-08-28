@@ -103,8 +103,9 @@ class DataLayer:
     def _get_valid_d2_signals(self) -> dict:
         """Return D2 signals that pass ALL quality checks.
 
-        D2 TTL: 15M (matches candle duration). This ensures only
-        the latest 15M signals are present — stale D2 signals are dropped.
+        D2 TTL: 30M (survives 2 cycles so signals aren't STALE on first display).
+        The candle-close interval is 15M — TTL is extended to avoid premature
+        STALE classification that dims frontend cards.
         """
         now = datetime.now(timezone.utc).timestamp()
         cutoff = now - (D2_SIGNAL_TTL_MINUTES * 60)
@@ -216,7 +217,7 @@ class DataLayer:
         """Remove stale/orphaned data from all layers.
 
         - Expired D1 tiers (past 4H TTL)
-        - Expired D2 signals (past 15M TTL)
+        - Expired D2 signals (past 30M TTL)
         - D2 signals for coins no longer in symbol list
         - D3 decisions for coins with no matching D2 signal
         """
