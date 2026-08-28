@@ -222,34 +222,23 @@ def _audit_datalayer(symbols: list) -> dict:
 # ── Auto-Remediation ────────────────────────────────────────────────
 
 async def _remediate(d2_audit: dict, symbols: list) -> list:
-    """Fix trivial issues automatically. Returns list of actions taken."""
-    actions = []
+    """READ-ONLY audit — Inspector no longer auto-rescans or auto-invalidates.
 
-    # Force-rescan coins with no D2 signal that have been waiting
-    no_signal = d2_audit.get("no_signal_coins_sample", [])
-    if no_signal:
-        from backend.engines.ltf_engine import scan_entry, _mark_scanned
-        for coin in no_signal[:50]:  # cap to avoid overload
-            try:
-                result = await asyncio.wait_for(scan_entry(coin), timeout=15)
-                if result:
-                    from backend.engines.ltf_scanner import LTFSignal
-                    sig = LTFSignal(coin, result)
-                    await state_store.set_d2_signal(coin, sig)
-                    _mark_scanned(coin)
-                    actions.append(f"rescanned {coin} (no signal remediated)")
-            except asyncio.TimeoutError:
-                pass
-            except Exception as e:
-                logger.debug(f"[inspector] rescanned {coin} failed: {e}")
+    Why this is now a no-op:
+      1. PASS 2 (ltf_engine.py) already scans every coin every cycle and
+         updates existing signals in-place (preserves signal_id). The
+         Inspector doing its own rescan was creating a SECOND LTFSignal
+         for the same coin → duplicate cards and reset born_at.
+      2. PASS 1 (ltf_engine.py:218-224) already invalidates signals with
+         EP drift > 2%. The Inspector's parallel invalidation was racing
+         with PASS 1's update path, causing cards to flicker.
+      3. The "no signal" list is ALWAYS non-zero because D2 REJECTS many
+         coins by design — that's not a bug to fix, it's normal.
 
-    # Invalidate signals with EP drift > 2%
-    for drift_info in d2_audit.get("drift_details", []):
-        coin = drift_info["coin"]
-        await state_store.set_d2_signal(coin, None)
-        actions.append(f"invalidated {coin} (drift {drift_info['drift_pct']}%)")
-
-    return actions
+    The Inspector still audits and reports issues; this function is kept
+    so the actions=[...] log line still appears (now always empty).
+    """
+    return []
 
 
 # ── Main Inspector Loop ─────────────────────────────────────────────
