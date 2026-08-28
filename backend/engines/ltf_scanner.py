@@ -34,13 +34,14 @@ class LTFSignal:
         "score_history", "raw_signal",
         "nascent_move", "entry_precision", "flow_score",
         "momentum_score", "_freshness",
+        "entry_type",
     )
 
     def __init__(self, coin: str, raw: dict):
         self.signal_id = raw.get("signal_id") or str(uuid.uuid4())[:12]
         self.coin = coin
         self.timeframe = "15M"
-        self.direction = raw.get("direction", "BULLISH")
+        self.direction = raw.get("direction", "NEUTRAL")
         self.score = float(raw.get("composite_score", 0))
         self.tier = raw.get("tier", "WATCH")
         self.entry = float(raw.get("entry", 0))
@@ -60,6 +61,7 @@ class LTFSignal:
         self.entry_precision = float(raw.get("entry_precision", 0.0))
         self.flow_score = float(raw.get("flow_score", 0.0))
         self.momentum_score = float(raw.get("momentum_score", 0.0))
+        self.entry_type = raw.get("entry_type", "")
 
     def update(self, raw: dict):
         self.score = float(raw.get("composite_score", 0))
@@ -78,6 +80,7 @@ class LTFSignal:
         self.entry_precision = float(raw.get("entry_precision", self.entry_precision))
         self.flow_score = float(raw.get("flow_score", self.flow_score))
         self.momentum_score = float(raw.get("momentum_score", self.momentum_score))
+        self.entry_type = raw.get("entry_type", self.entry_type)
         self._update_freshness()
 
     def _update_freshness(self):
@@ -128,6 +131,7 @@ class LTFSignal:
             "entry_precision": self.entry_precision,
             "flow_score": self.flow_score,
             "momentum_score": self.momentum_score,
+            "entry_type": self.entry_type,
         }
 
 

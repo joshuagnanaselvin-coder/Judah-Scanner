@@ -407,6 +407,7 @@ body {
 .tag-pd { color: #c084fc; border-color: #c084fc33; }
 .tag-scenario { color: #f97316; border-color: #f9731633; }
 .tag-disp { color: #fb923c; border-color: #fb923c33; }
+.tag-et { color: #3b82f6; border-color: #3b82f633; font-weight: 600; }
 .tag-nascent { background: #eab30822; color: #eab308; border-color: #eab30844; animation: livePulse 1.5s infinite; }
 
 /* TF Breakdown */

@@ -723,7 +723,7 @@ class FusionEngine:
             "risk_decision_id": "", # populated after risk_authority.review()
             "coin": coin,
             "timeframe": "15M",
-            "direction": getattr(d2, 'direction', 'BULLISH'),
+            "direction": getattr(d2, 'direction', 'NEUTRAL'),
             # Signal Type (new Decision Layer)
             "signal_type": sig_type or "—",
             "signal_type_name": type_info.get("name", "—"),
@@ -768,6 +768,8 @@ class FusionEngine:
             # Nascent move flag
             "nascent_move": nascent_move,
             "entry_precision": entry_precision,
+            # Entry model (entry_type)
+            "entry_type": d2_structure.get("entry_type", "") or getattr(d2, 'entry_type', ''),
             # D2 sub-scores (for frontend sorting and breakdown)
             "momentum_score": round(float(getattr(d2, 'momentum_score', 0)), 1),
             "flow_score": round(float(getattr(d2, 'flow_score', 0)), 1),

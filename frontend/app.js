@@ -111,8 +111,10 @@ function buildCard(s) {
 
   // D2 structure
   const d2s = s.d2_structure || {};
+  const et = s.entry_type || (d2s.entry_type || '');
   const d2Tags = [
     d2s.scenario ? `<span class="tag tag-scenario">${d2s.scenario}</span>` : '',
+    et ? `<span class="tag tag-et">${et.replace('CRT_', '')}</span>` : '',
     d2s.msb_type ? `<span class="tag tag-msb">MSB ${d2s.msb_type.toUpperCase()}</span>` : '',
     d2s.ob_type ? `<span class="tag tag-ob">OB ${d2s.ob_type.replace(/_OB$/, '')} ${zoneLabel(d2s.ob_zone)}</span>` : '',
     d2s.fvg_type ? `<span class="tag tag-fvg">FVG ${d2s.fvg_type}</span>` : '',

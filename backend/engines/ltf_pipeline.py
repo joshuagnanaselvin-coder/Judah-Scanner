@@ -256,6 +256,7 @@ async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict:
     # D3 reads these at the top level of raw_signal (raw_signal.ob, etc.)
     # AND under raw_signal.structure for organized access.
     _d2_structure = {}
+    _d2_structure["entry_type"] = path if path != "NONE" else ""
     _d2_ob = None
     _d2_msb = None
     _d2_fvg = None
@@ -313,7 +314,7 @@ async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict:
 
     nascent = detect_nascent_move(
         candles,
-        (crt or {}).get("displacement", {}).get("crt_trade_direction", "BULLISH"),
+        (crt or {}).get("displacement", {}).get("crt_trade_direction", "NEUTRAL"),
         ""
     ) if candles else {"nascent_move": False, "conditions_met": 0, "partial": False}
     nascent_score = _score_nascent_move(nascent)
@@ -335,7 +336,7 @@ async def scan_ltf_pipeline(symbol: str, timeframe: str = "15M") -> dict:
         direction = crt["displacement"]["crt_trade_direction"]
     elif smc:
         msb = smc.get("msb", {})
-        direction = (msb.get("type", "BULLISH").upper() if msb.get("type") else "BULLISH")
+        direction = (msb.get("type", "NEUTRAL").upper() if msb.get("type") else "NEUTRAL")
     else:
         direction = "NEUTRAL"
 

@@ -179,6 +179,8 @@ class LTFEngine:
         """
         refreshed = []
         revalidated = []
+        updated_signals = []
+        existing_signals_cache = {}  # coin -> LTFSignal for in-place updates in PASS 2
 
         # Scan ALL symbols — D2 is independent
         scan_targets = self.symbols
@@ -238,15 +240,11 @@ class LTFEngine:
             # Light refresh — just update age/price
             refreshed.append(sig)
 
-        # === PASS 2: Scan for 15M entry (all coins regardless of D1) ===
-        # Incremental publish: scan in batches of 50, publish each batch immediately
-        # so D3 can fuse and frontend updates progressively instead of waiting for all 500.
-        BATCH_SIZE = 50
-        new_signals = []
-        scan_tasks = []
-        reval_tasks = []
-        reval_awaitables = []
-        failed_coins = []
+        # Build cache of surviving signals for PASS 2 in-place updates
+        all_d2_after_pass1 = state_store.get_all_d2_signals()
+        for coin, sig in all_d2_after_pass1.items():
+            if isinstance(sig, LTFSignal):
+                existing_signals_cache[coin] = sig
 
         # === PASS 2: Scan ALL symbols for 15M entry (no cooldown gates) ===
         # Previously: Gate 1 skipped coins with existing signals, Gate 2 skipped
@@ -307,10 +305,18 @@ class LTFEngine:
                         batch_retried += 1
                     continue
 
-                # scan_entry returns raw dict — wrap in LTFSignal
-                ltf_sig = LTFSignal(coin, result)
-                await state_store.set_d2_signal(coin, ltf_sig)
-                new_signals.append(ltf_sig)
+                # Update existing signal in-place (preserves signal_id,
+                # born_at, score_history — only refreshes structure/direction)
+                existing_sig = existing_signals_cache.get(coin)
+                if existing_sig:
+                    existing_sig.update(result)
+                    await state_store.set_d2_signal(coin, existing_sig)
+                    updated_signals.append(existing_sig)
+                else:
+                    # No existing signal — create fresh
+                    ltf_sig = LTFSignal(coin, result)
+                    await state_store.set_d2_signal(coin, ltf_sig)
+                    new_signals.append(ltf_sig)
                 _mark_scanned(coin)
                 batch_published += 1
                 if retry_count > 0:
@@ -356,7 +362,8 @@ class LTFEngine:
         if revalidated:
             for s in revalidated:
                 print(f"[ltf] [reval] {s.coin}: {s.tier} score={s.score:.1f} freshness={s.freshness}")
-        print(f"[ltf] {len(new_signals)} new, {len(refreshed)} refreshed, "
+        print(f"[ltf] {len(new_signals)} new, {len(updated_signals)} updated, "
+              f"{len(refreshed)} refreshed (pass-through), "
               f"{len(revalidated)} revalidated, "
               f"{d2_count_this_cycle} D2 signals, "
               f"{len(scan_tasks)} candidates scanned")
