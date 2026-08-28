@@ -44,7 +44,8 @@ class LTFEngine:
         self.running: bool = False
         self.scan_task = None
         self._scan_semaphore: asyncio.Semaphore | None = None
-        self._d3_notify = None  # Wired in main.py after fusion_engine starts
+        self._d3_notify = None   # Wired in main.py after fusion_engine starts
+        self._inspector_notify = None  # Wired in main.py to inspector.after_d2_cycle
 
     async def start(self, symbols: list):
         """Start D2 engine — 15M scanner, fully independent of D1."""
@@ -256,6 +257,7 @@ class LTFEngine:
         new_signals = []
         scan_tasks = list(scan_targets)  # ALL coins, no gates
         failed_coins = []
+        scanned_coins = set()  # every coin D2 attempted this cycle (for Inspector)
 
         logger.debug(f"[ltf] Batch: {len(scan_tasks)} candidates to scan in "
                      f"{(len(scan_tasks) + BATCH_SIZE - 1) // BATCH_SIZE} batches of {BATCH_SIZE}")
@@ -298,6 +300,7 @@ class LTFEngine:
             batch_published = 0
             batch_retried = 0
             for coin, (result, retry_count) in zip(batch, scan_results):
+                scanned_coins.add(coin)  # track for Inspector gap detection
                 if isinstance(result, Exception) or not result:
                     failed_coins.append(coin)
                     _mark_scanned(coin)
@@ -352,6 +355,15 @@ class LTFEngine:
                 self._d3_notify()
             except Exception:
                 pass
+
+        # Notify Inspector — gap-fill any coins D2 missed in this cycle.
+        # Inspector only rescan missed coins, never creates duplicates (uses
+        # in-place .update() so signal_id and born_at are preserved).
+        if self._inspector_notify:
+            try:
+                await self._inspector_notify(scanned_coins, self.cycle_id)
+            except Exception:
+                logger.debug("[ltf] inspector notify failed")
 
         # Console output
         if new_signals:

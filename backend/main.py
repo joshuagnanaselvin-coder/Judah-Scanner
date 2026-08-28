@@ -797,12 +797,16 @@ async def _bootstrap():
     except Exception as e:
         logger.error(f"[server] D3 Fusion Engine failed to start: {e}")
 
-    # === STEP 5: Start Inspector (background audit + self-healing) ===
+    # === STEP 5: Wire Inspector to D1/D2 (event-driven, not timer-based) ===
+    # Inspector now has no self-timer. D2 calls inspector.after_d2_cycle()
+    # after each 15M scan, D1 calls inspector.after_d1_cycle() after each 4H scan.
     try:
-        await inspector_module.inspector.start(pairs)
-        logger.info("[server] Inspector started — auditing D1/D2/D3/DataLayer every 60s")
+        inspector_module.inspector.set_symbols(pairs)
+        ltf_engine._inspector_notify = inspector_module.inspector.after_d2_cycle
+        scanner._inspector_notify = inspector_module.inspector.after_d1_cycle
+        logger.info("[server] Inspector wired to D2 (after_d2_cycle) and D1 (after_d1_cycle)")
     except Exception as e:
-        logger.error(f"[server] Inspector failed to start: {e}")
+        logger.error(f"[server] Inspector wiring failed: {e}")
 
     logger.info(f" Judah Scanner running — {len(pairs)} pairs on {BINANCE_REST_BASE}")
 

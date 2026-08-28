@@ -45,7 +45,8 @@ class Scanner:
         self.on_tier_change = None
         self._prev_tiers: dict[str, str] = {}
         self._scan_semaphore: asyncio.Semaphore | None = None
-        self._d3_notify = None  # Wired in main.py after fusion_engine starts
+        self._d3_notify = None   # Wired in main.py after fusion_engine starts
+        self._inspector_notify = None  # Wired in main.py to inspector.after_d1_cycle
 
     async def start(self, symbols: list):
         self.symbols = symbols
@@ -342,6 +343,13 @@ class Scanner:
             if self._d3_notify and full_cycle:
                 try:
                     self._d3_notify()
+                except Exception:
+                    pass
+
+            # Notify Inspector — gap-fill any coins D1 missed this cycle.
+            if self._inspector_notify and full_cycle:
+                try:
+                    await self._inspector_notify(coins_scanned_this_cycle, self.cycle_id)
                 except Exception:
                     pass
 
