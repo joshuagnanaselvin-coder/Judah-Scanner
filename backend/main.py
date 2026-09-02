@@ -26,6 +26,45 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPExcept
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
+
+# ── Cached frontend assets (prevent file descriptor leak on every request) ──
+# These files only change on container redeployment, so caching for the process
+# lifetime is safe and eliminates the file descriptor leak on the dashboard handler.
+
+_INDEX_HTML_CACHE: str | None = None
+_LOGIN_HTML_CACHE: str | None = None
+_ADMIN_HTML_CACHE: str | None = None
+
+def _load_index_html() -> str:
+    global _INDEX_HTML_CACHE
+    if _INDEX_HTML_CACHE is None:
+        try:
+            with open(os.path.join(frontend_dir, "index.html"), encoding="utf-8") as f:
+                _INDEX_HTML_CACHE = f.read()
+        except FileNotFoundError:
+            _INDEX_HTML_CACHE = "<h1>Judah Scanner</h1><p>Frontend not found.</p>"
+    return _INDEX_HTML_CACHE
+
+def _load_login_html() -> str:
+    global _LOGIN_HTML_CACHE
+    if _LOGIN_HTML_CACHE is None:
+        try:
+            with open(os.path.join(frontend_dir, "login.html"), encoding="utf-8") as f:
+                _LOGIN_HTML_CACHE = f.read()
+        except FileNotFoundError:
+            _LOGIN_HTML_CACHE = "<h1>Login</h1><p>Login page not found.</p>"
+    return _LOGIN_HTML_CACHE
+
+def _load_admin_html() -> str:
+    global _ADMIN_HTML_CACHE
+    if _ADMIN_HTML_CACHE is None:
+        try:
+            with open(os.path.join(frontend_dir, "admin.html"), encoding="utf-8") as f:
+                _ADMIN_HTML_CACHE = f.read()
+        except FileNotFoundError:
+            _ADMIN_HTML_CACHE = "<h1>Admin Panel</h1><p>admin.html not found.</p>"
+    return _ADMIN_HTML_CACHE
+
 from backend.market_data import market_data
 from backend.scanner import scanner
 from backend.signal_store import signal_store
@@ -322,11 +361,7 @@ async def auth_deactivate_user(user_id: int, admin: dict = Depends(get_current_a
 @app.get("/login")
 async def login_page():
     """Serve login page."""
-    try:
-        with open(os.path.join(frontend_dir, "login.html"), encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
-    except FileNotFoundError:
-        return HTMLResponse(content="<h1>Login</h1><p>Login page not found.</p>")
+    return HTMLResponse(content=_load_login_html())
 
 
 @app.get("/admin")
@@ -339,12 +374,11 @@ async def admin_panel(request: Request):
         user = await validate_token(token)
         if not user or user.get("role") != "admin":
             raise HTTPException(status_code=403)
-        with open(os.path.join(frontend_dir, "admin.html"), encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
+        return HTMLResponse(content=_load_admin_html())
     except HTTPException:
         return HTMLResponse(content='<script>window.location.href="/login"</script>', status_code=200)
     except FileNotFoundError:
-        return HTMLResponse(content="<h1>Admin Panel</h1><p>admin.html not found.</p>")
+        return HTMLResponse(content=_load_admin_html())
 
 @app.get("/")
 async def dashboard(request: Request):
@@ -356,12 +390,11 @@ async def dashboard(request: Request):
         user = await validate_token(token)
         if not user:
             raise HTTPException(status_code=401)
-        with open(os.path.join(frontend_dir, "index.html"), encoding="utf-8") as f:
-            return HTMLResponse(content=f.read())
+        return HTMLResponse(content=_load_index_html())
     except HTTPException:
         return HTMLResponse(content='<script>window.location.href="/login"</script>', status_code=200)
     except FileNotFoundError:
-        return HTMLResponse(content="<h1>Judah Scanner</h1><p>Frontend not found.</p>")
+        return HTMLResponse(content=_load_index_html())
 
 @app.get("/api/signals", dependencies=[Depends(get_current_user)])
 async def get_signals():

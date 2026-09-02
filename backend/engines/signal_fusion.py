@@ -89,7 +89,7 @@ def calculate_ev(win_rate: float, avg_win: float, avg_loss: float) -> float:
 def classify_signal_type(d1_tier: str, d1_score: float, d2_tier: str, d2_score: float,
                           d1_direction: str, d2_direction: str,
                           nascent_move: bool = False, entry_precision: float = 0.0) -> str:
-    """Decision Layer: classify signal into Type A/B/C/D/E or None.
+    """Decision Layer: classify signal into Type A/B/C/D/E/F.
 
     REJECTED D1 and D2 tiers are not blocked — they reach D3 and can produce
     Type B (D2-only LTF momentum plays) when the D2 signal is strong enough.
@@ -104,6 +104,8 @@ def classify_signal_type(d1_tier: str, d1_score: float, d2_tier: str, d2_score: 
     4. Type E: D1 approved AND D2 strong BUT opposing directions
     5. Type D: D1 >= D3_TYPE_D_D1_THRESHOLD AND D2 not aligned
     6. Type F: catch-all — any D2 signal that didn't match above (manual watch)
+
+    Always returns a signal type string (A/B/C/D/E/F). Never returns None.
     """
     from backend.config import (
         D3_D1_SNIPER_THRESHOLD, D3_D2_SNIPER_THRESHOLD,
@@ -172,11 +174,7 @@ def _persist_decision(coin: str, sig_type: str | None, package: dict) -> None:
             "d2_tier": package.get("d2_tier"),
             "d2_score": package.get("d2_score"),
         }
-        # Phase 7: Use get_running_loop() (deprecation-safe in Python 3.12+)
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         if loop.is_running():
             asyncio.create_task(db.insert_decision(row))
         else:
@@ -549,17 +547,20 @@ class FusionEngine:
                 "score": data.get("score", 0),
             }
 
-        # ── D1 4H Structure (from state_store — D1's only TF now) ────
-        # D1 is 4H only. Build minimal structure from state_store tier data.
-        # Detailed structure (OB, MSB, FVG) is available via /api/signals
-        # for the frontend; D3 uses this for alignment scoring.
+        # ── D1 4H Structure ─────────────────────────────────────────────
+        # D1 is 4H only. D3 does NOT receive D1's OB/MSB/FVG details
+        # directly — that data stays with D1's own output. Instead, D3
+        # aligns on D1 tier, score, direction, and timeframe breakdown
+        # (which are passed separately in the alignment scoring).
+        # For the detailed OB/MSB/FVG breakdown, use /api/signals (D1)
+        # or /api/fusion (D3) in the frontend inspector.
         d1_snap = state_store.get_d1_tier(coin)
         if d1_snap and d1_snap.get("tier") not in ("WATCH", "REJECTED"):
             d1_structure = {
                 "direction": d1_snap.get("direction", ""),
                 "tier": d1_snap.get("tier", "WATCH"),
                 "score": d1_snap.get("score", 0),
-                "premium_discount": "EQUILIBRIUM",
+                "premium_discount": "UNKNOWN",
                 "ob_zone": "UNKNOWN", "ob_type": "",
                 "ob_low": 0, "ob_high": 0, "ob_strength": 0,
                 "msb_type": "", "msb_level": 0, "msb_direction": "",

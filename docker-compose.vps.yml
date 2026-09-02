@@ -15,6 +15,10 @@ services:
       - PORT=8000
     volumes:
       - ./data:/app/data
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 30s
