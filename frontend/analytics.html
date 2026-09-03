@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0c1220">
+  <title>Judah — Analytics</title>
+  <link rel="stylesheet" href="/static/style.css?v=3">
+  <style>
+    .analytics-layout {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 8px;
+    }
+
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-sec);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin: 16px 0 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    /* Expectancy cards */
+    .expectancy-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .exp-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      text-align: center;
+    }
+    .exp-card .ec-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      margin-bottom: 4px;
+    }
+    .exp-card .ec-value {
+      font-size: 22px;
+      font-weight: 700;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .ec-value.green { color: var(--green); }
+    .ec-value.red { color: var(--red); }
+    .ec-value.amber { color: var(--amber); }
+    .ec-value.blue { color: var(--accent); }
+
+    /* Breakdown tables */
+    .breakdown-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    @media (max-width: 768px) {
+      .breakdown-grid { grid-template-columns: 1fr; }
+    }
+
+    .breakdown-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .breakdown-card .bc-header {
+      padding: 10px 14px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: var(--bg);
+    }
+    .breakdown-card table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .breakdown-card td {
+      padding: 7px 14px;
+      font-size: 12px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .breakdown-card td:first-child { color: var(--text-sec); }
+    .breakdown-card td:last-child {
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      text-align: right;
+    }
+    .breakdown-card tr:last-child td { border-bottom: none; }
+
+    /* Equity curve chart (SVG) */
+    .chart-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      margin-bottom: 16px;
+    }
+    .chart-card h3 {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      margin-bottom: 10px;
+    }
+    .chart-svg {
+      width: 100%;
+      height: 200px;
+    }
+    .chart-svg .axis { stroke: var(--border); stroke-width: 0.5; }
+    .chart-svg .grid-line { stroke: var(--border-subtle); stroke-width: 0.3; }
+    .chart-svg .curve { fill: none; stroke: var(--accent); stroke-width: 2; }
+    .chart-svg .fill { opacity: 0.1; }
+    .chart-svg .zero-line { stroke: var(--amber); stroke-width: 0.5; stroke-dasharray: 3,3; }
+    .chart-svg text { fill: var(--text-muted); font-size: 9px; }
+
+    /* Streaks */
+    .streak-bar {
+      display: flex;
+      height: 24px;
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      margin-top: 6px;
+    }
+    .streak-bar .s-win { background: var(--green); }
+    .streak-bar .s-loss { background: var(--red); }
+    .streak-bar .s-be { background: var(--amber); }
+    .streak-legend {
+      display: flex;
+      gap: 12px;
+      margin-top: 6px;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    /* Nav */
+    .page-nav {
+      display: flex;
+      gap: 4px;
+      padding: 8px;
+      max-width: 1200px;
+      margin: 0 auto;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
+    .page-nav a {
+      color: var(--text-muted);
+      text-decoration: none;
+      padding: 6px 14px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      font-weight: 500;
+      transition: all var(--transition);
+    }
+    .page-nav a:hover { color: var(--text); background: var(--bg-hover); }
+    .page-nav a.active { color: var(--text); background: var(--bg-card); }
+
+    .btn-refresh {
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      color: var(--text-sec);
+      padding: 6px 14px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      cursor: pointer;
+      margin-left: auto;
+    }
+    .btn-refresh:hover { color: var(--text); border-color: var(--text-sec); }
+  </style>
+</head>
+<body>
+  <nav class="page-nav">
+    <a href="/">Scanner</a>
+    <a href="/calculator">Calculator</a>
+    <a href="/journal">Journal</a>
+    <a href="/analytics" class="active">Analytics</a>
+  </nav>
+
+  <div class="analytics-layout">
+    <div style="display:flex; align-items:center; margin-bottom:12px;">
+      <h2 style="font-size:16px; font-weight:600;">Expectancy &amp; Performance</h2>
+      <button class="btn-refresh" onclick="loadAll()">Refresh</button>
+    </div>
+
+    <!-- Expectancy Overview -->
+    <div class="section-title">Expectancy Overview</div>
+    <div class="expectancy-grid" id="expGrid">
+      <div class="exp-card"><div class="ec-label">Total Trades</div><div class="ec-value blue" id="a-total">—</div></div>
+      <div class="exp-card"><div class="ec-label">Win Rate</div><div class="ec-value green" id="a-winrate">—</div></div>
+      <div class="exp-card"><div class="ec-label">Avg RR</div><div class="ec-value amber" id="a-rr">—</div></div>
+      <div class="exp-card"><div class="ec-label">Expectancy</div><div class="ec-value blue" id="a-expectancy">—</div></div>
+      <div class="exp-card"><div class="ec-label">Profit Factor</div><div class="ec-value blue" id="a-pf">—</div></div>
+      <div class="exp-card"><div class="ec-label">Max Consec Wins</div><div class="ec-value green" id="a-mcw">—</div></div>
+      <div class="exp-card"><div class="ec-label">Max Consec Losses</div><div class="ec-value red" id="a-mcl">—</div></div>
+      <div class="exp-card"><div class="ec-label">Open Trades</div><div class="ec-value amber" id="a-open">—</div></div>
+    </div>
+
+    <!-- Equity Curve -->
+    <div class="section-title">Equity Curve</div>
+    <div class="chart-card">
+      <h3>Cumulative PnL (% over time)</h3>
+      <svg class="chart-svg" id="equityChart" viewBox="0 0 800 200" preserveAspectRatio="none">
+        <line class="zero-line" x1="0" y1="100" x2="800" y2="100"/>
+        <path class="curve" id="equityCurve"/>
+        <path class="fill" id="equityFill"/>
+      </svg>
+    </div>
+
+    <!-- Breakdowns -->
+    <div class="section-title">Breakdowns</div>
+    <div class="breakdown-grid" id="breakdownGrid">
+      <!-- Filled by JS -->
+    </div>
+
+    <!-- Streaks -->
+    <div class="section-title">Streaks</div>
+    <div class="breakdown-card">
+      <div class="streak-bar" id="streakBar"></div>
+      <div class="streak-legend">
+        <span><span style="color:var(--green)">&#9632;</span> Win</span>
+        <span><span style="color:var(--red)">&#9632;</span> Loss</span>
+        <span><span style="color:var(--amber)">&#9632;</span> Break Even</span>
+      </div>
+    </div>
+
+    <!-- Tag Performance -->
+    <div class="section-title">Tag Performance</div>
+    <div class="breakdown-card">
+      <div class="bc-header">Tag | Trades | Win Rate | Avg PnL%</div>
+      <table id="tagTable">
+        <tbody><tr><td colspan="4" style="text-align:center; color: var(--text-muted);">Loading...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    async function loadAll() {
+      await Promise.all([loadStats(), loadEquity(), loadBreakdowns(), loadTags()]);
+    }
+
+    async function loadStats() {
+      try {
+        const res = await fetch('/api/journal/stats');
+        const d = await res.json();
+        if (!d.total_trades && d.total_trades !== 0) return;
+
+        document.getElementById('a-total').textContent = d.total_trades || 0;
+        document.getElementById('a-winrate').textContent = d.closed_trades ? d.win_rate + '%' : '—';
+        document.getElementById('a-winrate').className = 'ec-value ' + (d.win_rate >= 50 ? 'green' : d.win_rate > 0 ? 'amber' : 'red');
+        document.getElementById('a-rr').textContent = d.avg_rr || '—';
+        document.getElementById('a-rr').className = 'ec-value ' + (d.avg_rr >= 1.5 ? 'green' : d.avg_rr >= 1.2 ? 'amber' : 'red');
+        document.getElementById('a-expectancy').textContent = d.expectancy_pct != null ? d.expectancy_pct.toFixed(3) + '%' : '—';
+        document.getElementById('a-expectancy').className = 'ec-value ' + (d.expectancy_pct > 0 ? 'green' : d.expectancy_pct < 0 ? 'red' : 'amber');
+        document.getElementById('a-pf').textContent = d.profit_factor || '—';
+        document.getElementById('a-pf').className = 'ec-value ' + (d.profit_factor >= 2 ? 'green' : d.profit_factor >= 1 ? 'amber' : 'red');
+        document.getElementById('a-mcw').textContent = d.max_consec_wins || 0;
+        document.getElementById('a-mcl').textContent = d.max_consec_losses || 0;
+        document.getElementById('a-open').textContent = d.open_trades || 0;
+
+        // Streak bar
+        const wins = d.wins || 0;
+        const losses = d.losses || 0;
+        const be = d.break_even || 0;
+        const total = wins + losses + be;
+        if (total > 0) {
+          document.getElementById('streakBar').innerHTML =
+            `<div class="s-win" style="flex:${wins}"></div>` +
+            `<div class="s-loss" style="flex:${losses}"></div>` +
+            `<div class="s-be" style="flex:${be}"></div>`;
+        }
+      } catch (e) { console.error(e); }
+    }
+
+    async function loadEquity() {
+      try {
+        const res = await fetch('/api/journal/equity-curve?limit=200');
+        const d = await res.json();
+        const curve = d.curve;
+        if (!curve.length) {
+          document.getElementById('equityCurve').setAttribute('d', '');
+          return;
+        }
+
+        const values = curve.map(c => c.equity);
+        const min = Math.min(...values, 0);
+        const max = Math.max(...values);
+        const range = max - min || 1;
+        const w = 800, h = 200, pad = 10;
+
+        const points = values.map((v, i) => {
+          const x = (i / (values.length - 1)) * w;
+          const y = h - pad - ((v - min) / range) * (h - 2 * pad);
+          return [x, y];
+        });
+
+        const pathD = 'M ' + points.map(p => p[0] + ',' + p[1]).join(' L ');
+        document.getElementById('equityCurve').setAttribute('d', pathD);
+
+        // Fill area
+        const fillD = pathD + ` L ${w},${h - pad} L 0,${h - pad} Z`;
+        document.getElementById('equityFill').setAttribute('d', fillD);
+      } catch (e) { console.error(e); }
+    }
+
+    async function loadBreakdowns() {
+      try {
+        const res = await fetch('/api/journal/stats');
+        const d = await res.json();
+        const grid = document.getElementById('breakdownGrid');
+        let html = '';
+
+        // By direction
+        html += '<div class="breakdown-card"><div class="bc-header">By Direction</div><table>';
+        if (d.by_direction) {
+          for (const [dir, s] of Object.entries(d.by_direction)) {
+            const wr = s.n > 0 ? (s.wins / s.n * 100).toFixed(1) : 0;
+            html += `<tr><td>${dir}</td><td>${s.n} trades, ${wr}% WR</td></tr>`;
+          }
+        } else {
+          html += '<tr><td style="color: var(--text-muted);">No data</td></tr>';
+        }
+        html += '</table></div>';
+
+        // By signal type
+        html += '<div class="breakdown-card"><div class="bc-header">By Signal Type</div><table>';
+        if (d.by_signal_type) {
+          const sorted = Object.entries(d.by_signal_type).sort((a, b) => (b[1].n) - (a[1].n));
+          for (const [st, s] of sorted) {
+            const wr = s.n > 0 ? (s.wins / s.n * 100).toFixed(1) : 0;
+            html += `<tr><td>${st}</td><td>${s.n} trades, ${wr}% WR</td></tr>`;
+          }
+        } else {
+          html += '<tr><td style="color: var(--text-muted);">No data</td></tr>';
+        }
+        html += '</table></div>';
+
+        // By outcome
+        html += '<div class="breakdown-card"><div class="bc-header">Outcome Breakdown</div><table>';
+        if (d.outcomes) {
+          for (const [outcome, s] of Object.entries(d.outcomes)) {
+            html += `<tr><td>${outcome}</td><td>${s.n} trades${s.total_pnl_pct ? ', PnL: ' + s.total_pnl_pct.toFixed(2) + '%' : ''}</td></tr>`;
+          }
+        } else {
+          html += '<tr><td style="color: var(--text-muted);">No data</td></tr>';
+        }
+        html += '</table></div>';
+
+        // Summary metrics
+        html += '<div class="breakdown-card"><div class="bc-header">Performance Metrics</div><table>';
+        html += `<tr><td>Total Closed</td><td>${d.closed_trades || 0}</td></tr>`;
+        html += `<tr><td>Win Rate</td><td>${d.win_rate}%</td></tr>`;
+        html += `<tr><td>Avg RR</td><td>${d.avg_rr}</td></tr>`;
+        html += `<tr><td>Expectancy</td><td>${d.expectancy_pct != null ? d.expectancy_pct.toFixed(3) + '%' : '—'}</td></tr>`;
+        html += `<tr><td>Profit Factor</td><td>${d.profit_factor || '—'}</td></tr>`;
+        html += `<tr><td>Max Consec Wins</td><td>${d.max_consec_wins}</td></tr>`;
+        html += `<tr><td>Max Consec Losses</td><td>${d.max_consec_losses}</td></tr>`;
+        html += '</table></div>';
+
+        grid.innerHTML = html;
+      } catch (e) { console.error(e); }
+    }
+
+    async function loadTags() {
+      try {
+        const res = await fetch('/api/journal/stats');
+        const d = await res.json();
+        const tbody = document.querySelector('#tagTable tbody');
+        if (!d.by_tag || !Object.keys(d.by_tag).length) {
+          tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color: var(--text-muted);">No tag data</td></tr>';
+          return;
+        }
+        tbody.innerHTML = Object.entries(d.by_tag)
+          .sort((a, b) => (b[1].n || 0) - (a[1].n || 0))
+          .map(([tag, s]) => {
+            const wr = s.n > 0 ? (s.wins / s.n * 100).toFixed(1) : 0;
+            const avgPnl = s.avg_pnl_pct != null ? s.avg_pnl_pct.toFixed(2) + '%' : '—';
+            return `<tr><td>${tag}</td><td>${s.n}</td><td>${wr}%</td><td>${avgPnl}</td></tr>`;
+          }).join('');
+      } catch (e) { console.error(e); }
+    }
+
+    loadAll();
+  </script>
+</body>
+</html>

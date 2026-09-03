@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0c1220">
+  <title>Judah — Journal</title>
+  <link rel="stylesheet" href="/static/style.css?v=3">
+  <style>
+    .journal-layout {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 8px;
+    }
+
+    /* Stats row */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px;
+      text-align: center;
+    }
+    .stat-card .sc-label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .stat-card .sc-value {
+      font-size: 20px;
+      font-weight: 700;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      margin-top: 4px;
+    }
+    .stat-card .sc-value.green { color: var(--green); }
+    .stat-card .sc-value.red { color: var(--red); }
+    .stat-card .sc-value.amber { color: var(--amber); }
+    .stat-card .sc-value.blue { color: var(--accent); }
+
+    /* Toolbar */
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+      align-items: center;
+    }
+    .toolbar input, .toolbar select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 12px;
+      padding: 6px 10px;
+      outline: none;
+    }
+    .toolbar input:focus, .toolbar select:focus { border-color: var(--accent); }
+    .btn {
+      padding: 6px 14px;
+      border-radius: var(--radius-sm);
+      border: none;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { filter: brightness(1.15); }
+    .btn-secondary { background: var(--bg-hover); color: var(--text); border: 1px solid var(--border); }
+    .btn-danger { background: transparent; color: var(--red); border: 1px solid var(--red); padding: 3px 8px; font-size: 11px; }
+    .btn-sm { padding: 3px 8px; font-size: 11px; }
+    .btn-ghost { background: transparent; color: var(--text-sec); border: 1px solid var(--border); }
+
+    /* Trade table */
+    .trade-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .trade-table th {
+      background: var(--bg);
+      color: var(--text-muted);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      padding: 8px 10px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .trade-table th:hover { color: var(--text); }
+    .trade-table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 12px;
+      vertical-align: middle;
+    }
+    .trade-table tr:hover td { background: var(--bg-hover); }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 3px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .badge-win { background: rgba(34,197,94,0.15); color: var(--green); }
+    .badge-loss { background: rgba(239,68,68,0.15); color: var(--red); }
+    .badge-be { background: rgba(245,158,11,0.15); color: var(--amber); }
+    .badge-open { background: rgba(59,130,246,0.15); color: var(--accent); }
+    .badge-type { background: rgba(168,85,247,0.15); color: var(--purple); }
+    .badge-long { background: rgba(34,197,94,0.1); color: var(--green); }
+    .badge-short { background: rgba(239,68,68,0.1); color: var(--red); }
+
+    .tag {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 2px;
+      font-size: 10px;
+      background: var(--bg-hover);
+      color: var(--text-sec);
+      margin: 1px 2px;
+    }
+
+    /* Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.show { display: flex; }
+    .modal {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      width: 500px;
+      max-width: 95vw;
+      max-height: 90vh;
+      overflow-y: auto;
+      padding: 20px;
+    }
+    .modal h3 { margin-bottom: 16px; }
+    .modal .form-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+    .modal .form-field { display: flex; flex-direction: column; gap: 4px; }
+    .modal .form-field.full { grid-column: 1 / -1; }
+    .modal .form-field label {
+      font-size: 10px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .modal .form-field input,
+    .modal .form-field select,
+    .modal .form-field textarea {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 13px;
+      padding: 6px 10px;
+      outline: none;
+      font-family: inherit;
+    }
+    .modal .form-field textarea {
+      resize: vertical;
+      min-height: 60px;
+    }
+    .modal-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border-subtle);
+    }
+
+    /* Pagination */
+    .pagination {
+      display: flex;
+      gap: 6px;
+      justify-content: center;
+      align-items: center;
+      padding: 12px;
+    }
+    .pagination .page-info { color: var(--text-muted); font-size: 11px; }
+
+    /* Nav */
+    .page-nav {
+      display: flex;
+      gap: 4px;
+      padding: 8px;
+      max-width: 1200px;
+      margin: 0 auto;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
+    .page-nav a {
+      color: var(--text-muted);
+      text-decoration: none;
+      padding: 6px 14px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      font-weight: 500;
+      transition: all var(--transition);
+    }
+    .page-nav a:hover { color: var(--text); background: var(--bg-hover); }
+    .page-nav a.active { color: var(--text); background: var(--bg-card); }
+
+    .tag-input-row {
+      display: flex;
+      gap: 4px;
+      margin-top: 4px;
+    }
+    .tag-input-row input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 11px;
+      padding: 4px 8px;
+    }
+    .tag-input-row button {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-sec);
+      border-radius: var(--radius-sm);
+      padding: 4px 8px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      padding: 12px 20px;
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      font-weight: 500;
+      z-index: 9999;
+      animation: toast-in 0.3s ease;
+    }
+    .toast.success { background: #22c55e; color: #000; }
+    .toast.error { background: #ef4444; color: #fff; }
+    @keyframes toast-in {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <nav class="page-nav">
+    <a href="/">Scanner</a>
+    <a href="/calculator">Calculator</a>
+    <a href="/journal" class="active">Journal</a>
+    <a href="/analytics">Analytics</a>
+  </nav>
+
+  <div class="journal-layout">
+    <!-- Stats -->
+    <div class="stats-row" id="statsRow">
+      <div class="stat-card"><div class="sc-label">Total</div><div class="sc-value blue" id="st-total">—</div></div>
+      <div class="stat-card"><div class="sc-label">Win Rate</div><div class="sc-value green" id="st-winrate">—</div></div>
+      <div class="stat-card"><div class="sc-label">Wins</div><div class="sc-value green" id="st-wins">—</div></div>
+      <div class="stat-card"><div class="sc-label">Losses</div><div class="sc-value red" id="st-losses">—</div></div>
+      <div class="stat-card"><div class="sc-label">Avg RR</div><div class="sc-value amber" id="st-rr">—</div></div>
+      <div class="stat-card"><div class="sc-label">Expectancy</div><div class="sc-value blue" id="st-expectancy">—</div></div>
+      <div class="stat-card"><div class="sc-label">Profit Factor</div><div class="sc-value blue" id="st-pf">—</div></div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <input type="text" id="filterSym" placeholder="Symbol..." oninput="loadTrades()">
+      <select id="filterDir" onchange="loadTrades()">
+        <option value="">All directions</option>
+        <option value="LONG">Long</option>
+        <option value="SHORT">Short</option>
+      </select>
+      <select id="filterOutcome" onchange="loadTrades()">
+        <option value="">All outcomes</option>
+        <option value="WIN">Win</option>
+        <option value="LOSS">Loss</option>
+        <option value="BREAK_EVEN">Break Even</option>
+        <option value="OPEN">Open</option>
+      </select>
+      <input type="text" id="filterTag" placeholder="Tag..." oninput="loadTrades()">
+      <button class="btn btn-primary" onclick="openModal()">+ New Trade</button>
+    </div>
+
+    <!-- Table -->
+    <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;">
+      <table class="trade-table">
+        <thead>
+          <tr>
+            <th onclick="sortBy('id')">#</th>
+            <th onclick="sortBy('symbol')">Symbol</th>
+            <th onclick="sortBy('direction')">Dir</th>
+            <th onclick="sortBy('signal_type')">Type</th>
+            <th onclick="sortBy('entry_price')">Entry</th>
+            <th>SL / TP</th>
+            <th onclick="sortBy('rr')">RR</th>
+            <th onclick="sortBy('outcome')">Outcome</th>
+            <th onclick="sortBy('pnl_pct')">PnL%</th>
+            <th onclick="sortBy('opened_at')">Date</th>
+            <th>Tags</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="tradeTbody">
+          <tr><td colspan="12" style="text-align:center; color: var(--text-muted);">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pagination">
+      <button class="btn btn-secondary btn-sm" id="prevBtn" onclick="changePage(-1)">&larr; Prev</button>
+      <span class="page-info" id="pageInfo">Page 1</span>
+      <button class="btn btn-secondary btn-sm" id="nextBtn" onclick="changePage(1)">Next &rarr;</button>
+    </div>
+  </div>
+
+  <!-- Modal -->
+  <div class="modal-overlay" id="modal">
+    <div class="modal">
+      <h3 id="modalTitle">New Trade</h3>
+      <div class="form-grid">
+        <div class="form-field">
+          <label>Symbol</label>
+          <input type="text" id="f-sym">
+        </div>
+        <div class="form-field">
+          <label>Direction</label>
+          <select id="f-dir">
+            <option value="LONG">LONG</option>
+            <option value="SHORT">SHORT</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Signal Type</label>
+          <select id="f-sig">
+            <option value="NONE">NONE</option>
+            <option value="A">A</option>
+            <option value="B">B</option>
+            <option value="C">C</option>
+            <option value="D">D</option>
+            <option value="E">E</option>
+            <option value="F">F</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>Market State</label>
+          <input type="text" id="f-state" placeholder="e.g. Expansion">
+        </div>
+        <div class="form-field">
+          <label>Entry Price</label>
+          <input type="number" id="f-entry" step="any">
+        </div>
+        <div class="form-field">
+          <label>Exit Price</label>
+          <input type="number" id="f-exit" step="any">
+        </div>
+        <div class="form-field">
+          <label>Stop Loss</label>
+          <input type="number" id="f-sl" step="any">
+        </div>
+        <div class="form-field">
+          <label>Take Profit</label>
+          <input type="number" id="f-tp" step="any">
+        </div>
+        <div class="form-field">
+          <label>RR Ratio</label>
+          <input type="number" id="f-rr" step="0.1">
+        </div>
+        <div class="form-field">
+          <label>Position Size</label>
+          <input type="number" id="f-psize" step="any">
+        </div>
+        <div class="form-field">
+          <label>Leverage</label>
+          <input type="number" id="f-lev" step="0.1">
+        </div>
+        <div class="form-field">
+          <label>Confidence</label>
+          <input type="number" id="f-conf" step="0.05" min="0" max="1" value="0.5">
+        </div>
+        <div class="form-field">
+          <label>Outcome</label>
+          <select id="f-outcome">
+            <option value="OPEN">OPEN</option>
+            <option value="WIN">WIN</option>
+            <option value="LOSS">LOSS</option>
+            <option value="BREAK_EVEN">BREAK_EVEN</option>
+            <option value="TIMEOUT">TIMEOUT</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>PnL %</label>
+          <input type="number" id="f-pnl" step="0.1">
+        </div>
+        <div class="form-field">
+          <label>PnL Amount ($)</label>
+          <input type="number" id="f-pnlamt" step="any">
+        </div>
+        <div class="form-field full">
+          <label>Notes</label>
+          <textarea id="f-notes" placeholder="Trade notes..."></textarea>
+        </div>
+        <div class="form-field full">
+          <label>Tags (comma-separated)</label>
+          <div class="tag-input-row">
+            <input type="text" id="f-tags" placeholder="scalping, momentum, etc.">
+            <button type="button" onclick="addTagFromInput()">Add</button>
+          </div>
+          <div id="tagPreview" style="margin-top:4px;"></div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary" id="saveBtn" onclick="saveTrade()">Save Trade</button>
+        <button class="btn btn-danger" id="delBtn" onclick="deleteTrade()" style="display:none;">Delete</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let editingId = null;
+    let page = 0;
+    const PAGE_SIZE = 20;
+    let currentSort = 'created_at';
+    let sortDir = 'DESC';
+    let currentTags = [];
+
+    async function loadStats() {
+      try {
+        const res = await fetch('/api/journal/stats');
+        const d = await res.json();
+        document.getElementById('st-total').textContent = d.total_trades || 0;
+        document.getElementById('st-winrate').textContent = d.closed_trades ? d.win_rate + '%' : '—';
+        document.getElementById('st-wins').textContent = d.wins || 0;
+        document.getElementById('st-losses').textContent = d.losses || 0;
+        document.getElementById('st-rr').textContent = d.avg_rr || '—';
+        document.getElementById('st-expectancy').textContent = d.expectancy_pct || '—';
+        document.getElementById('st-pf').textContent = d.profit_factor || '—';
+      } catch (e) { console.error(e); }
+    }
+
+    async function loadTrades() {
+      const sym = document.getElementById('filterSym').value;
+      const dir = document.getElementById('filterDir').value;
+      const outcome = document.getElementById('filterOutcome').value;
+      const tag = document.getElementById('filterTag').value;
+
+      const params = new URLSearchParams({
+        limit: PAGE_SIZE, offset: page * PAGE_SIZE,
+        sort_by: currentSort, sort_dir: sortDir,
+      });
+      if (sym) params.set('symbol', sym);
+      if (dir) params.set('direction', dir);
+      if (outcome) params.set('outcome', outcome);
+      if (tag) params.set('tag', tag);
+
+      try {
+        const res = await fetch('/api/journal/trades?' + params);
+        const d = await res.json();
+        renderTrades(d.trades);
+        document.getElementById('pageInfo').textContent = `Page ${page + 1}${d.total > PAGE_SIZE ? ' (' + d.total + ' total)' : ''}`;
+        document.getElementById('prevBtn').disabled = page === 0;
+      } catch (e) { console.error(e); }
+    }
+
+    function renderTrades(trades) {
+      const tbody = document.getElementById('tradeTbody');
+      if (!trades.length) {
+        tbody.innerHTML = '<tr><td colspan="12" style="text-align:center; color: var(--text-muted);">No trades found</td></tr>';
+        return;
+      }
+      tbody.innerHTML = trades.map(t => {
+        const outcomeClass = t.outcome === 'WIN' ? 'badge-win' : t.outcome === 'LOSS' ? 'badge-loss' : t.outcome === 'BREAK_EVEN' ? 'badge-be' : 'badge-open';
+        const dirClass = t.direction === 'LONG' ? 'badge-long' : 'badge-short';
+        const pnlColor = t.pnl_pct > 0 ? 'color: var(--green)' : t.pnl_pct < 0 ? 'color: var(--red)' : '';
+        const date = t.opened_at ? t.opened_at.split('T')[0] : '—';
+        return `<tr>
+          <td>${t.id}</td>
+          <td><strong>${t.symbol}</strong></td>
+          <td><span class="badge ${dirClass}">${t.direction}</span></td>
+          <td><span class="badge badge-type">${t.signal_type}</span></td>
+          <td>${t.entry_price ? t.entry_price.toFixed(t.entry_price < 1 ? 6 : 2) : '—'}</td>
+          <td style="font-size:11px; color: var(--text-muted);">${t.sl_price ? t.sl_price.toFixed(2) : '—'} / ${t.tp_price ? t.tp_price.toFixed(2) : '—'}</td>
+          <td>${t.rr ? t.rr.toFixed(2) + ':1' : '—'}</td>
+          <td><span class="badge ${outcomeClass}">${t.outcome}</span></td>
+          <td style="${pnlColor}">${t.pnl_pct != null ? t.pnl_pct.toFixed(2) + '%' : '—'}</td>
+          <td style="font-size:11px; color: var(--text-muted);">${date}</td>
+          <td>${(t.tags || []).map(tag => `<span class="tag">${tag}</span>`).join('')}</td>
+          <td style="white-space: nowrap;">
+            <button class="btn btn-secondary btn-sm" onclick="editTrade(${t.id})">Edit</button>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    async function openModal(id) {
+      editingId = id || null;
+      document.getElementById('modalTitle').textContent = id ? 'Edit Trade' : 'New Trade';
+      document.getElementById('delBtn').style.display = id ? '' : 'none';
+      document.getElementById('saveBtn').textContent = id ? 'Update' : 'Save Trade';
+      currentTags = [];
+
+      if (id) {
+        try {
+          const res = await fetch('/api/journal/trades/' + id);
+          const t = await res.json();
+          document.getElementById('f-sym').value = t.symbol || '';
+          document.getElementById('f-dir').value = t.direction || 'LONG';
+          document.getElementById('f-sig').value = t.signal_type || 'NONE';
+          document.getElementById('f-state').value = t.market_state || '';
+          document.getElementById('f-entry').value = t.entry_price || '';
+          document.getElementById('f-exit').value = t.exit_price || '';
+          document.getElementById('f-sl').value = t.sl_price || '';
+          document.getElementById('f-tp').value = t.tp_price || '';
+          document.getElementById('f-rr').value = t.rr || '';
+          document.getElementById('f-psize').value = t.position_size || '';
+          document.getElementById('f-lev').value = t.leverage || '';
+          document.getElementById('f-conf').value = t.confidence_score || 0.5;
+          document.getElementById('f-outcome').value = t.outcome || 'OPEN';
+          document.getElementById('f-pnl').value = t.pnl_pct || '';
+          document.getElementById('f-pnlamt').value = t.pnl_amount || '';
+          document.getElementById('f-notes').value = t.notes || '';
+          currentTags = t.tags ? [...t.tags] : [];
+        } catch (e) { showToast('Failed to load trade', 'error'); return; }
+      } else {
+        ['f-sym','f-state','f-entry','f-exit','f-sl','f-tp','f-rr','f-psize','f-lev','f-pnl','f-pnlamt','f-notes'].forEach(id => document.getElementById(id).value = '');
+        document.getElementById('f-dir').value = 'LONG';
+        document.getElementById('f-sig').value = 'NONE';
+        document.getElementById('f-outcome').value = 'OPEN';
+        document.getElementById('f-conf').value = '0.5';
+        currentTags = [];
+      }
+      renderTagPreview();
+      document.getElementById('modal').classList.add('show');
+    }
+
+    function closeModal() {
+      document.getElementById('modal').classList.remove('show');
+      editingId = null;
+    }
+
+    function editTrade(id) { openModal(id); }
+
+    function addTagFromInput() {
+      const input = document.getElementById('f-tags');
+      const val = input.value.trim().toLowerCase();
+      if (val && !currentTags.includes(val)) {
+        currentTags.push(val);
+        renderTagPreview();
+      }
+      input.value = '';
+    }
+
+    function removeTag(t) {
+      currentTags = currentTags.filter(x => x !== t);
+      renderTagPreview();
+    }
+
+    function renderTagPreview() {
+      document.getElementById('tagPreview').innerHTML = currentTags.map(t =>
+        `<span class="tag" style="cursor:pointer;" onclick="removeTag('${t}')">${t} &times;</span>`
+      ).join('');
+    }
+
+    async function saveTrade() {
+      const payload = {
+        symbol: document.getElementById('f-sym').value,
+        direction: document.getElementById('f-dir').value,
+        signal_type: document.getElementById('f-sig').value,
+        market_state: document.getElementById('f-state').value,
+        entry_price: parseFloat(document.getElementById('f-entry').value) || null,
+        exit_price: parseFloat(document.getElementById('f-exit').value) || null,
+        sl_price: parseFloat(document.getElementById('f-sl').value) || null,
+        tp_price: parseFloat(document.getElementById('f-tp').value) || null,
+        rr: parseFloat(document.getElementById('f-rr').value) || null,
+        position_size: parseFloat(document.getElementById('f-psize').value) || null,
+        leverage: parseFloat(document.getElementById('f-lev').value) || null,
+        confidence_score: parseFloat(document.getElementById('f-conf').value) || null,
+        outcome: document.getElementById('f-outcome').value,
+        pnl_pct: parseFloat(document.getElementById('f-pnl').value) || null,
+        pnl_amount: parseFloat(document.getElementById('f-pnlamt').value) || null,
+        notes: document.getElementById('f-notes').value,
+        tags: currentTags,
+      };
+
+      if (!payload.symbol) { showToast('Symbol is required', 'error'); return; }
+
+      const url = editingId ? '/api/journal/trades/' + editingId : '/api/journal/trades';
+      const method = editingId ? 'PUT' : 'POST';
+
+      try {
+        const res = await fetch(url, {
+          method,
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          showToast(editingId ? 'Trade updated' : 'Trade saved', 'success');
+          closeModal();
+          loadStats();
+          loadTrades();
+        } else {
+          const err = await res.json();
+          showToast(err.error || 'Save failed', 'error');
+        }
+      } catch (e) { showToast('Network error', 'error'); }
+    }
+
+    async function deleteTrade() {
+      if (!editingId || !confirm('Delete this trade permanently?')) return;
+      try {
+        const res = await fetch('/api/journal/trades/' + editingId, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        });
+        if (res.ok) {
+          showToast('Trade deleted', 'success');
+          closeModal();
+          loadStats();
+          loadTrades();
+        }
+      } catch (e) { showToast('Delete failed', 'error'); }
+    }
+
+    function sortBy(field) {
+      if (currentSort === field) sortDir = sortDir === 'ASC' ? 'DESC' : 'ASC';
+      else { currentSort = field; sortDir = 'DESC'; }
+      page = 0;
+      loadTrades();
+    }
+
+    function changePage(delta) {
+      page = Math.max(0, page + delta);
+      loadTrades();
+    }
+
+    function showToast(msg, type) {
+      const toast = document.createElement('div');
+      toast.className = 'toast ' + (type || 'info');
+      toast.textContent = msg;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 3000);
+    }
+
+    // Init
+    loadStats();
+    loadTrades();
+  </script>
+</body>
+</html>

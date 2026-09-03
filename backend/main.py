@@ -65,6 +65,39 @@ def _load_admin_html() -> str:
             _ADMIN_HTML_CACHE = "<h1>Admin Panel</h1><p>admin.html not found.</p>"
     return _ADMIN_HTML_CACHE
 
+
+def _load_calc_html() -> str:
+    global _CALC_HTML_CACHE
+    if _CALC_HTML_CACHE is None:
+        try:
+            with open(os.path.join(frontend_dir, "calculator.html"), encoding="utf-8") as f:
+                _CALC_HTML_CACHE = f.read()
+        except FileNotFoundError:
+            _CALC_HTML_CACHE = "<h1>Calculator</h1><p>Frontend not found.</p>"
+    return _CALC_HTML_CACHE
+
+
+def _load_journal_html() -> str:
+    global _JOURNAL_HTML_CACHE
+    if _JOURNAL_HTML_CACHE is None:
+        try:
+            with open(os.path.join(frontend_dir, "journal.html"), encoding="utf-8") as f:
+                _JOURNAL_HTML_CACHE = f.read()
+        except FileNotFoundError:
+            _JOURNAL_HTML_CACHE = "<h1>Journal</h1><p>Frontend not found.</p>"
+    return _JOURNAL_HTML_CACHE
+
+
+def _load_analytics_html() -> str:
+    global _ANALYTICS_HTML_CACHE
+    if _ANALYTICS_HTML_CACHE is None:
+        try:
+            with open(os.path.join(frontend_dir, "analytics.html"), encoding="utf-8") as f:
+                _ANALYTICS_HTML_CACHE = f.read()
+        except FileNotFoundError:
+            _ANALYTICS_HTML_CACHE = "<h1>Analytics</h1><p>Frontend not found.</p>"
+    return _ANALYTICS_HTML_CACHE
+
 from backend.market_data import market_data
 from backend.scanner import scanner
 from backend.signal_store import signal_store
@@ -91,6 +124,7 @@ from backend.auth import (
     _create_session,
 )
 from backend.db import prune_old
+from backend import journal_schema
 from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE, TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE
 
 logging.basicConfig(
@@ -396,6 +430,37 @@ async def dashboard(request: Request):
     except FileNotFoundError:
         return HTMLResponse(content=_load_index_html())
 
+
+async def _serve_page(loader, request: Request) -> HTMLResponse:
+    """Serve an HTML page if authenticated, redirect to login if not."""
+    try:
+        token = request.cookies.get("session_token", "")
+        if not token:
+            raise HTTPException(status_code=401)
+        user = await validate_token(token)
+        if not user:
+            raise HTTPException(status_code=401)
+        return HTMLResponse(content=loader())
+    except HTTPException:
+        return HTMLResponse(content='<script>window.location.href="/login"</script>', status_code=200)
+    except FileNotFoundError:
+        return HTMLResponse(content=loader())
+
+
+@app.get("/calculator")
+async def calculator_page(request: Request):
+    return await _serve_page(_load_calc_html, request)
+
+
+@app.get("/journal")
+async def journal_page(request: Request):
+    return await _serve_page(_load_journal_html, request)
+
+
+@app.get("/analytics")
+async def analytics_page(request: Request):
+    return await _serve_page(_load_analytics_html, request)
+
 @app.get("/api/signals", dependencies=[Depends(get_current_user)])
 async def get_signals():
     """D1 signals (HTF)."""
@@ -553,6 +618,154 @@ async def analytics_db():
         return stats
     except Exception as e:
         logger.error(f"[api/analytics/db] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ── Journal REST API (Phase 3) ─────────────────────────────────────
+
+@app.post("/api/journal/trades", dependencies=[Depends(get_current_user)])
+async def journal_create_trade(request: Request):
+    """Create a new journal trade entry."""
+    try:
+        data = await request.json()
+        trade_id = await journal_schema.create_trade(data)
+        if trade_id is None:
+            return JSONResponse(status_code=400, content={"error": "Failed to create trade"})
+        return {"ok": True, "trade_id": trade_id}
+    except Exception as e:
+        logger.error(f"[api/journal] Create error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.put("/api/journal/trades/{trade_id}", dependencies=[Depends(get_current_user)])
+async def journal_update_trade(trade_id: int, request: Request):
+    """Update an existing journal trade."""
+    try:
+        data = await request.json()
+        ok = await journal_schema.update_trade(trade_id, data)
+        if not ok:
+            return JSONResponse(status_code=404, content={"error": "Trade not found"})
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"[api/journal] Update error for {trade_id}: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/journal/trades/{trade_id}", dependencies=[Depends(get_current_user)])
+async def journal_delete_trade(trade_id: int):
+    """Soft-delete a journal trade."""
+    try:
+        ok = await journal_schema.delete_trade(trade_id)
+        if not ok:
+            return JSONResponse(status_code=404, content={"error": "Trade not found"})
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"[api/journal] Delete error for {trade_id}: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/journal/trades/{trade_id}", dependencies=[Depends(get_current_user)])
+async def journal_get_trade(trade_id: int):
+    """Get a single trade with notes and tags."""
+    try:
+        trade = await journal_schema.get_trade(trade_id)
+        if not trade:
+            return JSONResponse(status_code=404, content={"error": "Trade not found"})
+        return trade
+    except Exception as e:
+        logger.error(f"[api/journal] Get error for {trade_id}: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/journal/trades", dependencies=[Depends(get_current_user)])
+async def journal_list_trades(
+    symbol: str = "",
+    direction: str = "",
+    outcome: str = "",
+    signal_type: str = "",
+    tag: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    sort_by: str = "created_at",
+    sort_dir: str = "DESC",
+):
+    """List trades with optional filters and pagination."""
+    try:
+        trades = await journal_schema.list_trades(
+            symbol=symbol, direction=direction, outcome=outcome,
+            signal_type=signal_type, tag=tag,
+            limit=limit, offset=offset, sort_by=sort_by, sort_dir=sort_dir,
+        )
+        total = await journal_schema.get_trade_count(
+            symbol=symbol, direction=direction, outcome=outcome,
+            signal_type=signal_type, tag=tag,
+        )
+        return {"trades": trades, "total": total, "limit": limit, "offset": offset}
+    except Exception as e:
+        logger.error(f"[api/journal] List error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/journal/notes", dependencies=[Depends(get_current_user)])
+async def journal_add_note(request: Request):
+    """Add a note to a trade."""
+    try:
+        data = await request.json()
+        trade_id = data.get("trade_id")
+        note_text = data.get("note_text", "")
+        screenshot_url = data.get("screenshot_url", "")
+        if not trade_id:
+            return JSONResponse(status_code=400, content={"error": "trade_id required"})
+        note_id = await journal_schema.add_trade_note(trade_id, note_text, screenshot_url)
+        return {"ok": True, "note_id": note_id}
+    except Exception as e:
+        logger.error(f"[api/journal] Add note error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/journal/notes/{note_id}", dependencies=[Depends(get_current_user)])
+async def journal_delete_note(note_id: int):
+    """Delete a trade note."""
+    try:
+        ok = await journal_schema.delete_trade_note(note_id)
+        if not ok:
+            return JSONResponse(status_code=404, content={"error": "Note not found"})
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"[api/journal] Delete note error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/journal/stats", dependencies=[Depends(get_current_user)])
+async def journal_stats():
+    """Journal aggregate stats — win rate, expectancy, profit factor, etc."""
+    try:
+        stats = await journal_schema.get_journal_stats()
+        return stats if stats else {"error": "No trades yet"}
+    except Exception as e:
+        logger.error(f"[api/journal/stats] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/journal/equity-curve", dependencies=[Depends(get_current_user)])
+async def journal_equity_curve(limit: int = 200):
+    """Cumulative PnL over time for equity curve chart."""
+    try:
+        curve = await journal_schema.get_equity_curve(limit=limit)
+        return {"curve": curve}
+    except Exception as e:
+        logger.error(f"[api/journal/equity-curve] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/journal/tags", dependencies=[Depends(get_current_user)])
+async def journal_tags():
+    """Get all unique tags across trades."""
+    try:
+        tags = await journal_schema.get_all_tags()
+        return {"tags": tags}
+    except Exception as e:
+        logger.error(f"[api/journal/tags] Error: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -855,6 +1068,13 @@ async def startup():
         logger.info("[startup] SQLite schema initialized")
     except Exception:
         logger.exception("[startup] DB schema init failed")
+
+    # Initialize journal schema (additive, idempotent)
+    try:
+        await journal_schema.init_journal_schema()
+        logger.info("[startup] Journal schema initialized")
+    except Exception:
+        logger.exception("[startup] Journal schema init failed")
 
     # Create admin user if not exists (idempotent)
     try:
