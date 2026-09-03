@@ -402,6 +402,95 @@
           <label>Confidence</label>
           <input type="number" id="f-conf" step="0.05" min="0" max="1" value="0.5">
         </div>
+        <div style="grid-column: 1 / -1; font-size:10px; color: var(--text-muted); text-transform:uppercase; letter-spacing:0.3px; margin-top:4px; border-bottom:1px solid var(--border-subtle); padding-bottom:4px;">Judah Context</div>
+        <div class="form-field">
+          <label>Spiral</label>
+          <input type="text" id="f-spiral" placeholder="Accumulation, Markup...">
+        </div>
+        <div class="form-field">
+          <label>Market Evolution</label>
+          <input type="text" id="f-evolution" placeholder="Expansion, Reaccumulation">
+        </div>
+        <div class="form-field">
+          <label>D1 (4H) Zone</label>
+          <input type="text" id="f-d1zone" placeholder="Bullish OB, FVG, Breaker">
+        </div>
+        <div class="form-field">
+          <label>D2 (15M) Zone</label>
+          <input type="text" id="f-d2zone" placeholder="Bearish OB, FVG, Sweep">
+        </div>
+        <div class="form-field">
+          <label>DR 4H</label>
+          <input type="text" id="f-dr4h" placeholder="4H dealing range">
+        </div>
+        <div class="form-field">
+          <label>DR 15M</label>
+          <input type="text" id="f-dr15m" placeholder="15M dealing range">
+        </div>
+        <div class="form-field">
+          <label>Liq. Type</label>
+          <input type="text" id="f-liqtype" placeholder="Sweep, Inducement">
+        </div>
+        <div class="form-field">
+          <label>Liq. Event</label>
+          <input type="text" id="f-liqevent" placeholder="Liquidity event">
+        </div>
+        <div class="form-field">
+          <label>Sweep</label>
+          <select id="f-sweep"><option value="0">No</option><option value="1">Yes</option></select>
+        </div>
+        <div class="form-field">
+          <label>BOS</label>
+          <input type="text" id="f-bos" placeholder="Break of structure">
+        </div>
+        <div class="form-field">
+          <label>Fib Level</label>
+          <input type="number" id="f-fib" step="0.01" placeholder="0.618">
+        </div>
+        <div class="form-field">
+          <label>Planned Entry</label>
+          <input type="number" id="f-pentry" step="any">
+        </div>
+        <div class="form-field">
+          <label>Actual Entry</label>
+          <input type="number" id="f-aentry" step="any">
+        </div>
+        <div class="form-field">
+          <label>Exit Reason</label>
+          <input type="text" id="f-exitreason" placeholder="TP hit, SL hit, Manual">
+        </div>
+        <div class="form-field">
+          <label>MFE</label>
+          <input type="number" id="f-mfe" step="any">
+        </div>
+        <div class="form-field">
+          <label>MAE</label>
+          <input type="number" id="f-mae" step="any">
+        </div>
+        <div class="form-field">
+          <label>Session</label>
+          <select id="f-session">
+            <option value="">-</option>
+            <option value="Asian">Asian</option>
+            <option value="London">London</option>
+            <option value="NY">NY</option>
+            <option value="London-NY">London-NY</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>R-Multiple</label>
+          <input type="number" id="f-rmult" step="0.1">
+        </div>
+        <div class="form-field">
+          <label>Holding Time (min)</label>
+          <input type="number" id="f-holdtime" step="1">
+        </div>
+        <div class="form-field">
+          <label>Max Drawdown %</label>
+          <input type="number" id="f-maxdd" step="0.1">
+        </div>
+
+        <div style="grid-column: 1 / -1; font-size:10px; color: var(--text-muted); text-transform:uppercase; letter-spacing:0.3px; margin-top:4px; border-bottom:1px solid var(--border-subtle); padding-bottom:4px;">Trade Details</div>
         <div class="form-field">
           <label>Outcome</label>
           <select id="f-outcome">
@@ -544,6 +633,26 @@
           document.getElementById('f-pnl').value = t.pnl_pct || '';
           document.getElementById('f-pnlamt').value = t.pnl_amount || '';
           document.getElementById('f-notes').value = t.notes || '';
+          document.getElementById('f-spiral').value = t.spiral || '';
+          document.getElementById('f-evolution').value = t.market_evolution || '';
+          document.getElementById('f-d1zone').value = t.d1_zone || '';
+          document.getElementById('f-d2zone').value = t.d2_zone || '';
+          document.getElementById('f-dr4h').value = t.dealing_range_4h || '';
+          document.getElementById('f-dr15m').value = t.dealing_range_15m || '';
+          document.getElementById('f-liqtype').value = t.liquidity_type || '';
+          document.getElementById('f-liqevent').value = t.liquidity_event || '';
+          document.getElementById('f-sweep').value = t.sweep ? '1' : '0';
+          document.getElementById('f-bos').value = t.bos || '';
+          document.getElementById('f-fib').value = t.fib || '';
+          document.getElementById('f-pentry').value = t.planned_entry || '';
+          document.getElementById('f-aentry').value = t.actual_entry || '';
+          document.getElementById('f-exitreason').value = t.exit_reason || '';
+          document.getElementById('f-mfe').value = t.mfe || '';
+          document.getElementById('f-mae').value = t.mae || '';
+          document.getElementById('f-session').value = t.session || '';
+          document.getElementById('f-rmult').value = t.r_multiple || '';
+          document.getElementById('f-holdtime').value = t.holding_time || '';
+          document.getElementById('f-maxdd').value = t.max_drawdown || '';
           currentTags = t.tags ? [...t.tags] : [];
         } catch (e) { showToast('Failed to load trade', 'error'); return; }
       } else {
@@ -604,6 +713,27 @@
         pnl_pct: parseFloat(document.getElementById('f-pnl').value) || null,
         pnl_amount: parseFloat(document.getElementById('f-pnlamt').value) || null,
         notes: document.getElementById('f-notes').value,
+        // Judah context fields
+        spiral: document.getElementById('f-spiral').value || null,
+        market_evolution: document.getElementById('f-evolution').value || null,
+        d1_zone: document.getElementById('f-d1zone').value || null,
+        d2_zone: document.getElementById('f-d2zone').value || null,
+        dealing_range_4h: document.getElementById('f-dr4h').value || null,
+        dealing_range_15m: document.getElementById('f-dr15m').value || null,
+        liquidity_type: document.getElementById('f-liqtype').value || null,
+        liquidity_event: document.getElementById('f-liqevent').value || null,
+        sweep: parseInt(document.getElementById('f-sweep').value) || 0,
+        bos: document.getElementById('f-bos').value || null,
+        fib: parseFloat(document.getElementById('f-fib').value) || null,
+        planned_entry: parseFloat(document.getElementById('f-pentry').value) || null,
+        actual_entry: parseFloat(document.getElementById('f-aentry').value) || null,
+        exit_reason: document.getElementById('f-exitreason').value || null,
+        mfe: parseFloat(document.getElementById('f-mfe').value) || null,
+        mae: parseFloat(document.getElementById('f-mae').value) || null,
+        session: document.getElementById('f-session').value || null,
+        r_multiple: parseFloat(document.getElementById('f-rmult').value) || null,
+        holding_time: parseInt(document.getElementById('f-holdtime').value) || null,
+        max_drawdown: parseFloat(document.getElementById('f-maxdd').value) || null,
         tags: currentTags,
       };
 
