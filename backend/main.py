@@ -754,22 +754,22 @@ async def journal_delete_note(note_id: int, user: dict = Depends(get_current_use
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.get("/api/journal/stats", dependencies=[Depends(get_current_user)])
-async def journal_stats():
-    """Journal aggregate stats — win rate, expectancy, profit factor, etc."""
+@app.get("/api/journal/stats")
+async def journal_stats(user: dict = Depends(get_current_user)):
+    """Journal aggregate stats for the authenticated user."""
     try:
-        stats = await journal_schema.get_journal_stats()
+        stats = await journal_schema.get_journal_stats(user_id=user["user_id"])
         return stats if stats else {"error": "No trades yet"}
     except Exception as e:
         logger.error(f"[api/journal/stats] Error: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.get("/api/journal/equity-curve", dependencies=[Depends(get_current_user)])
-async def journal_equity_curve(limit: int = 200):
-    """Cumulative PnL over time for equity curve chart."""
+@app.get("/api/journal/equity-curve")
+async def journal_equity_curve(user: dict = Depends(get_current_user), limit: int = 200):
+    """Cumulative PnL over time for the authenticated user's equity curve."""
     try:
-        curve = await journal_schema.get_equity_curve(limit=limit)
+        curve = await journal_schema.get_equity_curve(limit=limit, user_id=user["user_id"])
         return {"curve": curve}
     except Exception as e:
         logger.error(f"[api/journal/equity-curve] Error: {e}")
