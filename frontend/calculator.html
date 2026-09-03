@@ -585,8 +585,6 @@
       const riskAmount = balance * (riskPct / 100);
       const posMult = SIGNAL_MULT[signalType] || 0;
       const posSize = posMult > 0 ? (riskAmount / slDist) * entry * posMult : 0;
-      const leverage = (posSize > 0 && entry > 0) ? posSize / (balance * (riskPct / 100) / slPct * 100) : 0;
-      // Simpler leverage: position_size / margin. Margin = risk_amount.
       const margin = riskAmount;
       const reqLeverage = margin > 0 && posSize > 0 ? posSize / margin : 0;
 

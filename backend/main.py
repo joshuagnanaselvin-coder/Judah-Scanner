@@ -123,7 +123,7 @@ from backend.auth import (
     list_invites,
     _create_session,
 )
-from backend.db import prune_old
+from backend.db import prune_old, _PooledConn
 from backend import journal_schema
 from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE, TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE
 
@@ -623,12 +623,12 @@ async def analytics_db():
 
 # ── Journal REST API (Phase 3) ─────────────────────────────────────
 
-@app.post("/api/journal/trades", dependencies=[Depends(get_current_user)])
-async def journal_create_trade(request: Request):
-    """Create a new journal trade entry."""
+@app.post("/api/journal/trades")
+async def journal_create_trade(request: Request, user: dict = Depends(get_current_user)):
+    """Create a new journal trade entry for the authenticated user."""
     try:
         data = await request.json()
-        trade_id = await journal_schema.create_trade(data)
+        trade_id = await journal_schema.create_trade(data, user_id=user["user_id"])
         if trade_id is None:
             return JSONResponse(status_code=400, content={"error": "Failed to create trade"})
         return {"ok": True, "trade_id": trade_id}
@@ -637,12 +637,12 @@ async def journal_create_trade(request: Request):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.put("/api/journal/trades/{trade_id}", dependencies=[Depends(get_current_user)])
-async def journal_update_trade(trade_id: int, request: Request):
-    """Update an existing journal trade."""
+@app.put("/api/journal/trades/{trade_id}")
+async def journal_update_trade(trade_id: int, request: Request, user: dict = Depends(get_current_user)):
+    """Update an existing journal trade (owner only)."""
     try:
         data = await request.json()
-        ok = await journal_schema.update_trade(trade_id, data)
+        ok = await journal_schema.update_trade(trade_id, data, user_id=user["user_id"])
         if not ok:
             return JSONResponse(status_code=404, content={"error": "Trade not found"})
         return {"ok": True}
@@ -651,11 +651,11 @@ async def journal_update_trade(trade_id: int, request: Request):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.delete("/api/journal/trades/{trade_id}", dependencies=[Depends(get_current_user)])
-async def journal_delete_trade(trade_id: int):
-    """Soft-delete a journal trade."""
+@app.delete("/api/journal/trades/{trade_id}")
+async def journal_delete_trade(trade_id: int, user: dict = Depends(get_current_user)):
+    """Soft-delete a journal trade (owner only)."""
     try:
-        ok = await journal_schema.delete_trade(trade_id)
+        ok = await journal_schema.delete_trade(trade_id, user_id=user["user_id"])
         if not ok:
             return JSONResponse(status_code=404, content={"error": "Trade not found"})
         return {"ok": True}
@@ -664,11 +664,11 @@ async def journal_delete_trade(trade_id: int):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.get("/api/journal/trades/{trade_id}", dependencies=[Depends(get_current_user)])
-async def journal_get_trade(trade_id: int):
-    """Get a single trade with notes and tags."""
+@app.get("/api/journal/trades/{trade_id}")
+async def journal_get_trade(trade_id: int, user: dict = Depends(get_current_user)):
+    """Get a single trade with notes and tags (owner only)."""
     try:
-        trade = await journal_schema.get_trade(trade_id)
+        trade = await journal_schema.get_trade(trade_id, user_id=user["user_id"])
         if not trade:
             return JSONResponse(status_code=404, content={"error": "Trade not found"})
         return trade
@@ -677,8 +677,9 @@ async def journal_get_trade(trade_id: int):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.get("/api/journal/trades", dependencies=[Depends(get_current_user)])
+@app.get("/api/journal/trades")
 async def journal_list_trades(
+    user: dict = Depends(get_current_user),
     symbol: str = "",
     direction: str = "",
     outcome: str = "",
@@ -689,16 +690,18 @@ async def journal_list_trades(
     sort_by: str = "created_at",
     sort_dir: str = "DESC",
 ):
-    """List trades with optional filters and pagination."""
+    """List trades for the authenticated user with optional filters and pagination."""
     try:
         trades = await journal_schema.list_trades(
             symbol=symbol, direction=direction, outcome=outcome,
             signal_type=signal_type, tag=tag,
             limit=limit, offset=offset, sort_by=sort_by, sort_dir=sort_dir,
+            user_id=user["user_id"],
         )
         total = await journal_schema.get_trade_count(
             symbol=symbol, direction=direction, outcome=outcome,
             signal_type=signal_type, tag=tag,
+            user_id=user["user_id"],
         )
         return {"trades": trades, "total": total, "limit": limit, "offset": offset}
     except Exception as e:
@@ -706,9 +709,9 @@ async def journal_list_trades(
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.post("/api/journal/notes", dependencies=[Depends(get_current_user)])
-async def journal_add_note(request: Request):
-    """Add a note to a trade."""
+@app.post("/api/journal/notes")
+async def journal_add_note(request: Request, user: dict = Depends(get_current_user)):
+    """Add a note to a trade (must belong to user)."""
     try:
         data = await request.json()
         trade_id = data.get("trade_id")
@@ -716,6 +719,10 @@ async def journal_add_note(request: Request):
         screenshot_url = data.get("screenshot_url", "")
         if not trade_id:
             return JSONResponse(status_code=400, content={"error": "trade_id required"})
+        # Verify trade ownership before adding note
+        trade = await journal_schema.get_trade(trade_id, user_id=user["user_id"])
+        if not trade:
+            return JSONResponse(status_code=404, content={"error": "Trade not found"})
         note_id = await journal_schema.add_trade_note(trade_id, note_text, screenshot_url)
         return {"ok": True, "note_id": note_id}
     except Exception as e:
@@ -723,16 +730,27 @@ async def journal_add_note(request: Request):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.delete("/api/journal/notes/{note_id}", dependencies=[Depends(get_current_user)])
-async def journal_delete_note(note_id: int):
-    """Delete a trade note."""
+@app.delete("/api/journal/notes/{note_id}")
+async def journal_delete_note(note_id: int, user: dict = Depends(get_current_user)):
+    """Delete a trade note (must belong to user's trade)."""
     try:
+        # Find which trade this note belongs to via a direct query
+        async with _PooledConn() as conn:
+            async with conn.execute(
+                "SELECT trade_id FROM trade_notes WHERE id = ?", (note_id,)
+            ) as cur:
+                row = await cur.fetchone()
+        if not row:
+            return JSONResponse(status_code=404, content={"error": "Note not found"})
+        trade = await journal_schema.get_trade(row["trade_id"], user_id=user["user_id"])
+        if not trade:
+            return JSONResponse(status_code=404, content={"error": "Note not found"})
         ok = await journal_schema.delete_trade_note(note_id)
         if not ok:
             return JSONResponse(status_code=404, content={"error": "Note not found"})
         return {"ok": True}
     except Exception as e:
-        logger.error(f"[api/journal] Delete note error: {e}")
+        logger.error(f"[api/journal] Delete note error: {note_id}: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
@@ -758,11 +776,11 @@ async def journal_equity_curve(limit: int = 200):
         return JSONResponse(status_code=500, content={"error": str(e)})
 
 
-@app.get("/api/journal/tags", dependencies=[Depends(get_current_user)])
-async def journal_tags():
-    """Get all unique tags across trades."""
+@app.get("/api/journal/tags")
+async def journal_tags(user: dict = Depends(get_current_user)):
+    """Get all unique tags for the authenticated user's trades."""
     try:
-        tags = await journal_schema.get_all_tags()
+        tags = await journal_schema.get_all_tags(user_id=user["user_id"])
         return {"tags": tags}
     except Exception as e:
         logger.error(f"[api/journal/tags] Error: {e}")

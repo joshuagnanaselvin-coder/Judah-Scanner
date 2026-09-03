@@ -22,6 +22,7 @@ logger = logging.getLogger("judah.journal")
 _TRADES_SCHEMA = """
 -- Journal Table 1: Trades (manual trade entries)
 -- Supports full lifecycle: OPEN → WIN / LOSS / BREAK_EVEN / TIMEOUT
+-- Judah-specific fields (Phase 4 extension) — additive only
 CREATE TABLE IF NOT EXISTS trades (
     id               INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id          TEXT    DEFAULT 'default',
@@ -37,6 +38,28 @@ CREATE TABLE IF NOT EXISTS trades (
     leverage         REAL,
     confidence_score REAL,
     market_state     TEXT,
+    -- Judah context fields
+    spiral           TEXT,
+    market_evolution TEXT,
+    d1_zone          TEXT,
+    d2_zone          TEXT,
+    dealing_range_4h TEXT,
+    dealing_range_15m TEXT,
+    liquidity_type   TEXT,
+    liquidity_event  TEXT,
+    sweep            INTEGER DEFAULT 0,
+    bos              TEXT,
+    fib              REAL,
+    planned_entry    REAL,
+    actual_entry     REAL,
+    exit_reason      TEXT,
+    mfe              REAL,
+    mae              REAL,
+    session          TEXT,
+    r_multiple       REAL,
+    holding_time     INTEGER,
+    max_drawdown     REAL,
+    -- Outcome fields
     outcome          TEXT    DEFAULT 'OPEN' CHECK(outcome IN ('WIN','LOSS','BREAK_EVEN','TIMEOUT','OPEN')),
     pnl_pct          REAL,
     pnl_amount       REAL,
@@ -69,6 +92,7 @@ CREATE TABLE IF NOT EXISTS trade_tags (
 CREATE INDEX IF NOT EXISTS idx_trades_symbol    ON trades(symbol);
 CREATE INDEX IF NOT EXISTS idx_trades_outcome   ON trades(outcome);
 CREATE INDEX IF NOT EXISTS idx_trades_direction ON trades(direction);
+CREATE INDEX IF NOT EXISTS idx_trades_user_id   ON trades(user_id);
 CREATE INDEX IF NOT EXISTS idx_trades_opened    ON trades(opened_at);
 CREATE INDEX IF NOT EXISTS idx_trades_created   ON trades(created_at);
 CREATE INDEX IF NOT EXISTS idx_trade_notes_trade ON trade_notes(trade_id);
@@ -91,8 +115,8 @@ async def init_journal_schema() -> None:
 
 # ── Trades CRUD ─────────────────────────────────────────────────
 
-async def create_trade(data: dict[str, Any]) -> int | None:
-    """Insert a new trade. Returns the new trade id."""
+async def create_trade(data: dict[str, Any], user_id: str = "default") -> int | None:
+    """Insert a new trade for a specific user. Returns the new trade id."""
     try:
         async with _PooledConn() as conn:
             now = datetime.now(timezone.utc).isoformat()
@@ -102,12 +126,17 @@ async def create_trade(data: dict[str, Any]) -> int | None:
                     (user_id, symbol, direction, signal_type,
                      entry_price, exit_price, sl_price, tp_price, rr,
                      position_size, leverage, confidence_score, market_state,
+                     spiral, market_evolution, d1_zone, d2_zone,
+                     dealing_range_4h, dealing_range_15m,
+                     liquidity_type, liquidity_event, sweep, bos, fib,
+                     planned_entry, actual_entry, exit_reason,
+                     mfe, mae, session, r_multiple, holding_time, max_drawdown,
                      outcome, pnl_pct, pnl_amount, notes, opened_at, closed_at,
                      created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
-                    data.get("user_id", "default"),
+                    user_id,
                     data.get("symbol", "").upper(),
                     data.get("direction", "LONG"),
                     data.get("signal_type", "NONE"),
@@ -120,6 +149,26 @@ async def create_trade(data: dict[str, Any]) -> int | None:
                     data.get("leverage"),
                     data.get("confidence_score"),
                     data.get("market_state"),
+                    data.get("spiral"),
+                    data.get("market_evolution"),
+                    data.get("d1_zone"),
+                    data.get("d2_zone"),
+                    data.get("dealing_range_4h"),
+                    data.get("dealing_range_15m"),
+                    data.get("liquidity_type"),
+                    data.get("liquidity_event"),
+                    1 if data.get("sweep") else 0,
+                    data.get("bos"),
+                    data.get("fib"),
+                    data.get("planned_entry"),
+                    data.get("actual_entry"),
+                    data.get("exit_reason"),
+                    data.get("mfe"),
+                    data.get("mae"),
+                    data.get("session"),
+                    data.get("r_multiple"),
+                    data.get("holding_time"),
+                    data.get("max_drawdown"),
                     data.get("outcome", "OPEN"),
                     data.get("pnl_pct"),
                     data.get("pnl_amount"),
@@ -146,8 +195,8 @@ async def create_trade(data: dict[str, Any]) -> int | None:
         return None
 
 
-async def update_trade(trade_id: int, data: dict[str, Any]) -> bool:
-    """Update an existing trade by id. Returns True if a row was modified."""
+async def update_trade(trade_id: int, data: dict[str, Any], user_id: str = "default") -> bool:
+    """Update a trade by id, verifying ownership. Returns True if modified."""
     try:
         fields: list[str] = []
         values: list[Any] = []
@@ -156,6 +205,11 @@ async def update_trade(trade_id: int, data: dict[str, Any]) -> bool:
             "sl_price", "tp_price", "rr", "position_size", "leverage",
             "confidence_score", "market_state", "outcome", "pnl_pct",
             "pnl_amount", "notes", "opened_at", "closed_at",
+            "spiral", "market_evolution", "d1_zone", "d2_zone",
+            "dealing_range_4h", "dealing_range_15m",
+            "liquidity_type", "liquidity_event", "sweep", "bos", "fib",
+            "planned_entry", "actual_entry", "exit_reason",
+            "mfe", "mae", "session", "r_multiple", "holding_time", "max_drawdown",
         }
         for key in allowed:
             if key in data:
@@ -166,12 +220,12 @@ async def update_trade(trade_id: int, data: dict[str, Any]) -> bool:
 
         fields.append("updated_at = ?")
         values.append(datetime.now(timezone.utc).isoformat())
-        values.append(trade_id)
+        values.extend([user_id, trade_id])
 
         async with _PooledConn() as conn:
             await conn.execute(
                 f"UPDATE trades SET {', '.join(fields)} "
-                f"WHERE id = ? AND is_deleted = 0",
+                f"WHERE id = ? AND user_id = ? AND is_deleted = 0",
                 values,
             )
             # Replace tags if provided
@@ -192,13 +246,14 @@ async def update_trade(trade_id: int, data: dict[str, Any]) -> bool:
         return False
 
 
-async def delete_trade(trade_id: int) -> bool:
-    """Soft-delete a trade. Returns True if the row existed."""
+async def delete_trade(trade_id: int, user_id: str = "default") -> bool:
+    """Soft-delete a trade, verifying ownership. Returns True if the row existed."""
     try:
         async with _PooledConn() as conn:
             await conn.execute(
-                "UPDATE trades SET is_deleted = 1, updated_at = ? WHERE id = ?",
-                (datetime.now(timezone.utc).isoformat(), trade_id),
+                "UPDATE trades SET is_deleted = 1, updated_at = ? "
+                "WHERE id = ? AND user_id = ?",
+                (datetime.now(timezone.utc).isoformat(), trade_id, user_id),
             )
             await conn.commit()
             return True
@@ -207,18 +262,23 @@ async def delete_trade(trade_id: int) -> bool:
         return False
 
 
-async def get_trade(trade_id: int) -> dict[str, Any] | None:
-    """Get a single trade by id, with its notes and tags."""
+async def get_trade(trade_id: int, user_id: str = "default") -> dict[str, Any] | None:
+    """Get a single trade by id (with ownership check), plus notes and tags."""
     try:
         async with _PooledConn() as conn:
             async with conn.execute(
                 """SELECT id, user_id, symbol, direction, signal_type,
                           entry_price, exit_price, sl_price, tp_price, rr,
                           position_size, leverage, confidence_score, market_state,
+                          spiral, market_evolution, d1_zone, d2_zone,
+                          dealing_range_4h, dealing_range_15m,
+                          liquidity_type, liquidity_event, sweep, bos, fib,
+                          planned_entry, actual_entry, exit_reason,
+                          mfe, mae, session, r_multiple, holding_time, max_drawdown,
                           outcome, pnl_pct, pnl_amount, notes,
                           opened_at, closed_at, created_at, updated_at
-                   FROM trades WHERE id = ? AND is_deleted = 0""",
-                (trade_id,),
+                   FROM trades WHERE id = ? AND user_id = ? AND is_deleted = 0""",
+                (trade_id, user_id),
             ) as cur:
                 row = await cur.fetchone()
             if not row:
@@ -256,16 +316,17 @@ async def list_trades(
     offset: int = 0,
     sort_by: str = "created_at",
     sort_dir: str = "DESC",
+    user_id: str = "default",
 ) -> list[dict[str, Any]]:
-    """List trades with optional filters, pagination, and sorting."""
+    """List trades for a specific user with optional filters, pagination, and sorting."""
     allowed_sort = {"created_at", "opened_at", "closed_at", "symbol", "pnl_pct", "outcome"}
     if sort_by not in allowed_sort:
         sort_by = "created_at"
     if sort_dir.upper() not in ("ASC", "DESC"):
         sort_dir = "DESC"
 
-    where = ["is_deleted = 0"]
-    params: list[Any] = []
+    where = ["is_deleted = 0", "user_id = ?"]
+    params: list[Any] = [user_id]
 
     if symbol:
         where.append("UPPER(symbol) = ?")
@@ -289,7 +350,12 @@ async def list_trades(
     sql = (
         "SELECT id, symbol, direction, signal_type, entry_price, exit_price, "
         "sl_price, tp_price, rr, position_size, leverage, confidence_score, "
-        "market_state, outcome, pnl_pct, pnl_amount, opened_at, closed_at, "
+        "market_state, spiral, market_evolution, d1_zone, d2_zone, "
+        "dealing_range_4h, dealing_range_15m, "
+        "liquidity_type, liquidity_event, sweep, bos, fib, "
+        "planned_entry, actual_entry, exit_reason, "
+        "mfe, mae, session, r_multiple, holding_time, max_drawdown, "
+        "outcome, pnl_pct, pnl_amount, opened_at, closed_at, "
         "created_at, updated_at "
         "FROM trades "
         f"WHERE {' AND '.join(where)} "
@@ -313,10 +379,11 @@ async def get_trade_count(
     outcome: str = "",
     signal_type: str = "",
     tag: str = "",
+    user_id: str = "default",
 ) -> int:
-    """Count matching trades (for pagination)."""
-    where = ["is_deleted = 0"]
-    params: list[Any] = []
+    """Count matching trades for a specific user (for pagination)."""
+    where = ["is_deleted = 0", "user_id = ?"]
+    params: list[Any] = [user_id]
 
     if symbol:
         where.append("UPPER(symbol) = ?")
@@ -384,12 +451,16 @@ async def delete_trade_note(note_id: int) -> bool:
 
 # ── Tags ────────────────────────────────────────────────────────
 
-async def get_all_tags() -> list[str]:
-    """Get all unique tags across all trades, sorted."""
+async def get_all_tags(user_id: str = "default") -> list[str]:
+    """Get all unique tags for a user's trades, sorted."""
     try:
         async with _PooledConn() as conn:
             async with conn.execute(
-                "SELECT DISTINCT tag FROM trade_tags ORDER BY tag"
+                "SELECT DISTINCT tag FROM trade_tags tt "
+                "JOIN trades t ON t.id = tt.trade_id "
+                "WHERE t.user_id = ? AND t.is_deleted = 0 "
+                "ORDER BY tag",
+                (user_id,),
             ) as cur:
                 return [r["tag"] for r in await cur.fetchall()]
     except Exception:
@@ -399,13 +470,14 @@ async def get_all_tags() -> list[str]:
 
 # ── Statistics ──────────────────────────────────────────────────
 
-async def get_journal_stats() -> dict[str, Any]:
-    """Aggregate statistics from the journal for the analytics page."""
+async def get_journal_stats(user_id: str = "default") -> dict[str, Any]:
+    """Aggregate statistics from the journal for a specific user."""
     try:
         async with _PooledConn() as conn:
             # Totals
             async with conn.execute(
-                "SELECT COUNT(*) as total FROM trades WHERE is_deleted = 0"
+                "SELECT COUNT(*) as total FROM trades WHERE is_deleted = 0 AND user_id = ?",
+                (user_id,),
             ) as cur:
                 totals = dict(await cur.fetchone())
 
@@ -416,8 +488,9 @@ async def get_journal_stats() -> dict[str, Any]:
                           AVG(pnl_pct) as avg_pnl_pct,
                           SUM(pnl_amount) as total_pnl
                    FROM trades
-                   WHERE is_deleted = 0 AND outcome != 'OPEN'
-                   GROUP BY outcome"""
+                   WHERE is_deleted = 0 AND user_id = ? AND outcome != 'OPEN'
+                   GROUP BY outcome""",
+                (user_id,),
             ) as cur:
                 outcomes = {r["outcome"]: dict(r) for r in await cur.fetchall()}
 
@@ -440,8 +513,9 @@ async def get_journal_stats() -> dict[str, Any]:
             async with conn.execute(
                 """SELECT direction, COUNT(*) as n,
                           SUM(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END) as wins
-                   FROM trades WHERE is_deleted = 0 AND outcome != 'OPEN'
-                   GROUP BY direction"""
+                   FROM trades WHERE is_deleted = 0 AND user_id = ? AND outcome != 'OPEN'
+                   GROUP BY direction""",
+                (user_id,),
             ) as cur:
                 by_direction = {r["direction"]: dict(r) async for r in cur}
 
@@ -449,20 +523,22 @@ async def get_journal_stats() -> dict[str, Any]:
             async with conn.execute(
                 """SELECT signal_type, COUNT(*) as n,
                           SUM(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END) as wins
-                   FROM trades WHERE is_deleted = 0 AND outcome != 'OPEN'
-                   GROUP BY signal_type"""
+                   FROM trades WHERE is_deleted = 0 AND user_id = ? AND outcome != 'OPEN'
+                   GROUP BY signal_type""",
+                (user_id,),
             ) as cur:
                 by_signal_type = {r["signal_type"]: dict(r) async for r in cur}
 
-            # By tag (joins with trades to filter non-deleted)
+            # By tag (joins with trades to filter non-deleted and user)
             async with conn.execute(
                 """SELECT tt.tag, COUNT(*) as n,
                           SUM(CASE WHEN t.outcome='WIN' THEN 1 ELSE 0 END) as wins,
                           AVG(t.pnl_pct) as avg_pnl_pct
                    FROM trade_tags tt
                    JOIN trades t ON t.id = tt.trade_id
-                   WHERE t.is_deleted = 0 AND t.outcome != 'OPEN'
-                   GROUP BY tt.tag"""
+                   WHERE t.is_deleted = 0 AND t.user_id = ? AND t.outcome != 'OPEN'
+                   GROUP BY tt.tag""",
+                (user_id,),
             ) as cur:
                 by_tag = {r["tag"]: dict(r) async for r in cur}
 
@@ -482,8 +558,9 @@ async def get_journal_stats() -> dict[str, Any]:
             # Max consecutive wins/losses (simple)
             async with conn.execute(
                 """SELECT outcome FROM trades
-                   WHERE is_deleted = 0 AND outcome IN ('WIN','LOSS')
-                   ORDER BY closed_at ASC"""
+                   WHERE is_deleted = 0 AND user_id = ? AND outcome IN ('WIN','LOSS')
+                   ORDER BY closed_at ASC""",
+                (user_id,),
             ) as cur:
                 rows = await cur.fetchall()
             max_consec_wins = 0
@@ -523,19 +600,19 @@ async def get_journal_stats() -> dict[str, Any]:
         return {}
 
 
-async def get_equity_curve(limit: int = 200) -> list[dict[str, Any]]:
-    """Get cumulative PnL over time for equity curve chart."""
+async def get_equity_curve(limit: int = 200, user_id: str = "default") -> list[dict[str, Any]]:
+    """Get cumulative PnL over time for a specific user's equity curve chart."""
     try:
         async with _PooledConn() as conn:
             async with conn.execute(
                 """SELECT closed_at, SUM(pnl_pct) OVER (ORDER BY closed_at) as equity,
                           pnl_pct, symbol, outcome
                    FROM trades
-                   WHERE is_deleted = 0 AND outcome != 'OPEN'
+                   WHERE is_deleted = 0 AND user_id = ? AND outcome != 'OPEN'
                      AND closed_at IS NOT NULL
                    ORDER BY closed_at ASC
                    LIMIT ?""",
-                (limit,),
+                (user_id, limit),
             ) as cur:
                 rows = await cur.fetchall()
         return [dict(r) for r in rows]
