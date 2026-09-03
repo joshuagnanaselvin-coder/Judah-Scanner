@@ -191,6 +191,18 @@ async def init_schema() -> None:
     logger.info("[db] Schema initialized at %s", _DB_PATH)
 
 
+async def _write_lock():
+    """Acquire the global write lock (no-op if pool not initialized yet)."""
+    if _pool_lock is not None:
+        await _pool_lock.acquire()
+
+
+def _write_unlock():
+    """Release the global write lock."""
+    if _pool_lock is not None:
+        _pool_lock.release()
+
+
 # ── Signal Outcomes ─────────────────────────────────────────────
 
 async def insert_outcome(row: dict) -> int | None:
@@ -277,28 +289,32 @@ async def load_all_bayes() -> dict[str, dict]:
 async def insert_transition(row: dict) -> int | None:
     """Insert a state transition record."""
     try:
-        async with _PooledConn() as conn:
-            cur = await conn.execute(
-                """
-                INSERT INTO state_transitions
-                    (coin, ts, state, spiral, direction,
-                     d1_score, d2_score, momentum_velocity, evolution)
-                VALUES (?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    row.get("coin"),
-                    row.get("ts"),
-                    row.get("state"),
-                    row.get("spiral"),
-                    row.get("direction"),
-                    row.get("d1_score"),
-                    row.get("d2_score"),
-                    row.get("momentum_velocity"),
-                    row.get("evolution"),
-                ),
-            )
-            await conn.commit()
-            return cur.lastrowid
+        await _write_lock()
+        try:
+            async with _PooledConn() as conn:
+                cur = await conn.execute(
+                    """
+                    INSERT INTO state_transitions
+                        (coin, ts, state, spiral, direction,
+                         d1_score, d2_score, momentum_velocity, evolution)
+                    VALUES (?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        row.get("coin"),
+                        row.get("ts"),
+                        row.get("state"),
+                        row.get("spiral"),
+                        row.get("direction"),
+                        row.get("d1_score"),
+                        row.get("d2_score"),
+                        row.get("momentum_velocity"),
+                        row.get("evolution"),
+                    ),
+                )
+                await conn.commit()
+                return cur.lastrowid
+        finally:
+            _write_unlock()
     except Exception:
         logger.exception("[db] Failed to insert transition for %s", row.get("coin"))
         return None
@@ -309,31 +325,35 @@ async def insert_transition(row: dict) -> int | None:
 async def insert_decision(row: dict) -> int | None:
     """Insert a D3 fusion decision record."""
     try:
-        async with _PooledConn() as conn:
-            cur = await conn.execute(
-                """
-                INSERT INTO decisions
-                    (coin, ts, signal_type, action, position_mult, stop_mult,
-                     ev_pct, confidence, d1_tier, d1_score, d2_tier, d2_score)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    row.get("coin"),
-                    row.get("ts"),
-                    row.get("signal_type"),
-                    row.get("action"),
-                    row.get("position_mult"),
-                    row.get("stop_mult"),
-                    row.get("ev_pct"),
-                    row.get("confidence"),
-                    row.get("d1_tier"),
-                    row.get("d1_score"),
-                    row.get("d2_tier"),
-                    row.get("d2_score"),
-                ),
-            )
-            await conn.commit()
-            return cur.lastrowid
+        await _write_lock()
+        try:
+            async with _PooledConn() as conn:
+                cur = await conn.execute(
+                    """
+                    INSERT INTO decisions
+                        (coin, ts, signal_type, action, position_mult, stop_mult,
+                         ev_pct, confidence, d1_tier, d1_score, d2_tier, d2_score)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        row.get("coin"),
+                        row.get("ts"),
+                        row.get("signal_type"),
+                        row.get("action"),
+                        row.get("position_mult"),
+                        row.get("stop_mult"),
+                        row.get("ev_pct"),
+                        row.get("confidence"),
+                        row.get("d1_tier"),
+                        row.get("d1_score"),
+                        row.get("d2_tier"),
+                        row.get("d2_score"),
+                    ),
+                )
+                await conn.commit()
+                return cur.lastrowid
+        finally:
+            _write_unlock()
     except Exception:
         logger.exception("[db] Failed to insert decision for %s", row.get("coin"))
         return None
