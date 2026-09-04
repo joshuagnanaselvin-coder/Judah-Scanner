@@ -583,8 +583,11 @@
     async function saveTrade() {
       const coin = document.getElementById('fCoin').value.trim().toUpperCase();
       if (!coin) { showToast('Enter coin name', 'error'); return; }
-      const entry = parseFloat(document.getElementById('fEntry').value) || null;
-      const exit = parseFloat(document.getElementById('fExit').value) || null;
+      const entryRaw = document.getElementById('fEntry').value.trim();
+      const entry = entryRaw !== '' ? parseFloat(entryRaw) : null;
+      if (entry === null || isNaN(entry)) { showToast('Enter entry price', 'error'); return; }
+      const exitRaw = document.getElementById('fExit').value.trim();
+      const exit = exitRaw !== '' ? parseFloat(exitRaw) : null;
       const maxLoss = parseFloat(document.getElementById('fMaxLoss').value) || null;
       const maxProfit = parseFloat(document.getElementById('fMaxProfit').value) || null;
       const pnl = parseFloat(document.getElementById('fPnl').value) || null;

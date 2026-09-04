@@ -69,15 +69,6 @@
     }
     .sl-pct-btn:hover { border-color: var(--accent); }
     .sl-pct-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-    .risk-grid { display: flex; gap: 6px; flex-wrap: wrap; }
-    .risk-btn {
-      width: 52px; padding: 8px 0; border: 1px solid var(--border);
-      border-radius: var(--radius-sm); background: var(--bg); color: var(--text-sec);
-      font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.15s;
-      text-align: center;
-    }
-    .risk-btn:hover { border-color: var(--amber); color: var(--amber); }
-    .risk-btn.active { background: var(--amber); border-color: var(--amber); color: #000; }
     .result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .result-item {
       background: var(--bg); border-radius: var(--radius-sm);
@@ -162,7 +153,7 @@
       </div>
 
       <div class="field">
-        <label>Quick SL % from Entry (sets SL price automatically)</label>
+        <label>Quick SL from Entry</label>
         <div class="sl-pct-grid">
           <button class="sl-pct-btn" onclick="setSlPct(0.5)">0.5%</button>
           <button class="sl-pct-btn" onclick="setSlPct(1)">1%</button>
@@ -170,6 +161,9 @@
           <button class="sl-pct-btn" onclick="setSlPct(3)">3%</button>
           <button class="sl-pct-btn" onclick="setSlPct(4)">4%</button>
           <button class="sl-pct-btn" onclick="setSlPct(5)">5%</button>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">
+          Sets SL price = Entry &times; (1 &minus; %) for LONG, Entry &times; (1 + %) for SHORT
         </div>
       </div>
 
@@ -179,8 +173,8 @@
           <input type="number" id="margin" placeholder="100" step="1" value="100" oninput="calc()">
         </div>
         <div class="field">
-          <label>Max Risk (USD) — what you want to lose if SL hits</label>
-          <input type="number" id="riskCustom" placeholder="12" step="1" oninput="calc()">
+          <label>Max Risk (USD) &mdash; what you want to lose if SL hits</label>
+          <input type="number" id="riskCustom" placeholder="12" step="1" value="12" oninput="calc()">
         </div>
       </div>
     </div>
@@ -198,12 +192,12 @@
           <div class="result-value" id="rLev">&mdash;</div>
         </div>
         <div class="result-item">
-          <div class="result-label">Max Loss</div>
-          <div class="result-value red" id="rMaxLoss">&mdash;</div>
-        </div>
-        <div class="result-item">
           <div class="result-label">Position Size</div>
           <div class="result-value" id="rPosSize">&mdash;</div>
+        </div>
+        <div class="result-item">
+          <div class="result-label">Actual Loss at SL</div>
+          <div class="result-value red" id="rActualLoss">&mdash;</div>
         </div>
       </div>
       <div class="summary-box" id="summary">Fill entry + SL to see plan.</div>
@@ -251,7 +245,6 @@
       selectedSymbol = coin;
       coinSearch.value = coin;
       coinDropdown.classList.remove('open');
-      // Fetch live price from backend
       coinPriceInfo.textContent = 'Fetching price...';
       coinPriceInfo.className = 'coin-price-fetching';
       try {
@@ -284,30 +277,17 @@
       calc();
     }
 
-    // ── Risk ──
-    function setRisk(amt, btn) {
-      currentRisk = amt;
-      document.getElementById('riskCustom').value = '';
-      document.querySelectorAll('.risk-btn').forEach(b => b.classList.remove('active'));
-      if (btn) btn.classList.add('active');
-      calc();
-    }
-
-    // ── SL % ──
+    // ── SL % quick buttons (set SL price from Entry) ──
     function setSlPct(pct) {
       currentSlPct = pct;
       document.querySelectorAll('.sl-pct-btn').forEach(b => {
         b.classList.toggle('active', parseInt(b.textContent) === pct);
       });
-      applySlPct();
-    }
-
-    function applySlPct() {
       const entry = parseFloat(document.getElementById('entry').value);
       if (!entry) return;
       let sl;
-      if (direction === 'LONG') sl = entry * (1 - currentSlPct / 100);
-      else sl = entry * (1 + currentSlPct / 100);
+      if (direction === 'LONG') sl = entry * (1 - pct / 100);
+      else sl = entry * (1 + pct / 100);
       document.getElementById('sl').value = sl.toFixed(entry < 1 ? 6 : 2);
       calc();
     }
@@ -322,40 +302,44 @@
 
       const rSlPct = document.getElementById('rSlPct');
       const rLev = document.getElementById('rLev');
-      const rMaxLoss = document.getElementById('rMaxLoss');
       const rPosSize = document.getElementById('rPosSize');
+      const rActualLoss = document.getElementById('rActualLoss');
       const summary = document.getElementById('summary');
 
       if (!entry || !sl) {
         rSlPct.innerHTML = '&mdash;'; rLev.innerHTML = '&mdash;';
-        rMaxLoss.innerHTML = '&mdash;'; rPosSize.innerHTML = '&mdash;';
+        rPosSize.innerHTML = '&mdash;'; rActualLoss.innerHTML = '&mdash;';
         summary.textContent = 'Fill entry + SL to see plan.';
         return;
       }
 
+      // SL% is CALCULATED from Entry and SL price
       const slDist = Math.abs(entry - sl);
       const slPct = (slDist / entry) * 100;
+
+      // Formula: Leverage = Risk / (Margin x SL%)
       const maxLoss = margin * slPct / 100;
       const lev = maxLoss > 0 ? risk / maxLoss : 0;
       const posSize = margin * lev;
+      const actualLoss = posSize * slPct / 100; // should equal Risk
 
       rSlPct.textContent = slPct.toFixed(3) + '%';
       rLev.textContent = lev > 0 ? lev.toFixed(1) + 'x' : '&mdash;';
-      rMaxLoss.textContent = '$' + maxLoss.toFixed(2);
       rPosSize.textContent = '$' + posSize.toFixed(2);
+      rActualLoss.textContent = '$' + actualLoss.toFixed(2);
 
       summary.innerHTML =
         `<span class="hl">${direction}</span> ${selectedSymbol || 'COIN'}\n` +
         `Entry: $${entry.toFixed(entry < 1 ? 6 : 2)} | SL: $${sl.toFixed(entry < 1 ? 6 : 2)}\n` +
         `SL: ${slPct.toFixed(2)}% | Leverage: ${lev > 0 ? lev.toFixed(1) + 'x' : '&mdash;'}\n` +
-        `Margin: $${margin} | Risk: $${risk} | Max Loss: $${maxLoss.toFixed(2)}`;
+        `Margin: $${margin} | Risk: $${risk} | Max Loss: $${actualLoss.toFixed(2)}`;
     }
 
     function resetCalc() {
       document.getElementById('entry').value = '';
       document.getElementById('sl').value = '';
       document.getElementById('margin').value = '100';
-      document.getElementById('riskCustom').value = '';
+      document.getElementById('riskCustom').value = '12';
       currentRisk = 12; currentSlPct = 5;
       document.querySelectorAll('.sl-pct-btn').forEach(b => {
         b.classList.toggle('active', parseInt(b.textContent) === 5);
@@ -375,7 +359,8 @@
       const risk = customRisk || currentRisk;
       const margin = parseFloat(document.getElementById('margin').value) || 0;
       const slDist = Math.abs(entry - sl);
-      const maxLoss = margin * slDist / entry * 100;
+      const slPct = (slDist / entry) * 100;
+      const maxLoss = margin * slPct / 100;
       const lev = maxLoss > 0 ? risk / maxLoss : 0;
 
       const payload = {
@@ -386,7 +371,7 @@
         position_size: margin * lev,
         leverage: lev || null,
         outcome: 'OPEN',
-        notes: `Calc: SL ${(slDist/entry*100).toFixed(2)}% | Risk INR${risk} | Lev ${lev > 0 ? lev.toFixed(1) + 'x' : 'N/A'}`,
+        notes: `Calc: SL ${slPct.toFixed(2)}% | Risk $${risk} | Lev ${lev > 0 ? lev.toFixed(1) + 'x' : 'N/A'}`,
         opened_at: new Date().toISOString(),
         tags: ['calculator'],
       };
