@@ -651,7 +651,7 @@ async def journal_create_trade(request: Request, user: dict = Depends(get_curren
         data = await request.json()
         trade_id = await journal_schema.create_trade(data, user_id=user["user_id"])
         if trade_id is None:
-            return JSONResponse(status_code=400, content={"error": "Failed to create trade"})
+            return JSONResponse(status_code=400, content={"error": "create_trade returned None — check backend logs"})
         return {"ok": True, "trade_id": trade_id}
     except Exception as e:
         logger.error(f"[api/journal] Create error: {e}")
