@@ -127,7 +127,7 @@ async def init_journal_schema() -> None:
 # ── Trades CRUD ─────────────────────────────────────────────────
 
 async def create_trade(data: dict[str, Any], user_id: str = "default") -> int | None:
-    """Insert a new trade for a specific user. Returns the new trade id."""
+    """Insert a new trade. Returns the new trade id or raises."""
     try:
         async with _PooledConn() as conn:
             now = datetime.now(timezone.utc).isoformat()
@@ -201,9 +201,9 @@ async def create_trade(data: dict[str, Any], user_id: str = "default") -> int | 
                 )
                 await conn.commit()
             return trade_id
-    except Exception:
+    except Exception as e:
         logger.exception("[journal] Failed to create trade for %s", data.get("symbol"))
-        return None
+        raise  # <-- re-raise so the API endpoint can return the actual error
 
 
 async def update_trade(trade_id: int, data: dict[str, Any], user_id: str = "default") -> bool:
