@@ -119,6 +119,18 @@ async def init_journal_schema() -> None:
     try:
         async with _PooledConn() as conn:
             await conn.executescript(_TRADES_SCHEMA)
+            # Migrate: add columns that were added after initial VPS deploy
+            for col in ("spiral", "market_evolution", "d1_zone", "d2_zone",
+                        "dealing_range_4h", "dealing_range_15m",
+                        "liquidity_type", "liquidity_event", "sweep", "bos", "fib",
+                        "planned_entry", "actual_entry", "exit_reason",
+                        "mfe", "mae", "session", "r_multiple", "holding_time", "max_drawdown",
+                        "confidence_score", "position_size", "leverage",
+                        "pnl_pct", "pnl_amount", "is_deleted"):
+                try:
+                    await conn.execute(f"ALTER TABLE trades ADD COLUMN {col} TEXT")
+                except Exception:
+                    pass  # column already exists
         logger.info("[journal] Schema initialized")
     except Exception:
         logger.exception("[journal] Schema init failed")
@@ -128,8 +140,8 @@ async def init_journal_schema() -> None:
 
 async def create_trade(data: dict[str, Any], user_id: str = "default") -> int | None:
     """Insert a new trade. Returns the new trade id or raises."""
+    await _write_lock()
     try:
-        await _write_lock()
         try:
             async with _PooledConn() as conn:
                 now = datetime.now(timezone.utc).isoformat()
@@ -203,12 +215,11 @@ async def create_trade(data: dict[str, Any], user_id: str = "default") -> int | 
                     )
                     await conn.commit()
                 return trade_id
-        finally:
-            _write_unlock()
-
-
-async def update_trade(trade_id: int, data: dict[str, Any], user_id: str = "default") -> bool:
-    """Update a trade by id, verifying ownership. Returns True if modified."""
+        except Exception:
+            logger.exception("[journal] Failed to create trade for %s", data.get("symbol"))
+            raise
+    finally:
+        _write_unlock()
     await _write_lock()
     try:
         fields: list[str] = []
