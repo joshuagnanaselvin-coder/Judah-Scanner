@@ -25,7 +25,7 @@ except Exception:
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Depends, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 # ── Cached frontend assets (prevent file descriptor leak on every request) ──
 # These files only change on container redeployment, so caching for the process
@@ -776,10 +776,10 @@ async def journal_delete_note(note_id: int, user: dict = Depends(get_current_use
 
 
 @app.get("/api/journal/stats")
-async def journal_stats(user: dict = Depends(get_current_user)):
-    """Journal aggregate stats for the authenticated user."""
+async def journal_stats(user: dict = Depends(get_current_user), date: str = ""):
+    """Journal aggregate stats for the authenticated user, optionally filtered by date."""
     try:
-        stats = await journal_schema.get_journal_stats(user_id=user["user_id"])
+        stats = await journal_schema.get_journal_stats(user_id=user["user_id"], date=date)
         return stats if stats else {"error": "No trades yet"}
     except Exception as e:
         logger.error(f"[api/journal/stats] Error: {e}")
@@ -1123,6 +1123,67 @@ async def startup():
         logger.exception("[startup] Auth bootstrap failed")
 
     asyncio.create_task(_bootstrap())
+
+
+# ── Journal utility endpoints (no scanner code touched) ────────
+
+@app.get("/api/coin-price", dependencies=[Depends(get_current_user)])
+async def coin_price(symbol: str):
+    """Return current live price for a coin from market_data."""
+    try:
+        s = symbol.upper().strip()
+        price = None
+        source = ""
+        for tf in ["15M", "4H"]:
+            candles = market_data.get_candles(s, tf)
+            if candles:
+                price = candles[-1].close
+                source = tf
+                break
+        if price is not None:
+            return {"symbol": s, "price": price, "source": source}
+        return JSONResponse(status_code=404, content={"error": f"No data for {s}"})
+    except Exception as e:
+        logger.error(f"[api/coin-price] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.get("/api/journal/export", dependencies=[Depends(get_current_user)])
+async def journal_export(format: str = "csv", date: str = "", user: dict = Depends(get_current_user)):
+    """Export trades as CSV."""
+    try:
+        if format.lower() != "csv":
+            return JSONResponse(status_code=400, content={"error": "Only CSV format supported"})
+        csv_content = await journal_schema.export_trades_csv(user_id=user["user_id"], date=date)
+        if csv_content is None:
+            return JSONResponse(status_code=404, content={"error": "No trades to export"})
+        return Response(
+            content=csv_content,
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="journal_{date or "all"}.csv"'},
+        )
+    except Exception as e:
+        logger.error(f"[api/journal/export] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/journal/image", dependencies=[Depends(get_current_user)])
+async def journal_upload_image(request: Request):
+    """Upload a base64 image from clipboard paste. Returns the public URL."""
+    try:
+        data = await request.json()
+        image_data = data.get("image", "")
+        filename = data.get("filename", "")
+        if not image_data:
+            return JSONResponse(status_code=400, content={"error": "No image data"})
+        url = await journal_schema.save_journal_image(image_data, filename)
+        if url:
+            return {"ok": True, "url": url}
+        return JSONResponse(status_code=500, content={"error": "Failed to save image"})
+    except Exception as e:
+        logger.error(f"[api/journal/image] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 
 if __name__ == "__main__":
     import uvicorn

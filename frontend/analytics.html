@@ -5,387 +5,183 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#0c1220">
   <title>Judah — Analytics</title>
-  <link rel="stylesheet" href="/static/style.css?v=3">
+  <link rel="stylesheet" href="/static/style.css?v=6">
   <style>
-    .analytics-layout {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 8px;
-    }
+    .a-wrap { max-width: 700px; margin: 0 auto; padding: 12px; }
 
-    .section-title {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--text-sec);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin: 16px 0 10px;
-      padding-bottom: 6px;
+    .card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px; margin-bottom: 12px;
+    }
+    .card-title {
+      font-size: 11px; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin-bottom: 12px; padding-bottom: 8px;
       border-bottom: 1px solid var(--border-subtle);
     }
 
-    /* Expectancy cards */
-    .expectancy-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-      gap: 8px;
-      margin-bottom: 16px;
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+    .stat-box {
+      background: var(--bg); border-radius: var(--radius-sm);
+      padding: 12px; text-align: center;
     }
-    .exp-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 14px;
-      text-align: center;
+    .stat-box .s-label {
+      font-size: 10px; color: var(--text-muted); text-transform: uppercase;
+      letter-spacing: 0.3px; margin-bottom: 4px;
     }
-    .exp-card .ec-label {
-      font-size: 10px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
-      margin-bottom: 4px;
-    }
-    .exp-card .ec-value {
-      font-size: 22px;
-      font-weight: 700;
+    .stat-box .s-value {
+      font-size: 22px; font-weight: 800;
       font-family: 'SF Mono', 'Fira Code', monospace;
     }
-    .ec-value.green { color: var(--green); }
-    .ec-value.red { color: var(--red); }
-    .ec-value.amber { color: var(--amber); }
-    .ec-value.blue { color: var(--accent); }
+    .s-value.green { color: var(--green); }
+    .s-value.red { color: var(--red); }
+    .s-value.amber { color: var(--amber); }
+    .s-value.blue { color: var(--accent); }
+    .s-value.white { color: var(--text); }
 
-    /* Breakdown tables */
-    .breakdown-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
-    @media (max-width: 768px) {
-      .breakdown-grid { grid-template-columns: 1fr; }
-    }
-
-    .breakdown-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      overflow: hidden;
-    }
-    .breakdown-card .bc-header {
-      padding: 10px 14px;
-      font-size: 11px;
-      font-weight: 600;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
-      border-bottom: 1px solid var(--border-subtle);
+    /* Breakdown table */
+    .bk-table { width: 100%; border-collapse: collapse; }
+    .bk-table th {
+      text-align: left; font-size: 10px; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.3px;
+      padding: 6px 10px; border-bottom: 1px solid var(--border);
       background: var(--bg);
     }
-    .breakdown-card table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-    .breakdown-card td {
-      padding: 7px 14px;
-      font-size: 12px;
+    .bk-table td {
+      padding: 7px 10px; font-size: 12px;
       border-bottom: 1px solid var(--border-subtle);
     }
-    .breakdown-card td:first-child { color: var(--text-sec); }
-    .breakdown-card td:last-child {
-      font-family: 'SF Mono', 'Fira Code', monospace;
-      text-align: right;
+    .bk-table td:last-child {
+      font-family: 'SF Mono', 'Fira Code', monospace; text-align: right;
     }
-    .breakdown-card tr:last-child td { border-bottom: none; }
+    .bk-table tr:last-child td { border-bottom: none; }
 
-    /* Equity curve chart (SVG) */
-    .chart-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 14px;
-      margin-bottom: 16px;
-    }
-    .chart-card h3 {
-      font-size: 11px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
-      margin-bottom: 10px;
-    }
-    .chart-svg {
-      width: 100%;
-      height: 200px;
-    }
-    .chart-svg .axis { stroke: var(--border); stroke-width: 0.5; }
-    .chart-svg .grid-line { stroke: var(--border-subtle); stroke-width: 0.3; }
-    .chart-svg .curve { fill: none; stroke: var(--accent); stroke-width: 2; }
-    .chart-svg .fill { opacity: 0.1; }
-    .chart-svg .zero-line { stroke: var(--amber); stroke-width: 0.5; stroke-dasharray: 3,3; }
-    .chart-svg text { fill: var(--text-muted); font-size: 9px; }
-
-    /* Streaks */
-    .streak-bar {
-      display: flex;
-      height: 24px;
-      border-radius: var(--radius-sm);
-      overflow: hidden;
-      margin-top: 6px;
-    }
-    .streak-bar .s-win { background: var(--green); }
-    .streak-bar .s-loss { background: var(--red); }
-    .streak-bar .s-be { background: var(--amber); }
-    .streak-legend {
-      display: flex;
-      gap: 12px;
-      margin-top: 6px;
-      font-size: 10px;
-      color: var(--text-muted);
-    }
-
-    /* Nav */
-    .page-nav {
-      display: flex;
-      gap: 4px;
-      padding: 8px;
-      max-width: 1200px;
-      margin: 0 auto;
-      background: var(--bg);
-      border-bottom: 1px solid var(--border);
-    }
-    .page-nav a {
-      color: var(--text-muted);
-      text-decoration: none;
-      padding: 6px 14px;
-      border-radius: var(--radius-sm);
-      font-size: 12px;
-      font-weight: 500;
-      transition: all var(--transition);
-    }
-    .page-nav a:hover { color: var(--text); background: var(--bg-hover); }
-    .page-nav a.active { color: var(--text); background: var(--bg-card); }
-
-    .btn-refresh {
-      background: var(--bg-hover);
-      border: 1px solid var(--border);
-      color: var(--text-sec);
-      padding: 6px 14px;
-      border-radius: var(--radius-sm);
-      font-size: 12px;
-      cursor: pointer;
-      margin-left: auto;
-    }
-    .btn-refresh:hover { color: var(--text); border-color: var(--text-sec); }
+    .empty { text-align: center; color: var(--text-muted); padding: 20px; font-size: 13px; }
   </style>
 </head>
 <body>
-  <nav class="page-nav">
-    <a href="/">Scanner</a>
-    <a href="/calculator">Calculator</a>
-    <a href="/journal">Journal</a>
-    <a href="/analytics" class="active">Analytics</a>
-  </nav>
-
-  <div class="analytics-layout">
-    <div style="display:flex; align-items:center; margin-bottom:12px;">
-      <h2 style="font-size:16px; font-weight:600;">Expectancy &amp; Performance</h2>
-      <button class="btn-refresh" onclick="loadAll()">Refresh</button>
-    </div>
-
-    <!-- Expectancy Overview -->
-    <div class="section-title">Expectancy Overview</div>
-    <div class="expectancy-grid" id="expGrid">
-      <div class="exp-card"><div class="ec-label">Total Trades</div><div class="ec-value blue" id="a-total">—</div></div>
-      <div class="exp-card"><div class="ec-label">Win Rate</div><div class="ec-value green" id="a-winrate">—</div></div>
-      <div class="exp-card"><div class="ec-label">Avg RR</div><div class="ec-value amber" id="a-rr">—</div></div>
-      <div class="exp-card"><div class="ec-label">Expectancy</div><div class="ec-value blue" id="a-expectancy">—</div></div>
-      <div class="exp-card"><div class="ec-label">Profit Factor</div><div class="ec-value blue" id="a-pf">—</div></div>
-      <div class="exp-card"><div class="ec-label">Max Consec Wins</div><div class="ec-value green" id="a-mcw">—</div></div>
-      <div class="exp-card"><div class="ec-label">Max Consec Losses</div><div class="ec-value red" id="a-mcl">—</div></div>
-      <div class="exp-card"><div class="ec-label">Open Trades</div><div class="ec-value amber" id="a-open">—</div></div>
-    </div>
-
-    <!-- Equity Curve -->
-    <div class="section-title">Equity Curve</div>
-    <div class="chart-card">
-      <h3>Cumulative PnL (% over time)</h3>
-      <svg class="chart-svg" id="equityChart" viewBox="0 0 800 200" preserveAspectRatio="none">
-        <line class="zero-line" x1="0" y1="100" x2="800" y2="100"/>
-        <path class="curve" id="equityCurve"/>
-        <path class="fill" id="equityFill"/>
-      </svg>
-    </div>
-
-    <!-- Breakdowns -->
-    <div class="section-title">Breakdowns</div>
-    <div class="breakdown-grid" id="breakdownGrid">
-      <!-- Filled by JS -->
-    </div>
-
-    <!-- Streaks -->
-    <div class="section-title">Streaks</div>
-    <div class="breakdown-card">
-      <div class="streak-bar" id="streakBar"></div>
-      <div class="streak-legend">
-        <span><span style="color:var(--green)">&#9632;</span> Win</span>
-        <span><span style="color:var(--red)">&#9632;</span> Loss</span>
-        <span><span style="color:var(--amber)">&#9632;</span> Break Even</span>
+  <div class="a-wrap">
+    <!-- ═══ DATE FILTER ═══ -->
+    <div class="card" style="padding:12px 16px;">
+      <div class="toolbar" style="margin:0;">
+        <div class="field" style="flex:1;margin:0;">
+          <label style="margin:0 0 4px;">Filter by date (YYYY-MM-DD)</label>
+          <input type="text" id="analyticsDate" placeholder="Leave empty for all time" style="width:100%;" oninput="loadAll()">
+        </div>
+        <div style="align-self:flex-end;">
+          <button class="btn-sm" onclick="document.getElementById('analyticsDate').value='';loadAll();">Clear</button>
+        </div>
       </div>
     </div>
 
-    <!-- Tag Performance -->
-    <div class="section-title">Tag Performance</div>
-    <div class="breakdown-card">
-      <div class="bc-header">Tag | Trades | Win Rate | Avg PnL%</div>
-      <table id="tagTable">
-        <tbody><tr><td colspan="4" style="text-align:center; color: var(--text-muted);">Loading...</td></tr></tbody>
+    <!-- ═══ OVERVIEW ═══ -->
+    <div class="card">
+      <div class="card-title">Overview</div>
+      <div class="stat-grid">
+        <div class="stat-box"><div class="s-label">Total Trades</div><div class="s-value blue" id="sTotal">&mdash;</div></div>
+        <div class="stat-box"><div class="s-label">Win Rate</div><div class="s-value" id="sWR">&mdash;</div></div>
+        <div class="stat-box"><div class="s-label">Expectancy</div><div class="s-value" id="sExp">&mdash;</div></div>
+        <div class="stat-box"><div class="s-label">RR Ratio</div><div class="s-value amber" id="sRR">&mdash;</div></div>
+        <div class="stat-box"><div class="s-label">Profit Factor</div><div class="s-value" id="sPF">&mdash;</div></div>
+        <div class="stat-box"><div class="s-label">Max Loss</div><div class="s-value red" id="sML">&mdash;</div></div>
+        <div class="stat-box"><div class="s-label">Max Profit</div><div class="s-value green" id="sMP">&mdash;</div></div>
+        <div class="stat-box"><div class="s-label">Open Trades</div><div class="s-value amber" id="sOpen">&mdash;</div></div>
+      </div>
+    </div>
+
+    <!-- ═══ BY DIRECTION ═══ -->
+    <div class="card">
+      <div class="card-title">By Direction</div>
+      <table class="bk-table">
+        <thead><tr><th>Direction</th><th>Trades</th><th>Win Rate</th><th>Avg PnL%</th></tr></thead>
+        <tbody id="byDir"><tr><td colspan="4" class="empty">Loading...</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- ═══ BY SIGNAL TYPE ═══ -->
+    <div class="card">
+      <div class="card-title">By Signal Type (A-F)</div>
+      <table class="bk-table">
+        <thead><tr><th>Type</th><th>Trades</th><th>Win Rate</th><th>Avg PnL%</th></tr></thead>
+        <tbody id="byType"><tr><td colspan="4" class="empty">Loading...</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- ═══ BY OUTCOME ═══ -->
+    <div class="card">
+      <div class="card-title">Outcome Breakdown</div>
+      <table class="bk-table">
+        <thead><tr><th>Outcome</th><th>Trades</th><th>Total PnL%</th></tr></thead>
+        <tbody id="byOutcome"><tr><td colspan="3" class="empty">Loading...</td></tr></tbody>
       </table>
     </div>
   </div>
 
   <script>
     async function loadAll() {
-      await Promise.all([loadStats(), loadEquity(), loadBreakdowns(), loadTags()]);
-    }
-
-    async function loadStats() {
       try {
         const res = await fetch('/api/journal/stats');
         const d = await res.json();
-        if (!d.total_trades && d.total_trades !== 0) return;
-
-        document.getElementById('a-total').textContent = d.total_trades || 0;
-        document.getElementById('a-winrate').textContent = d.closed_trades ? d.win_rate + '%' : '—';
-        document.getElementById('a-winrate').className = 'ec-value ' + (d.win_rate >= 50 ? 'green' : d.win_rate > 0 ? 'amber' : 'red');
-        document.getElementById('a-rr').textContent = d.avg_rr || '—';
-        document.getElementById('a-rr').className = 'ec-value ' + (d.avg_rr >= 1.5 ? 'green' : d.avg_rr >= 1.2 ? 'amber' : 'red');
-        document.getElementById('a-expectancy').textContent = d.expectancy_pct != null ? d.expectancy_pct.toFixed(3) + '%' : '—';
-        document.getElementById('a-expectancy').className = 'ec-value ' + (d.expectancy_pct > 0 ? 'green' : d.expectancy_pct < 0 ? 'red' : 'amber');
-        document.getElementById('a-pf').textContent = d.profit_factor || '—';
-        document.getElementById('a-pf').className = 'ec-value ' + (d.profit_factor >= 2 ? 'green' : d.profit_factor >= 1 ? 'amber' : 'red');
-        document.getElementById('a-mcw').textContent = d.max_consec_wins || 0;
-        document.getElementById('a-mcl').textContent = d.max_consec_losses || 0;
-        document.getElementById('a-open').textContent = d.open_trades || 0;
-
-        // Streak bar
-        const wins = d.wins || 0;
-        const losses = d.losses || 0;
-        const be = d.break_even || 0;
-        const total = wins + losses + be;
-        if (total > 0) {
-          document.getElementById('streakBar').innerHTML =
-            `<div class="s-win" style="flex:${wins}"></div>` +
-            `<div class="s-loss" style="flex:${losses}"></div>` +
-            `<div class="s-be" style="flex:${be}"></div>`;
-        }
-      } catch (e) { console.error(e); }
-    }
-
-    async function loadEquity() {
-      try {
-        const res = await fetch('/api/journal/equity-curve?limit=200');
-        const d = await res.json();
-        const curve = d.curve;
-        if (!curve.length) {
-          document.getElementById('equityCurve').setAttribute('d', '');
+        if (!d.total_trades && d.total_trades !== 0) {
+          document.querySelectorAll('.empty').forEach(el => el.textContent = 'No trades yet.');
           return;
         }
 
-        const values = curve.map(c => c.equity);
-        const min = Math.min(...values, 0);
-        const max = Math.max(...values);
-        const range = max - min || 1;
-        const w = 800, h = 200, pad = 10;
-
-        const points = values.map((v, i) => {
-          const x = (i / (values.length - 1)) * w;
-          const y = h - pad - ((v - min) / range) * (h - 2 * pad);
-          return [x, y];
-        });
-
-        const pathD = 'M ' + points.map(p => p[0] + ',' + p[1]).join(' L ');
-        document.getElementById('equityCurve').setAttribute('d', pathD);
-
-        // Fill area
-        const fillD = pathD + ` L ${w},${h - pad} L 0,${h - pad} Z`;
-        document.getElementById('equityFill').setAttribute('d', fillD);
-      } catch (e) { console.error(e); }
-    }
-
-    async function loadBreakdowns() {
-      try {
-        const res = await fetch('/api/journal/stats');
-        const d = await res.json();
-        const grid = document.getElementById('breakdownGrid');
-        let html = '';
+        // Overview
+        document.getElementById('sTotal').textContent = d.total_trades || 0;
+        const wrEl = document.getElementById('sWR');
+        wrEl.textContent = d.closed_trades ? d.win_rate + '%' : '—';
+        wrEl.className = 's-value ' + (d.win_rate >= 50 ? 'green' : d.win_rate > 0 ? 'amber' : 'red');
+        const expEl = document.getElementById('sExp');
+        expEl.textContent = d.expectancy_pct != null ? d.expectancy_pct.toFixed(3) + '%' : '—';
+        expEl.className = 's-value ' + (d.expectancy_pct > 0 ? 'green' : d.expectancy_pct < 0 ? 'red' : 'amber');
+        const rrEl = document.getElementById('sRR');
+        rrEl.textContent = d.avg_rr || '—';
+        rrEl.className = 's-value ' + (d.avg_rr >= 1.5 ? 'green' : d.avg_rr >= 1.2 ? 'amber' : d.avg_rr > 0 ? 'white' : 'red');
+        document.getElementById('sPF').textContent = d.profit_factor != null ? d.profit_factor.toFixed(2) : '—';
+        document.getElementById('sML').textContent = d.max_consec_losses || 0;
+        document.getElementById('sMP').textContent = d.max_consec_wins || 0;
+        document.getElementById('sOpen').textContent = d.open_trades || 0;
 
         // By direction
-        html += '<div class="breakdown-card"><div class="bc-header">By Direction</div><table>';
-        if (d.by_direction) {
-          for (const [dir, s] of Object.entries(d.by_direction)) {
+        const dirBody = document.getElementById('byDir');
+        if (d.by_direction && Object.keys(d.by_direction).length) {
+          dirBody.innerHTML = Object.entries(d.by_direction).map(([dir, s]) => {
             const wr = s.n > 0 ? (s.wins / s.n * 100).toFixed(1) : 0;
-            html += `<tr><td>${dir}</td><td>${s.n} trades, ${wr}% WR</td></tr>`;
-          }
+            const avg = s.avg_pnl_pct != null ? s.avg_pnl_pct.toFixed(2) + '%' : '—';
+            return `<tr><td><strong>${dir}</strong></td><td>${s.n}</td><td>${wr}%</td><td>${avg}</td></tr>`;
+          }).join('');
         } else {
-          html += '<tr><td style="color: var(--text-muted);">No data</td></tr>';
+          dirBody.innerHTML = '<tr><td colspan="4" class="empty">No data</td></tr>';
         }
-        html += '</table></div>';
 
         // By signal type
-        html += '<div class="breakdown-card"><div class="bc-header">By Signal Type</div><table>';
-        if (d.by_signal_type) {
-          const sorted = Object.entries(d.by_signal_type).sort((a, b) => (b[1].n) - (a[1].n));
-          for (const [st, s] of sorted) {
-            const wr = s.n > 0 ? (s.wins / s.n * 100).toFixed(1) : 0;
-            html += `<tr><td>${st}</td><td>${s.n} trades, ${wr}% WR</td></tr>`;
-          }
+        const typeBody = document.getElementById('byType');
+        if (d.by_signal_type && Object.keys(d.by_signal_type).length) {
+          typeBody.innerHTML = Object.entries(d.by_signal_type)
+            .sort((a, b) => (b[1].n || 0) - (a[1].n || 0))
+            .map(([st, s]) => {
+              const wr = s.n > 0 ? (s.wins / s.n * 100).toFixed(1) : 0;
+              const avg = s.avg_pnl_pct != null ? s.avg_pnl_pct.toFixed(2) + '%' : '—';
+              return `<tr><td><strong>${st}</strong></td><td>${s.n}</td><td>${wr}%</td><td>${avg}</td></tr>`;
+            }).join('');
         } else {
-          html += '<tr><td style="color: var(--text-muted);">No data</td></tr>';
+          typeBody.innerHTML = '<tr><td colspan="4" class="empty">No data</td></tr>';
         }
-        html += '</table></div>';
 
         // By outcome
-        html += '<div class="breakdown-card"><div class="bc-header">Outcome Breakdown</div><table>';
-        if (d.outcomes) {
-          for (const [outcome, s] of Object.entries(d.outcomes)) {
-            html += `<tr><td>${outcome}</td><td>${s.n} trades${s.total_pnl_pct ? ', PnL: ' + s.total_pnl_pct.toFixed(2) + '%' : ''}</td></tr>`;
-          }
-        } else {
-          html += '<tr><td style="color: var(--text-muted);">No data</td></tr>';
-        }
-        html += '</table></div>';
-
-        // Summary metrics
-        html += '<div class="breakdown-card"><div class="bc-header">Performance Metrics</div><table>';
-        html += `<tr><td>Total Closed</td><td>${d.closed_trades || 0}</td></tr>`;
-        html += `<tr><td>Win Rate</td><td>${d.win_rate}%</td></tr>`;
-        html += `<tr><td>Avg RR</td><td>${d.avg_rr}</td></tr>`;
-        html += `<tr><td>Expectancy</td><td>${d.expectancy_pct != null ? d.expectancy_pct.toFixed(3) + '%' : '—'}</td></tr>`;
-        html += `<tr><td>Profit Factor</td><td>${d.profit_factor || '—'}</td></tr>`;
-        html += `<tr><td>Max Consec Wins</td><td>${d.max_consec_wins}</td></tr>`;
-        html += `<tr><td>Max Consec Losses</td><td>${d.max_consec_losses}</td></tr>`;
-        html += '</table></div>';
-
-        grid.innerHTML = html;
-      } catch (e) { console.error(e); }
-    }
-
-    async function loadTags() {
-      try {
-        const res = await fetch('/api/journal/stats');
-        const d = await res.json();
-        const tbody = document.querySelector('#tagTable tbody');
-        if (!d.by_tag || !Object.keys(d.by_tag).length) {
-          tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color: var(--text-muted);">No tag data</td></tr>';
-          return;
-        }
-        tbody.innerHTML = Object.entries(d.by_tag)
-          .sort((a, b) => (b[1].n || 0) - (a[1].n || 0))
-          .map(([tag, s]) => {
-            const wr = s.n > 0 ? (s.wins / s.n * 100).toFixed(1) : 0;
-            const avgPnl = s.avg_pnl_pct != null ? s.avg_pnl_pct.toFixed(2) + '%' : '—';
-            return `<tr><td>${tag}</td><td>${s.n}</td><td>${wr}%</td><td>${avgPnl}</td></tr>`;
+        const outBody = document.getElementById('byOutcome');
+        if (d.outcomes && Object.keys(d.outcomes).length) {
+          outBody.innerHTML = Object.entries(d.outcomes).map(([out, s]) => {
+            return `<tr><td><strong>${out}</strong></td><td>${s.n}</td><td>${s.total_pnl_pct != null ? s.total_pnl_pct.toFixed(2) + '%' : '—'}</td></tr>`;
           }).join('');
-      } catch (e) { console.error(e); }
+        } else {
+          outBody.innerHTML = '<tr><td colspan="3" class="empty">No data</td></tr>';
+        }
+      } catch (e) {
+        console.error(e);
+        document.querySelectorAll('.empty').forEach(el => el.textContent = 'Error loading data.');
+      }
     }
 
     loadAll();

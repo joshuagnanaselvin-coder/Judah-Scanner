@@ -3,737 +3,422 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#0c1220">
+  <meta theme-color" content="#0c1220">
   <title>Judah — Calculator</title>
-  <link rel="stylesheet" href="/static/style.css?v=3">
+  <link rel="stylesheet" href="/static/style.css?v=6">
   <style>
-    /* ── Calculator-specific overrides ───────────────────────── */
-    .calc-layout {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 16px;
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 8px;
+    .calc-wrap { max-width: 560px; margin: 0 auto; padding: 12px; }
+    .card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px; margin-bottom: 12px;
     }
-    @media (max-width: 768px) {
-      .calc-layout { grid-template-columns: 1fr; }
-    }
-
-    .calc-section {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 16px;
-    }
-    .calc-section h2 {
-      font-size: 13px;
-      font-weight: 600;
-      color: var(--text-sec);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 12px;
-      padding-bottom: 8px;
+    .card-title {
+      font-size: 11px; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin-bottom: 12px; padding-bottom: 8px;
       border-bottom: 1px solid var(--border-subtle);
     }
-
-    .calc-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
+    .coin-search-wrap { position: relative; }
+    .coin-search-wrap input {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); color: var(--text); font-size: 14px;
+      padding: 10px 12px; outline: none; font-family: inherit;
     }
-    .calc-field {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
+    .coin-search-wrap input:focus { border-color: var(--accent); }
+    .coin-dropdown {
+      display: none; position: absolute; top: 100%; left: 0; right: 0;
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); max-height: 200px; overflow-y: auto;
+      z-index: 50; margin-top: 2px;
     }
-    .calc-field.full { grid-column: 1 / -1; }
-    .calc-field label {
-      font-size: 11px;
-      color: var(--text-muted);
-      font-weight: 500;
-      text-transform: uppercase;
+    .coin-dropdown.open { display: block; }
+    .coin-dropdown div {
+      padding: 8px 12px; cursor: pointer; font-size: 12px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .coin-dropdown div:hover { background: var(--bg-hover); }
+    .coin-dropdown .no-results { color: var(--text-muted); cursor: default; }
+    .coin-price-fetching { color: var(--text-muted); font-size: 11px; margin-top: 4px; }
+    .coin-price-fetched { color: var(--green); font-size: 11px; margin-top: 4px; }
+    .field { margin-bottom: 10px; }
+    .field label {
+      display: block; font-size: 11px; color: var(--text-muted);
+      font-weight: 600; margin-bottom: 4px; text-transform: uppercase;
       letter-spacing: 0.3px;
     }
-    .calc-field input,
-    .calc-field select {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      color: var(--text);
-      font-size: 13px;
-      padding: 7px 10px;
-      font-family: 'SF Mono', 'Fira Code', monospace;
-      outline: none;
-      transition: border-color var(--transition);
-      width: 100%;
+    .field input, .field select {
+      width: 100%; background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); color: var(--text); font-size: 13px;
+      padding: 8px 10px; outline: none; font-family: 'SF Mono', 'Fira Code', monospace;
     }
-    .calc-field input:focus,
-    .calc-field select:focus {
-      border-color: var(--accent);
+    .field input:focus, .field select:focus { border-color: var(--accent); }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .dir-toggle { display: flex; gap: 6px; }
+    .dir-btn {
+      flex: 1; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--bg); color: var(--text-sec); font-size: 12px; font-weight: 700;
+      cursor: pointer; transition: all 0.15s;
     }
-    .calc-field input[readonly] {
-      opacity: 0.7;
-      cursor: default;
+    .dir-btn.long.active { background: #22c55e; border-color: #22c55e; color: #000; }
+    .dir-btn.short.active { background: #ef4444; border-color: #ef4444; color: #fff; }
+    .sl-pct-grid { display: flex; gap: 6px; flex-wrap: wrap; }
+    .sl-pct-btn {
+      padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+      background: var(--bg); color: var(--text-sec); font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
     }
-
-    .calc-btn-group {
-      display: flex;
-      gap: 6px;
-      flex-wrap: wrap;
-    }
-    .calc-btn {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      color: var(--text-sec);
-      font-size: 11px;
-      padding: 4px 10px;
-      cursor: pointer;
-      transition: all var(--transition);
-    }
-    .calc-btn:hover { border-color: var(--accent); color: var(--text); }
-    .calc-btn.active {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
-    }
-    .calc-btn.long.active { background: var(--green); border-color: var(--green); }
-    .calc-btn.short.active { background: var(--red); border-color: var(--red); }
-
-    .calc-result-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-    }
-    .calc-result-item {
-      background: var(--bg);
-      border-radius: var(--radius-sm);
-      padding: 10px;
+    .sl-pct-btn:hover { border-color: var(--accent); }
+    .sl-pct-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .risk-grid { display: flex; gap: 6px; flex-wrap: wrap; }
+    .risk-btn {
+      width: 52px; padding: 8px 0; border: 1px solid var(--border);
+      border-radius: var(--radius-sm); background: var(--bg); color: var(--text-sec);
+      font-size: 12px; font-weight: 700; cursor: pointer; transition: all 0.15s;
       text-align: center;
     }
-    .calc-result-label {
-      font-size: 10px;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.3px;
-      margin-bottom: 4px;
+    .risk-btn:hover { border-color: var(--amber); color: var(--amber); }
+    .risk-btn.active { background: var(--amber); border-color: var(--amber); color: #000; }
+    .result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .result-item {
+      background: var(--bg); border-radius: var(--radius-sm);
+      padding: 10px; text-align: center;
     }
-    .calc-result-value {
-      font-size: 18px;
-      font-weight: 700;
+    .result-label {
+      font-size: 10px; color: var(--text-muted); text-transform: uppercase;
+      letter-spacing: 0.3px; margin-bottom: 4px;
+    }
+    .result-value {
+      font-size: 18px; font-weight: 700;
       font-family: 'SF Mono', 'Fira Code', monospace;
     }
-    .calc-result-value.green { color: var(--green); }
-    .calc-result-value.red { color: var(--red); }
-    .calc-result-value.amber { color: var(--amber); }
-    .calc-result-value.blue { color: var(--accent); }
-
-    .calc-actions {
-      display: flex;
-      gap: 8px;
-      margin-top: 16px;
+    .result-value.green { color: var(--green); }
+    .result-value.red { color: var(--red); }
+    .result-value.amber { color: var(--amber); }
+    .summary-box {
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 12px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 12px; line-height: 1.7; color: var(--text-sec);
+      margin-top: 12px;
     }
+    .summary-box .hl { color: var(--accent); font-weight: 700; }
+    .btn-row { display: flex; gap: 8px; margin-top: 14px; }
     .btn {
-      padding: 8px 16px;
-      border-radius: var(--radius-sm);
-      border: none;
-      font-size: 12px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all var(--transition);
-      flex: 1;
+      flex: 1; padding: 9px 14px; border-radius: var(--radius-sm);
+      border: none; font-size: 12px; font-weight: 700; cursor: pointer;
+      transition: all 0.15s; text-align: center;
     }
-    .btn-primary {
-      background: var(--accent);
-      color: #fff;
-    }
+    .btn-primary { background: var(--accent); color: #fff; }
     .btn-primary:hover { filter: brightness(1.15); }
-    .btn-secondary {
-      background: var(--bg-hover);
-      color: var(--text);
+    .btn-ghost {
+      background: transparent; color: var(--text-sec);
       border: 1px solid var(--border);
     }
-    .btn-secondary:hover { border-color: var(--text-sec); }
-    .btn-danger {
-      background: transparent;
-      color: var(--red);
-      border: 1px solid var(--red);
-    }
-    .btn-danger:hover { background: rgba(239,68,68,0.1); }
-
-    .signal-type-grid {
-      display: flex;
-      gap: 4px;
-    }
-    .signal-btn {
-      width: 36px;
-      height: 36px;
-      border-radius: var(--radius-sm);
-      border: 1px solid var(--border);
-      background: var(--bg);
-      color: var(--text-sec);
-      font-size: 13px;
-      font-weight: 700;
-      cursor: pointer;
-      transition: all var(--transition);
-    }
-    .signal-btn:hover { border-color: var(--accent); }
-    .signal-btn.active-a { background: #22c55e; border-color: #22c55e; color: #000; }
-    .signal-btn.active-b { background: #3b82f6; border-color: #3b82f6; color: #fff; }
-    .signal-btn.active-c { background: #a855f7; border-color: #a855f7; color: #fff; }
-    .signal-btn.active-d { background: #f59e0b; border-color: #f59e0b; color: #000; }
-    .signal-btn.active-e { background: #f97316; border-color: #f97316; color: #000; }
-    .signal-btn.active-f { background: #ef4444; border-color: #ef4444; color: #fff; }
-
-    .pos-mult-display {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 10px;
-      background: var(--bg);
-      border-radius: var(--radius-sm);
-      border: 1px solid var(--border);
-    }
-    .pos-mult-display .label { font-size: 11px; color: var(--text-muted); }
-    .pos-mult-display .value {
-      font-size: 16px; font-weight: 700;
-      font-family: 'SF Mono', 'Fira Code', monospace;
-    }
-
-    /* Nav bar */
-    .page-nav {
-      display: flex;
-      gap: 4px;
-      padding: 8px;
-      max-width: 1440px;
-      margin: 0 auto;
-      background: var(--bg);
-      border-bottom: 1px solid var(--border);
-    }
-    .page-nav a {
-      color: var(--text-muted);
-      text-decoration: none;
-      padding: 6px 14px;
-      border-radius: var(--radius-sm);
-      font-size: 12px;
-      font-weight: 500;
-      transition: all var(--transition);
-    }
-    .page-nav a:hover { color: var(--text); background: var(--bg-hover); }
-    .page-nav a.active { color: var(--text); background: var(--bg-card); }
-
-    .formula-box {
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
-      padding: 10px;
-      font-size: 11px;
-      color: var(--text-sec);
-      line-height: 1.6;
-      font-family: 'SF Mono', 'Fira Code', monospace;
-    }
-    .formula-box .hl { color: var(--accent); font-weight: 600; }
-
+    .btn-ghost:hover { border-color: var(--text-sec); color: var(--text); }
     .toast {
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      padding: 12px 20px;
-      border-radius: var(--radius-sm);
-      font-size: 12px;
-      font-weight: 500;
-      z-index: 9999;
+      position: fixed; bottom: 20px; right: 20px;
+      padding: 10px 18px; border-radius: var(--radius-sm);
+      font-size: 12px; font-weight: 600; z-index: 9999;
       animation: toast-in 0.3s ease;
-      max-width: 400px;
     }
     .toast.success { background: #22c55e; color: #000; }
     .toast.error { background: #ef4444; color: #fff; }
     .toast.info { background: var(--accent); color: #fff; }
-    @keyframes toast-in {
-      from { opacity: 0; transform: translateY(10px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    .rr-bar {
-      height: 8px;
-      border-radius: 4px;
-      background: var(--bg);
-      margin-top: 6px;
-      overflow: hidden;
-    }
-    .rr-bar-fill {
-      height: 100%;
-      border-radius: 4px;
-      transition: width 0.3s ease;
-    }
-
-    .sl-width-warn {
-      font-size: 10px;
-      color: var(--red);
-      margin-top: 4px;
-      display: none;
-    }
-    .sl-width-warn.show { display: block; }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; } }
   </style>
 </head>
 <body>
-  <!-- NAVIGATION -->
-  <nav class="page-nav">
-    <a href="/">Scanner</a>
-    <a href="/calculator" class="active">Calculator</a>
-    <a href="/journal">Journal</a>
-    <a href="/analytics">Analytics</a>
-  </nav>
+  <div class="calc-wrap">
+    <!-- ═══ TRADE SETUP ═══ -->
+    <div class="card">
+      <div class="card-title">Trade Setup</div>
 
-  <div class="calc-layout">
-    <!-- LEFT: Inputs -->
-    <div class="calc-section">
-      <h2>Trade Parameters</h2>
-
-      <div class="calc-grid">
-        <div class="calc-field full">
-          <label>Symbol</label>
-          <input type="text" id="sym" placeholder="BTCUSDT" value="BTCUSDT" oninput="calc()">
+      <div class="field">
+        <label>Coin</label>
+        <div class="coin-search-wrap">
+          <input type="text" id="coinSearch" placeholder="Search coin..." autocomplete="off">
+          <div class="coin-dropdown" id="coinDropdown"></div>
         </div>
+        <div class="coin-price-fetching" id="coinPriceInfo"></div>
+      </div>
 
-        <div class="calc-field full">
-          <label>Direction</label>
-          <div class="calc-btn-group">
-            <button class="calc-btn long active" onclick="setDir('LONG', this)">LONG</button>
-            <button class="calc-btn short" onclick="setDir('SHORT', this)">SHORT</button>
-          </div>
-        </div>
-
-        <div class="calc-field">
-          <label>Entry Price</label>
-          <input type="number" id="entry" placeholder="0.00" step="any" min="0" oninput="calc()">
-        </div>
-
-        <div class="calc-field">
-          <label>ATR (14-period)</label>
-          <input type="number" id="atr" placeholder="0.00" step="any" min="0" oninput="calc()">
-        </div>
-
-        <div class="calc-field">
-          <label>Stop Loss Price</label>
-          <input type="number" id="sl" placeholder="0.00" step="any" min="0" oninput="calc()">
-        </div>
-
-        <div class="calc-field">
-          <label>Take Profit Price</label>
-          <input type="number" id="tp" placeholder="0.00" step="any" min="0" oninput="calc()">
-        </div>
-
-        <div class="calc-field full">
-          <label>SL Calculation</label>
-          <div class="calc-btn-group">
-            <button class="calc-btn active" onclick="setSlMode('manual', this)">Manual</button>
-            <button class="calc-btn" onclick="setSlMode('atr', this)">ATR Auto</button>
-          </div>
-        </div>
-
-        <div class="calc-field" id="atrSlMultField" style="display:none;">
-          <label>ATR SL Multiplier</label>
-          <select id="atrSlMult" onchange="calc()">
-            <option value="1.0">1.0x ATR</option>
-            <option value="1.5">1.5x ATR</option>
-            <option value="2.0" selected>2.0x ATR</option>
-            <option value="2.5">2.5x ATR</option>
-            <option value="3.0">3.0x ATR</option>
-          </select>
-        </div>
-
-        <div class="calc-field" id="atrTpMultField" style="display:none;">
-          <label>ATR TP Multiplier</label>
-          <select id="atrTpMult" onchange="calc()">
-            <option value="1.0">1.0x ATR</option>
-            <option value="1.5">1.5x ATR</option>
-            <option value="2.0">2.0x ATR</option>
-            <option value="2.5" selected>2.5x ATR</option>
-            <option value="3.0">3.0x ATR</option>
-          </select>
-        </div>
-
-        <div class="calc-field">
-          <label>Account Balance (USD)</label>
-          <input type="number" id="balance" placeholder="10000" value="10000" step="100" min="0" oninput="calc()">
-        </div>
-
-        <div class="calc-field">
-          <label>Risk Per Trade (%)</label>
-          <input type="number" id="riskPct" placeholder="1.0" value="1.0" step="0.1" min="0.1" max="10" oninput="calc()">
-        </div>
-
-        <div class="calc-field full">
-          <label>Signal Type (determines position size multiplier)</label>
-          <div class="signal-type-grid">
-            <button class="signal-btn active-a" onclick="setSignalType('A', this)" title="Type A — Premium (0.75x)">A</button>
-            <button class="signal-btn" onclick="setSignalType('B', this)" title="Type B — Standard (0.35x)">B</button>
-            <button class="signal-btn" onclick="setSignalType('C', this)" title="Type C — Aggressive (1.0x)">C</button>
-            <button class="signal-btn" onclick="setSignalType('D', this)" title="Type D — Watch (0.0x)">D</button>
-            <button class="signal-btn" onclick="setSignalType('E', this)" title="Type E — Alert (0.0x)">E</button>
-            <button class="signal-btn" onclick="setSignalType('F', this)" title="Type F — Fade (0.0x)">F</button>
-          </div>
-        </div>
-
-        <div class="calc-field full">
-          <label>Quick Presets</label>
-          <div class="calc-btn-group">
-            <button class="calc-btn" onclick="applyPreset('atr1x')">SL 1x ATR</button>
-            <button class="calc-btn" onclick="applyPreset('atr2x')">SL 2x ATR</button>
-            <button class="calc-btn" onclick="applyPreset('rr12')">Min RR 1.2:1</button>
-            <button class="calc-btn" onclick="applyPreset('rr15')">RR 1.5:1</button>
-            <button class="calc-btn" onclick="applyPreset('rr20')">RR 2.0:1</button>
-          </div>
+      <div class="field">
+        <label>Direction</label>
+        <div class="dir-toggle">
+          <button class="dir-btn long active" onclick="setDir('LONG',this)">LONG</button>
+          <button class="dir-btn short" onclick="setDir('SHORT',this)">SHORT</button>
         </div>
       </div>
 
-      <!-- Risk Authority Settings -->
-      <div style="margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border-subtle);">
-        <h2 style="font-size: 11px;">Risk Authority Settings</h2>
-        <div class="calc-grid">
-          <div class="calc-field">
-            <label>Max Portfolio Heat</label>
-            <input type="number" id="maxHeat" value="0.05" step="0.01" min="0" max="0.2" oninput="calc()">
-          </div>
-          <div class="calc-field">
-            <label>Max Single Risk (%)</label>
-            <input type="number" id="maxSingleRisk" value="2.0" step="0.1" min="0.1" max="10" oninput="calc()">
-          </div>
-          <div class="calc-field">
-            <label>Max Drawdown (%)</label>
-            <input type="number" id="maxDrawdown" value="10.0" step="0.5" min="1" max="50" oninput="calc()">
-          </div>
-          <div class="calc-field">
-            <label>Confidence Score</label>
-            <input type="number" id="confidence" value="0.70" step="0.05" min="0" max="1" oninput="calc()">
-          </div>
+      <div class="field-row">
+        <div class="field">
+          <label>Entry Price (USD)</label>
+          <input type="number" id="entry" placeholder="0.00" step="any" oninput="calc()">
+        </div>
+        <div class="field">
+          <label>SL Price (USD)</label>
+          <input type="number" id="sl" placeholder="0.00" step="any" oninput="calc()">
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Quick SL % (from margin)</label>
+        <div class="sl-pct-grid">
+          <button class="sl-pct-btn" onclick="setSlPct(1)">1%</button>
+          <button class="sl-pct-btn" onclick="setSlPct(2)">2%</button>
+          <button class="sl-pct-btn" onclick="setSlPct(3)">3%</button>
+          <button class="sl-pct-btn" onclick="setSlPct(4)">4%</button>
+          <button class="sl-pct-btn active" onclick="setSlPct(5)">5%</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Margin (USD)</label>
+        <input type="number" id="margin" placeholder="100" step="1" value="100" oninput="calc()">
+      </div>
+
+      <div class="field">
+        <label>Risk (INR)</label>
+        <div class="risk-grid">
+          <button class="risk-btn" onclick="setRisk(3,this)">3</button>
+          <button class="risk-btn" onclick="setRisk(6,this)">6</button>
+          <button class="risk-btn" onclick="setRisk(9,this)">9</button>
+          <button class="risk-btn active" onclick="setRisk(12,this)">12</button>
+        </div>
+        <div style="margin-top:6px;">
+          <input type="number" id="riskCustom" placeholder="Custom INR" step="1" oninput="calc()">
         </div>
       </div>
     </div>
 
-    <!-- RIGHT: Results -->
-    <div class="calc-section">
-      <h2>Plan Results</h2>
-
-      <div class="calc-result-grid">
-        <div class="calc-result-item">
-          <div class="calc-result-label">SL Distance (%)</div>
-          <div class="calc-result-value" id="resSlPct">&mdash;</div>
-          <div class="sl-width-warn" id="slWarn">SL exceeds 4% width cap</div>
+    <!-- ═══ RESULTS ═══ -->
+    <div class="card">
+      <div class="card-title">Results</div>
+      <div class="result-grid">
+        <div class="result-item">
+          <div class="result-label">SL %</div>
+          <div class="result-value" id="rSlPct">&mdash;</div>
         </div>
-        <div class="calc-result-item">
-          <div class="calc-result-label">Risk Amount ($)</div>
-          <div class="calc-result-value" id="resRiskAmt">&mdash;</div>
+        <div class="result-item">
+          <div class="result-label">Leverage</div>
+          <div class="result-value" id="rLev">&mdash;</div>
         </div>
-        <div class="calc-result-item">
-          <div class="calc-result-label">Position Size</div>
-          <div class="calc-result-value" id="resPosSize">&mdash;</div>
+        <div class="result-item">
+          <div class="result-label">Max Loss</div>
+          <div class="result-value red" id="rMaxLoss">&mdash;</div>
         </div>
-        <div class="calc-result-item">
-          <div class="calc-result-label">Leverage Required</div>
-          <div class="calc-result-value" id="resLeverage">&mdash;</div>
-        </div>
-        <div class="calc-result-item">
-          <div class="calc-result-label">RR Ratio</div>
-          <div class="calc-result-value" id="resRR">&mdash;</div>
-          <div class="rr-bar">
-            <div class="rr-bar-fill" id="rrBar" style="width:0%; background: var(--amber);"></div>
-          </div>
-        </div>
-        <div class="calc-result-item">
-          <div class="calc-result-label">Position Mult</div>
-          <div class="calc-result-value" id="resPosMult">&mdash;</div>
+        <div class="result-item">
+          <div class="result-label">Position Size</div>
+          <div class="result-value" id="rPosSize">&mdash;</div>
         </div>
       </div>
-
-      <div class="pos-mult-display" style="margin-top: 12px;">
-        <span class="label">Signal Type Multiplier:</span>
-        <span class="value" id="posMultVal">0.75x</span>
-      </div>
-
-      <div style="margin-top: 12px;">
-        <h2 style="font-size: 11px; margin-bottom: 8px;">Plan Summary</h2>
-        <div class="formula-box" id="planSummary">
-          Enter trade parameters to generate a plan.
-        </div>
-      </div>
-
-      <div class="calc-actions">
-        <button class="btn btn-primary" onclick="saveToJournal()">
-          Save to Journal
-        </button>
-        <button class="btn btn-secondary" onclick="copyPlan()">
-          Copy Plan
-        </button>
-        <button class="btn btn-secondary" onclick="resetForm()">
-          Reset
-        </button>
+      <div class="summary-box" id="summary">Fill entry + SL to see plan.</div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="saveToJournal()">Save to Journal</button>
+        <button class="btn btn-ghost" onclick="resetCalc()">Reset</button>
       </div>
     </div>
   </div>
 
   <script>
-    // ── State ──────────────────────────────────────────────────
     let direction = 'LONG';
-    let signalType = 'A';
-    let slMode = 'manual';
+    let currentRisk = 12;
+    let currentSlPct = 5;
+    let allCoins = [];
+    let selectedSymbol = '';
 
-    const SIGNAL_MULT = { A: 0.75, B: 0.35, C: 1.0, D: 0, E: 0, F: 0 };
-    const SIGNAL_CLASS = { A: 'active-a', B: 'active-b', C: 'active-c', D: 'active-d', E: 'active-e', F: 'active-f' };
+    // ── Coin search ──
+    async function loadCoins() {
+      try {
+        const res = await fetch('/api/pairs');
+        const d = await res.json();
+        allCoins = d.pairs || [];
+      } catch (e) { console.error(e); }
+    }
+    loadCoins();
 
-    // ── Direction ──────────────────────────────────────────────
+    const coinSearch = document.getElementById('coinSearch');
+    const coinDropdown = document.getElementById('coinDropdown');
+    const coinPriceInfo = document.getElementById('coinPriceInfo');
+
+    coinSearch.addEventListener('input', () => {
+      const q = coinSearch.value.toUpperCase().trim();
+      if (!q) { coinDropdown.classList.remove('open'); return; }
+      const matches = allCoins.filter(c => c.includes(q)).slice(0, 30);
+      coinDropdown.innerHTML = matches.length
+        ? matches.map(c => `<div data-coin="${c}">${c}</div>`).join('')
+        : '<div class="no-results">No matches</div>';
+      coinDropdown.classList.add('open');
+    });
+
+    coinDropdown.addEventListener('click', async (e) => {
+      const coin = e.target.dataset.coin;
+      if (!coin) return;
+      selectedSymbol = coin;
+      coinSearch.value = coin;
+      coinDropdown.classList.remove('open');
+      // Fetch live price from backend
+      coinPriceInfo.textContent = 'Fetching price...';
+      coinPriceInfo.className = 'coin-price-fetching';
+      try {
+        const res = await fetch('/api/coin-price?symbol=' + encodeURIComponent(coin));
+        const d = await res.json();
+        if (d.price) {
+          document.getElementById('entry').value = d.price;
+          coinPriceInfo.textContent = 'Price: ' + d.price + ' (source: ' + d.source + ')';
+          coinPriceInfo.className = 'coin-price-fetched';
+          calc();
+        } else {
+          coinPriceInfo.textContent = 'No price data available';
+          coinPriceInfo.className = 'coin-price-fetching';
+        }
+      } catch (e) {
+        coinPriceInfo.textContent = 'Failed to fetch price';
+        coinPriceInfo.className = 'coin-price-fetching';
+      }
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!e.target.closest('.coin-search-wrap')) coinDropdown.classList.remove('open');
+    });
+
+    // ── Direction ──
     function setDir(dir, btn) {
       direction = dir;
-      document.querySelectorAll('.calc-btn.long, .calc-btn.short').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.dir-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       calc();
     }
 
-    // ── Signal Type ────────────────────────────────────────────
-    function setSignalType(type, btn) {
-      signalType = type;
-      document.querySelectorAll('.signal-btn').forEach(b => {
-        b.className = 'signal-btn';
-      });
-      btn.classList.add(SIGNAL_CLASS[type] || 'active-a');
-      document.getElementById('posMultVal').textContent = SIGNAL_MULT[type] + 'x';
+    // ── Risk ──
+    function setRisk(amt, btn) {
+      currentRisk = amt;
+      document.getElementById('riskCustom').value = '';
+      document.querySelectorAll('.risk-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
       calc();
     }
 
-    // ── SL Mode ────────────────────────────────────────────────
-    function setSlMode(mode, btn) {
-      slMode = mode;
-      document.querySelectorAll('.calc-btn-group .calc-btn').forEach(b => {
-        if (b.textContent.includes('Manual') || b.textContent.includes('ATR')) {
-          b.classList.remove('active');
-        }
+    // ── SL % ──
+    function setSlPct(pct) {
+      currentSlPct = pct;
+      document.querySelectorAll('.sl-pct-btn').forEach(b => {
+        b.classList.toggle('active', parseInt(b.textContent) === pct);
       });
-      btn.classList.add('active');
-      document.getElementById('atrSlMultField').style.display = mode === 'atr' ? '' : 'none';
-      document.getElementById('atrTpMultField').style.display = mode === 'atr' ? '' : 'none';
-      if (mode === 'atr') {
-        document.getElementById('sl').readOnly = true;
-        document.getElementById('tp').readOnly = true;
-      } else {
-        document.getElementById('sl').readOnly = false;
-        document.getElementById('tp').readOnly = false;
-      }
-      calc();
+      applySlPct();
     }
 
-    // ── Presets ────────────────────────────────────────────────
-    function applyPreset(preset) {
+    function applySlPct() {
       const entry = parseFloat(document.getElementById('entry').value);
-      const atr = parseFloat(document.getElementById('atr').value);
-      if (!entry) { showToast('Enter entry price first', 'error'); return; }
-
-      if (preset.startsWith('atr') && atr) {
-        const mult = parseFloat(preset.replace('atr', '').replace('x', ''));
-        const dist = mult * atr;
-        const sl = direction === 'LONG' ? entry - dist : entry + dist;
-        const tp = direction === 'LONG' ? entry + dist : entry - dist;
-        document.getElementById('sl').value = sl.toFixed(entry < 1 ? 6 : 2);
-        document.getElementById('tp').value = tp.toFixed(entry < 1 ? 6 : 2);
-        setSlMode('atr', document.querySelectorAll('.calc-btn-group .calc-btn')[1]);
-      }
-
-      if (preset.startsWith('rr')) {
-        const rrTarget = parseFloat(preset.replace('rr', '').replace(':1', ''));
-        const slVal = parseFloat(document.getElementById('sl').value);
-        if (slVal && entry) {
-          const slDist = Math.abs(entry - slVal);
-          const tpDist = slDist * rrTarget;
-          const tp = direction === 'LONG' ? entry + tpDist : entry - tpDist;
-          document.getElementById('tp').value = tp.toFixed(entry < 1 ? 6 : 2);
-        }
-      }
+      const margin = parseFloat(document.getElementById('margin').value) || 0;
+      if (!entry || !margin) return;
+      // SL % from entry = (margin * slPct / 100) / entry * 100
+      const slPct = (margin * currentSlPct / 100) / entry * 100;
+      let sl;
+      if (direction === 'LONG') sl = entry * (1 - slPct / 100);
+      else sl = entry * (1 + slPct / 100);
+      document.getElementById('sl').value = sl.toFixed(entry < 1 ? 6 : 2);
       calc();
     }
 
-    // ── Core Calculation ───────────────────────────────────────
+    // ── Core calculation ──
     function calc() {
       const entry = parseFloat(document.getElementById('entry').value);
-      const atr = parseFloat(document.getElementById('atr').value);
-      let sl = parseFloat(document.getElementById('sl').value);
-      const tp = parseFloat(document.getElementById('tp').value);
-      const balance = parseFloat(document.getElementById('balance').value) || 10000;
-      const riskPct = parseFloat(document.getElementById('riskPct').value) || 1.0;
-      const atrSlMult = parseFloat(document.getElementById('atrSlMult').value) || 2.0;
-      const atrTpMult = parseFloat(document.getElementById('atrTpMult').value) || 2.5;
+      const sl = parseFloat(document.getElementById('sl').value);
+      const margin = parseFloat(document.getElementById('margin').value) || 0;
+      const customRisk = parseFloat(document.getElementById('riskCustom').value);
+      const risk = customRisk || currentRisk;
 
-      // ATR-based SL/TP
-      if (slMode === 'atr' && entry && atr) {
-        const slDist = atrSlMult * atr;
-        sl = direction === 'LONG' ? entry - slDist : entry + slDist;
-        document.getElementById('sl').value = sl.toFixed(entry < 1 ? 6 : 2);
-        const tpDist = atrTpMult * atr;
-        const tpVal = direction === 'LONG' ? entry + tpDist : entry - tpDist;
-        document.getElementById('tp').value = tpVal.toFixed(entry < 1 ? 6 : 2);
-      }
+      const rSlPct = document.getElementById('rSlPct');
+      const rLev = document.getElementById('rLev');
+      const rMaxLoss = document.getElementById('rMaxLoss');
+      const rPosSize = document.getElementById('rPosSize');
+      const summary = document.getElementById('summary');
 
       if (!entry || !sl) {
-        clearResults();
+        rSlPct.innerHTML = '&mdash;'; rLev.innerHTML = '&mdash;';
+        rMaxLoss.innerHTML = '&mdash;'; rPosSize.innerHTML = '&mdash;';
+        summary.textContent = 'Fill entry + SL to see plan.';
         return;
       }
 
       const slDist = Math.abs(entry - sl);
-      const tpDist = tp ? Math.abs(entry - tp) : 0;
       const slPct = (slDist / entry) * 100;
-      const rr = tpDist / slDist;
-      const riskAmount = balance * (riskPct / 100);
-      const posMult = SIGNAL_MULT[signalType] || 0;
-      const posSize = posMult > 0 ? (riskAmount / slDist) * entry * posMult : 0;
-      const margin = riskAmount;
-      const reqLeverage = margin > 0 && posSize > 0 ? posSize / margin : 0;
+      const maxLoss = margin * slPct / 100;
+      const lev = maxLoss > 0 ? risk / maxLoss : 0;
+      const posSize = margin * lev;
 
-      // SL width warning (> 4%)
-      const slWarn = document.getElementById('slWarn');
-      if (slPct > 4) {
-        slWarn.classList.add('show');
-      } else {
-        slWarn.classList.remove('show');
-      }
+      rSlPct.textContent = slPct.toFixed(3) + '%';
+      rLev.textContent = lev > 0 ? lev.toFixed(1) + 'x' : '&mdash;';
+      rMaxLoss.textContent = '$' + maxLoss.toFixed(2);
+      rPosSize.textContent = '$' + posSize.toFixed(2);
 
-      // RR quality
-      const rrValEl = document.getElementById('resRR');
-      const rrBar = document.getElementById('rrBar');
-      rrValEl.textContent = rr > 0 ? rr.toFixed(2) + ':1' : '—';
-      rrBar.style.width = Math.min(rr / 4 * 100, 100) + '%';
-      if (rr >= 1.5) { rrBar.style.background = 'var(--green)'; }
-      else if (rr >= 1.2) { rrBar.style.background = 'var(--amber)'; }
-      else if (rr > 0) { rrBar.style.background = 'var(--red)'; }
-      else { rrBar.style.background = 'var(--amber)'; }
-
-      // Display results
-      document.getElementById('resSlPct').textContent = slPct.toFixed(3) + '%';
-      document.getElementById('resSlPct').className = 'calc-result-value ' + (slPct > 4 ? 'red' : slPct > 2 ? 'amber' : 'green');
-      document.getElementById('resRiskAmt').textContent = '$' + riskAmount.toFixed(2);
-      document.getElementById('resPosSize').textContent = posSize > 0 ? '$' + posSize.toFixed(2) : '—';
-      document.getElementById('resPosMult').textContent = posMult + 'x';
-      document.getElementById('posMultVal').textContent = posMult + 'x';
-
-      const levEl = document.getElementById('resLeverage');
-      if (reqLeverage > 0) {
-        levEl.textContent = reqLeverage.toFixed(1) + 'x';
-        levEl.className = 'calc-result-value ' + (reqLeverage > 10 ? 'red' : reqLeverage > 5 ? 'amber' : 'green');
-      } else {
-        levEl.textContent = '—';
-        levEl.className = 'calc-result-value';
-      }
-
-      // Plan summary
-      const summary = document.getElementById('planSummary');
-      if (rr > 0) {
-        summary.innerHTML =
-          `<span class="hl">${direction}</span> ${document.getElementById('sym').value.toUpperCase()}\n` +
-          `Entry: $${entry.toFixed(entry < 1 ? 6 : 2)} | SL: $${sl.toFixed(entry < 1 ? 6 : 2)} | TP: $${(tp || 0).toFixed(entry < 1 ? 6 : 2)}\n` +
-          `SL%: ${slPct.toFixed(3)}% | RR: ${rr.toFixed(2)}:1 | Mult: ${posMult}x\n` +
-          `Risk: $${riskAmount.toFixed(2)} | Position: $${posSize.toFixed(2)} | Lev: ${reqLeverage > 0 ? reqLeverage.toFixed(1) + 'x' : 'N/A'}`;
-      }
+      summary.innerHTML =
+        `<span class="hl">${direction}</span> ${selectedSymbol || 'COIN'}\n` +
+        `Entry: $${entry.toFixed(entry < 1 ? 6 : 2)} | SL: $${sl.toFixed(entry < 1 ? 6 : 2)}\n` +
+        `SL: ${slPct.toFixed(2)}% | Leverage: ${lev > 0 ? lev.toFixed(1) + 'x' : '&mdash;'}\n` +
+        `Margin: $${margin} | Risk: INR ${risk} | Max Loss: $${maxLoss.toFixed(2)}`;
     }
 
-    function clearResults() {
-      ['resSlPct', 'resRiskAmt', 'resPosSize', 'resLeverage', 'resRR', 'resPosMult'].forEach(id => {
-        document.getElementById(id).textContent = '—';
-        document.getElementById(id).className = 'calc-result-value';
+    function resetCalc() {
+      document.getElementById('entry').value = '';
+      document.getElementById('sl').value = '';
+      document.getElementById('margin').value = '100';
+      document.getElementById('riskCustom').value = '';
+      currentRisk = 12; currentSlPct = 5;
+      document.querySelectorAll('.risk-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.risk-btn')[3]?.classList.add('active');
+      document.querySelectorAll('.sl-pct-btn').forEach(b => {
+        b.classList.toggle('active', parseInt(b.textContent) === 5);
       });
-      document.getElementById('rrBar').style.width = '0%';
-      document.getElementById('planSummary').textContent = 'Enter trade parameters to generate a plan.';
+      selectedSymbol = '';
+      coinSearch.value = '';
+      coinPriceInfo.textContent = '';
+      calc();
     }
 
-    // ── Actions ────────────────────────────────────────────────
+    // ── Save to journal ──
     async function saveToJournal() {
       const entry = parseFloat(document.getElementById('entry').value);
       const sl = parseFloat(document.getElementById('sl').value);
-      const tp = parseFloat(document.getElementById('tp').value);
-      const balance = parseFloat(document.getElementById('balance').value);
-      const riskPct = parseFloat(document.getElementById('riskPct').value);
-      const atr = parseFloat(document.getElementById('atr').value);
-      const confidence = parseFloat(document.getElementById('confidence').value);
-
-      if (!entry || !sl) {
-        showToast('Enter entry price and stop loss', 'error');
-        return;
-      }
-
-      const riskAmount = balance * (riskPct / 100);
-      const posMult = SIGNAL_MULT[signalType] || 0;
+      if (!entry || !sl) { showToast('Enter entry + SL', 'error'); return; }
+      const customRisk = parseFloat(document.getElementById('riskCustom').value);
+      const risk = customRisk || currentRisk;
+      const margin = parseFloat(document.getElementById('margin').value) || 0;
       const slDist = Math.abs(entry - sl);
-      const tpDist = tp ? Math.abs(entry - tp) : 0;
-      const rr = tpDist / slDist;
-      const posSize = posMult > 0 ? (riskAmount / slDist) * entry * posMult : 0;
+      const maxLoss = margin * slDist / entry * 100;
+      const lev = maxLoss > 0 ? risk / maxLoss : 0;
 
       const payload = {
-        symbol: document.getElementById('sym').value.toUpperCase(),
-        direction: direction,
-        signal_type: signalType,
-        entry_price: entry,
-        exit_price: tp || null,
-        sl_price: sl,
-        tp_price: tp || null,
-        rr: rr > 0 ? rr : null,
-        position_size: posSize || null,
-        leverage: posSize > 0 ? posSize / riskAmount : null,
-        confidence_score: confidence,
+        symbol: selectedSymbol || document.getElementById('coinSearch').value.toUpperCase() || 'MANUAL',
+        direction, signal_type: 'NONE',
+        entry_price: entry, sl_price: sl,
+        rr: null,
+        position_size: margin * lev,
+        leverage: lev || null,
         outcome: 'OPEN',
-        notes: `Calculated via Trade Calculator (${slMode} SL)`,
+        notes: `Calc: SL ${(slDist/entry*100).toFixed(2)}% | Risk INR${risk} | Lev ${lev > 0 ? lev.toFixed(1) + 'x' : 'N/A'}`,
         opened_at: new Date().toISOString(),
-        tags: ['calculator', signalType],
+        tags: ['calculator'],
       };
 
       try {
         const res = await fetch('/api/journal/trades', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify(payload),
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin', body: JSON.stringify(payload),
         });
-        if (res.ok) {
-          const data = await res.json();
-          showToast(`Trade saved (ID: ${data.trade_id})`, 'success');
-        } else {
-          const err = await res.json();
-          showToast('Save failed: ' + (err.error || 'Unknown'), 'error');
-        }
-      } catch (e) {
-        showToast('Network error — check auth', 'error');
-      }
+        if (res.ok) { showToast('Saved to journal', 'success'); }
+        else { showToast('Save failed', 'error'); }
+      } catch (e) { showToast('Network error', 'error'); }
     }
 
-    function copyPlan() {
-      const text = document.getElementById('planSummary').textContent;
-      navigator.clipboard.writeText(text).then(() => {
-        showToast('Plan copied to clipboard', 'info');
-      }).catch(() => {
-        showToast('Copy failed', 'error');
-      });
-    }
-
-    function resetForm() {
-      document.getElementById('entry').value = '';
-      document.getElementById('atr').value = '';
-      document.getElementById('sl').value = '';
-      document.getElementById('tp').value = '';
-      document.getElementById('sym').value = 'BTCUSDT';
-      document.getElementById('balance').value = '10000';
-      document.getElementById('riskPct').value = '1.0';
-      setSlMode('manual', document.querySelectorAll('.calc-btn-group .calc-btn')[0]);
-      clearResults();
-    }
-
-    // ── Toast ──────────────────────────────────────────────────
     function showToast(msg, type) {
-      const toast = document.createElement('div');
-      toast.className = 'toast ' + (type || 'info');
-      toast.textContent = msg;
-      document.body.appendChild(toast);
-      setTimeout(() => { toast.remove(); }, 3000);
+      const t = document.createElement('div');
+      t.className = 'toast ' + (type || 'info');
+      t.textContent = msg;
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 2500);
     }
-
-    // ── Init ───────────────────────────────────────────────────
-    calc();
   </script>
 </body>
 </html>

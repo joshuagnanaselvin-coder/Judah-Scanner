@@ -7,7 +7,11 @@ Follows the naming and style conventions of backend/db.py.
 
 from __future__ import annotations
 
+import csv
+import io
 import logging
+import os
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -16,6 +20,13 @@ import aiosqlite
 from .db import _PooledConn, _DB_PATH
 
 logger = logging.getLogger("judah.journal")
+
+# Directory for uploaded journal images
+_IMAGE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "static", "journal_images",
+)
+os.makedirs(_IMAGE_DIR, exist_ok=True)
 
 # ── Schema ──────────────────────────────────────────────────────
 
@@ -466,6 +477,89 @@ async def get_all_tags(user_id: str = "default") -> list[str]:
     except Exception:
         logger.exception("[journal] get_all_tags failed")
         return []
+
+
+# ── Statistics ──────────────────────────────────────────────────
+
+async def prune_old_trades(days: int = 30) -> int:
+    """Delete trades older than `days` days. Returns number of rows deleted."""
+    try:
+        async with _PooledConn() as conn:
+            cutoff_dt = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            cutoff_iso = (datetime.now(timezone.utc) - __import__('datetime').timedelta(days=days)).isoformat()
+            async with conn.execute(
+                "DELETE FROM trades WHERE opened_at < ?",
+                (cutoff_iso,),
+            ) as cur:
+                deleted = cur.rowcount
+            await conn.commit()
+            if deleted:
+                logger.info(f"[journal] Pruned {deleted} trades older than {days} days")
+            return deleted
+    except Exception:
+        logger.exception("[journal] prune_old_trades failed")
+        return 0
+
+
+async def export_trades_csv(user_id: str = "default", date: str = "") -> str | None:
+    """Export trades as CSV string. Optional date filter (YYYY-MM-DD)."""
+    try:
+        where = ["is_deleted = 0", "user_id = ?"]
+        params: list[Any] = [user_id]
+        if date:
+            where.append("DATE(opened_at) = ?")
+            params.append(date)
+        sql = (
+            "SELECT id, symbol, direction, signal_type, entry_price, exit_price, "
+            "sl_price, tp_price, rr, position_size, leverage, outcome, "
+            "pnl_pct, pnl_amount, opened_at, closed_at, notes "
+            "FROM trades "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY opened_at DESC"
+        )
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["#", "Coin", "Direction", "Type", "Entry", "Exit",
+                          "SL", "TP", "RR", "Size", "Leverage",
+                          "Outcome", "PnL%", "PnL$", "Opened", "Closed", "Notes"])
+        async with _PooledConn() as conn:
+            async with conn.execute(sql, params) as cur:
+                rows = await cur.fetchall()
+        if not rows:
+            return None
+        for i, r in enumerate(rows, 1):
+            writer.writerow([
+                i, r["symbol"], r["direction"], r["signal_type"],
+                r["entry_price"], r["exit_price"], r["sl_price"], r["tp_price"],
+                r["rr"], r["position_size"], r["leverage"],
+                r["outcome"], r["pnl_pct"], r["pnl_amount"],
+                (r["opened_at"] or "")[:19], (r["closed_at"] or "")[:19],
+                (r["notes"] or "")[:200],
+            ])
+        return buf.getvalue()
+    except Exception:
+        logger.exception("[journal] export_trades_csv failed")
+        return None
+
+
+async def save_journal_image(base64_data: str, filename: str) -> str | None:
+    """Save a base64 image to the journal_images directory. Returns public URL."""
+    try:
+        if not base64_data:
+            return None
+        # Strip data URL prefix if present (e.g. "data:image/png;base64,...")
+        if "," in base64_data and base64_data.split(",")[0].startswith("data:"):
+            base64_data = base64_data.split(",", 1)[1]
+        import base64
+        img_bytes = base64.b64decode(base64_data)
+        safe_name = filename or f"trade_{uuid.uuid4().hex[:8]}.png"
+        out_path = os.path.join(_IMAGE_DIR, safe_name)
+        with open(out_path, "wb") as f:
+            f.write(img_bytes)
+        return f"/static/journal_images/{safe_name}"
+    except Exception:
+        logger.exception("[journal] save_journal_image failed")
+        return None
 
 
 # ── Statistics ──────────────────────────────────────────────────
