@@ -3,7 +3,7 @@
    Strategy: stale-while-revalidate for HTML, cache-first for static assets.
 */
 
-const CACHE_NAME = 'judah-scanner-v4';
+const CACHE_NAME = 'judah-scanner-v5';
 const STATIC_ASSETS = [
   '/',
   '/static/style.css',
