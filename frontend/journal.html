@@ -623,12 +623,15 @@
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin', body: JSON.stringify(payload),
         });
+        const respData = await res.json().catch(() => ({}));
         if (res.ok) {
           showToast('Saved', 'success');
           clearForm();
           initCalendar();
           loadTrades();
-        } else { showToast('Save failed', 'error'); }
+        } else {
+          showToast('Save failed: ' + (respData.error || res.status + ' ' + res.statusText), 'error');
+        }
       } catch (e) { showToast('Network error', 'error'); }
     }
 

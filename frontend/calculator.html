@@ -162,16 +162,14 @@
       </div>
 
       <div class="field">
-        <label>SL % from Entry (quick set)</label>
+        <label>Quick SL % from Entry (sets SL price automatically)</label>
         <div class="sl-pct-grid">
+          <button class="sl-pct-btn" onclick="setSlPct(0.5)">0.5%</button>
           <button class="sl-pct-btn" onclick="setSlPct(1)">1%</button>
           <button class="sl-pct-btn" onclick="setSlPct(2)">2%</button>
           <button class="sl-pct-btn" onclick="setSlPct(3)">3%</button>
           <button class="sl-pct-btn" onclick="setSlPct(4)">4%</button>
           <button class="sl-pct-btn" onclick="setSlPct(5)">5%</button>
-        </div>
-        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">
-          Sets SL price = Entry × (1 − SL%) for LONG, Entry × (1 + SL%) for SHORT
         </div>
       </div>
 
@@ -398,8 +396,9 @@
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin', body: JSON.stringify(payload),
         });
+        const respData = await res.json().catch(() => ({}));
         if (res.ok) { showToast('Saved to journal', 'success'); }
-        else { showToast('Save failed', 'error'); }
+        else { showToast('Save failed: ' + (respData.error || res.status + ' ' + res.statusText), 'error'); }
       } catch (e) { showToast('Network error', 'error'); }
     }
 
