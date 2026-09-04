@@ -445,6 +445,24 @@ async def _serve_page(loader, request: Request) -> HTMLResponse:
         return HTMLResponse(content='<script>window.location.href="/login"</script>', status_code=200)
     except FileNotFoundError:
         return HTMLResponse(content=loader())
+    except Exception as e:
+        logger.error(f"[serve_page] Unexpected error serving page: {e}", exc_info=True)
+        return HTMLResponse(
+            content=f"<h2>Server Error</h2><pre>{type(e).__name__}: {e}</pre>",
+            status_code=500
+        )
+    except Exception as e:
+        logger.error(f"[serve_page] Unexpected error serving page: {e}", exc_info=True)
+        return HTMLResponse(
+            content=f"<h2>Server Error</h2><pre>{type(e).__name__}: {e}</pre>",
+            status_code=500
+        )
+    except Exception as e:
+        logger.error(f"[serve_page] Unexpected error serving page: {e}", exc_info=True)
+        return HTMLResponse(
+            content=f"<h2>Server Error</h2><pre>{e}</pre>",
+            status_code=500
+        )
 
 
 @app.get("/calculator")
