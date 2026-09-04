@@ -17,7 +17,7 @@ from typing import Any
 
 import aiosqlite
 
-from .db import _PooledConn, _DB_PATH
+from .db import _PooledConn, _DB_PATH, _write_lock, _write_unlock
 
 logger = logging.getLogger("judah.journal")
 
@@ -129,85 +129,87 @@ async def init_journal_schema() -> None:
 async def create_trade(data: dict[str, Any], user_id: str = "default") -> int | None:
     """Insert a new trade. Returns the new trade id or raises."""
     try:
-        async with _PooledConn() as conn:
-            now = datetime.now(timezone.utc).isoformat()
-            cur = await conn.execute(
-                """
-                INSERT INTO trades
-                    (user_id, symbol, direction, signal_type,
-                     entry_price, exit_price, sl_price, tp_price, rr,
-                     position_size, leverage, confidence_score, market_state,
-                     spiral, market_evolution, d1_zone, d2_zone,
-                     dealing_range_4h, dealing_range_15m,
-                     liquidity_type, liquidity_event, sweep, bos, fib,
-                     planned_entry, actual_entry, exit_reason,
-                     mfe, mae, session, r_multiple, holding_time, max_drawdown,
-                     outcome, pnl_pct, pnl_amount, notes, opened_at, closed_at,
-                     created_at, updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                """,
-                (
-                    user_id,
-                    data.get("symbol", "").upper(),
-                    data.get("direction", "LONG"),
-                    data.get("signal_type", "NONE"),
-                    data.get("entry_price"),
-                    data.get("exit_price"),
-                    data.get("sl_price"),
-                    data.get("tp_price"),
-                    data.get("rr"),
-                    data.get("position_size"),
-                    data.get("leverage"),
-                    data.get("confidence_score"),
-                    data.get("market_state"),
-                    data.get("spiral"),
-                    data.get("market_evolution"),
-                    data.get("d1_zone"),
-                    data.get("d2_zone"),
-                    data.get("dealing_range_4h"),
-                    data.get("dealing_range_15m"),
-                    data.get("liquidity_type"),
-                    data.get("liquidity_event"),
-                    1 if data.get("sweep") else 0,
-                    data.get("bos"),
-                    data.get("fib"),
-                    data.get("planned_entry"),
-                    data.get("actual_entry"),
-                    data.get("exit_reason"),
-                    data.get("mfe"),
-                    data.get("mae"),
-                    data.get("session"),
-                    data.get("r_multiple"),
-                    data.get("holding_time"),
-                    data.get("max_drawdown"),
-                    data.get("outcome", "OPEN"),
-                    data.get("pnl_pct"),
-                    data.get("pnl_amount"),
-                    data.get("notes"),
-                    data.get("opened_at", now),
-                    data.get("closed_at"),
-                    now,
-                    now,
-                ),
-            )
-            await conn.commit()
-            trade_id = cur.lastrowid
-            # Attach tags if provided
-            tags = data.get("tags", [])
-            if tags:
-                await conn.executemany(
-                    "INSERT OR IGNORE INTO trade_tags (trade_id, tag) VALUES (?, ?)",
-                    [(trade_id, t.strip().lower()) for t in tags if t.strip()],
+        await _write_lock()
+        try:
+            async with _PooledConn() as conn:
+                now = datetime.now(timezone.utc).isoformat()
+                cur = await conn.execute(
+                    """
+                    INSERT INTO trades
+                        (user_id, symbol, direction, signal_type,
+                         entry_price, exit_price, sl_price, tp_price, rr,
+                         position_size, leverage, confidence_score, market_state,
+                         spiral, market_evolution, d1_zone, d2_zone,
+                         dealing_range_4h, dealing_range_15m,
+                         liquidity_type, liquidity_event, sweep, bos, fib,
+                         planned_entry, actual_entry, exit_reason,
+                         mfe, mae, session, r_multiple, holding_time, max_drawdown,
+                         outcome, pnl_pct, pnl_amount, notes, opened_at, closed_at,
+                         created_at, updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        user_id,
+                        data.get("symbol", "").upper(),
+                        data.get("direction", "LONG"),
+                        data.get("signal_type", "NONE"),
+                        data.get("entry_price"),
+                        data.get("exit_price"),
+                        data.get("sl_price"),
+                        data.get("tp_price"),
+                        data.get("rr"),
+                        data.get("position_size"),
+                        data.get("leverage"),
+                        data.get("confidence_score"),
+                        data.get("market_state"),
+                        data.get("spiral"),
+                        data.get("market_evolution"),
+                        data.get("d1_zone"),
+                        data.get("d2_zone"),
+                        data.get("dealing_range_4h"),
+                        data.get("dealing_range_15m"),
+                        data.get("liquidity_type"),
+                        data.get("liquidity_event"),
+                        1 if data.get("sweep") else 0,
+                        data.get("bos"),
+                        data.get("fib"),
+                        data.get("planned_entry"),
+                        data.get("actual_entry"),
+                        data.get("exit_reason"),
+                        data.get("mfe"),
+                        data.get("mae"),
+                        data.get("session"),
+                        data.get("r_multiple"),
+                        data.get("holding_time"),
+                        data.get("max_drawdown"),
+                        data.get("outcome", "OPEN"),
+                        data.get("pnl_pct"),
+                        data.get("pnl_amount"),
+                        data.get("notes"),
+                        data.get("opened_at", now),
+                        data.get("closed_at"),
+                        now,
+                        now,
+                    ),
                 )
                 await conn.commit()
-            return trade_id
-    except Exception as e:
-        logger.exception("[journal] Failed to create trade for %s", data.get("symbol"))
-        raise  # <-- re-raise so the API endpoint can return the actual error
+                trade_id = cur.lastrowid
+                # Attach tags if provided
+                tags = data.get("tags", [])
+                if tags:
+                    await conn.executemany(
+                        "INSERT OR IGNORE INTO trade_tags (trade_id, tag) VALUES (?, ?)",
+                        [(trade_id, t.strip().lower()) for t in tags if t.strip()],
+                    )
+                    await conn.commit()
+                return trade_id
+        finally:
+            _write_unlock()
 
 
 async def update_trade(trade_id: int, data: dict[str, Any], user_id: str = "default") -> bool:
     """Update a trade by id, verifying ownership. Returns True if modified."""
+    await _write_lock()
     try:
         fields: list[str] = []
         values: list[Any] = []
@@ -227,6 +229,7 @@ async def update_trade(trade_id: int, data: dict[str, Any], user_id: str = "defa
                 fields.append(f"{key} = ?")
                 values.append(data[key])
         if not fields:
+            _write_unlock()
             return False
 
         fields.append("updated_at = ?")
@@ -251,14 +254,17 @@ async def update_trade(trade_id: int, data: dict[str, Any], user_id: str = "defa
                         [(trade_id, t.strip().lower()) for t in tags if t.strip()],
                     )
             await conn.commit()
+            _write_unlock()
             return True
     except Exception:
+        _write_unlock()
         logger.exception("[journal] Failed to update trade %s", trade_id)
         return False
 
 
 async def delete_trade(trade_id: int, user_id: str = "default") -> bool:
     """Soft-delete a trade, verifying ownership. Returns True if the row existed."""
+    await _write_lock()
     try:
         async with _PooledConn() as conn:
             await conn.execute(
@@ -267,8 +273,10 @@ async def delete_trade(trade_id: int, user_id: str = "default") -> bool:
                 (datetime.now(timezone.utc).isoformat(), trade_id, user_id),
             )
             await conn.commit()
+            _write_unlock()
             return True
     except Exception:
+        _write_unlock()
         logger.exception("[journal] Failed to delete trade %s", trade_id)
         return False
 
