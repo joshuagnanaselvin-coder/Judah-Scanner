@@ -34,6 +34,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 _INDEX_HTML_CACHE: str | None = None
 _LOGIN_HTML_CACHE: str | None = None
 _ADMIN_HTML_CACHE: str | None = None
+_CALC_HTML_CACHE: str | None = None
+_JOURNAL_HTML_CACHE: str | None = None
+_ANALYTICS_HTML_CACHE: str | None = None
 
 def _load_index_html() -> str:
     global _INDEX_HTML_CACHE
