@@ -162,31 +162,27 @@
       </div>
 
       <div class="field">
-        <label>Quick SL % (from margin)</label>
+        <label>SL % from Entry (quick set)</label>
         <div class="sl-pct-grid">
           <button class="sl-pct-btn" onclick="setSlPct(1)">1%</button>
           <button class="sl-pct-btn" onclick="setSlPct(2)">2%</button>
           <button class="sl-pct-btn" onclick="setSlPct(3)">3%</button>
           <button class="sl-pct-btn" onclick="setSlPct(4)">4%</button>
-          <button class="sl-pct-btn active" onclick="setSlPct(5)">5%</button>
+          <button class="sl-pct-btn" onclick="setSlPct(5)">5%</button>
+        </div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">
+          Sets SL price = Entry × (1 − SL%) for LONG, Entry × (1 + SL%) for SHORT
         </div>
       </div>
 
-      <div class="field">
-        <label>Margin (USD)</label>
-        <input type="number" id="margin" placeholder="100" step="1" value="100" oninput="calc()">
-      </div>
-
-      <div class="field">
-        <label>Risk (INR)</label>
-        <div class="risk-grid">
-          <button class="risk-btn" onclick="setRisk(3,this)">3</button>
-          <button class="risk-btn" onclick="setRisk(6,this)">6</button>
-          <button class="risk-btn" onclick="setRisk(9,this)">9</button>
-          <button class="risk-btn active" onclick="setRisk(12,this)">12</button>
+      <div class="field-row">
+        <div class="field">
+          <label>Margin (USD)</label>
+          <input type="number" id="margin" placeholder="100" step="1" value="100" oninput="calc()">
         </div>
-        <div style="margin-top:6px;">
-          <input type="number" id="riskCustom" placeholder="Custom INR" step="1" oninput="calc()">
+        <div class="field">
+          <label>Max Risk (USD) — what you want to lose if SL hits</label>
+          <input type="number" id="riskCustom" placeholder="12" step="1" oninput="calc()">
         </div>
       </div>
     </div>
@@ -310,13 +306,10 @@
 
     function applySlPct() {
       const entry = parseFloat(document.getElementById('entry').value);
-      const margin = parseFloat(document.getElementById('margin').value) || 0;
-      if (!entry || !margin) return;
-      // SL % from entry = (margin * slPct / 100) / entry * 100
-      const slPct = (margin * currentSlPct / 100) / entry * 100;
+      if (!entry) return;
       let sl;
-      if (direction === 'LONG') sl = entry * (1 - slPct / 100);
-      else sl = entry * (1 + slPct / 100);
+      if (direction === 'LONG') sl = entry * (1 - currentSlPct / 100);
+      else sl = entry * (1 + currentSlPct / 100);
       document.getElementById('sl').value = sl.toFixed(entry < 1 ? 6 : 2);
       calc();
     }
@@ -357,7 +350,7 @@
         `<span class="hl">${direction}</span> ${selectedSymbol || 'COIN'}\n` +
         `Entry: $${entry.toFixed(entry < 1 ? 6 : 2)} | SL: $${sl.toFixed(entry < 1 ? 6 : 2)}\n` +
         `SL: ${slPct.toFixed(2)}% | Leverage: ${lev > 0 ? lev.toFixed(1) + 'x' : '&mdash;'}\n` +
-        `Margin: $${margin} | Risk: INR ${risk} | Max Loss: $${maxLoss.toFixed(2)}`;
+        `Margin: $${margin} | Risk: $${risk} | Max Loss: $${maxLoss.toFixed(2)}`;
     }
 
     function resetCalc() {
@@ -366,8 +359,6 @@
       document.getElementById('margin').value = '100';
       document.getElementById('riskCustom').value = '';
       currentRisk = 12; currentSlPct = 5;
-      document.querySelectorAll('.risk-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.risk-btn')[3]?.classList.add('active');
       document.querySelectorAll('.sl-pct-btn').forEach(b => {
         b.classList.toggle('active', parseInt(b.textContent) === 5);
       });
