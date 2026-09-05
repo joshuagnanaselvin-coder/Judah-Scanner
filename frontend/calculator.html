@@ -61,14 +61,6 @@
     }
     .dir-btn.long.active { background: #22c55e; border-color: #22c55e; color: #000; }
     .dir-btn.short.active { background: #ef4444; border-color: #ef4444; color: #fff; }
-    .sl-pct-grid { display: flex; gap: 6px; flex-wrap: wrap; }
-    .sl-pct-btn {
-      padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
-      background: var(--bg); color: var(--text-sec); font-size: 12px; font-weight: 600;
-      cursor: pointer; transition: all 0.15s;
-    }
-    .sl-pct-btn:hover { border-color: var(--accent); }
-    .sl-pct-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
     .result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
     .result-item {
       background: var(--bg); border-radius: var(--radius-sm);
@@ -152,21 +144,6 @@
         </div>
       </div>
 
-      <div class="field">
-        <label>Quick SL from Entry</label>
-        <div class="sl-pct-grid">
-          <button class="sl-pct-btn" onclick="setSlPct(0.5)">0.5%</button>
-          <button class="sl-pct-btn" onclick="setSlPct(1)">1%</button>
-          <button class="sl-pct-btn" onclick="setSlPct(2)">2%</button>
-          <button class="sl-pct-btn" onclick="setSlPct(3)">3%</button>
-          <button class="sl-pct-btn" onclick="setSlPct(4)">4%</button>
-          <button class="sl-pct-btn" onclick="setSlPct(5)">5%</button>
-        </div>
-        <div style="font-size:10px;color:var(--text-muted);margin-top:4px;">
-          Sets SL price = Entry &times; (1 &minus; %) for LONG, Entry &times; (1 + %) for SHORT
-        </div>
-      </div>
-
       <div class="field-row">
         <div class="field">
           <label>Margin (USD)</label>
@@ -211,7 +188,6 @@
   <script>
     let direction = 'LONG';
     let currentRisk = 12;
-    let currentSlPct = 5;
     let allCoins = [];
     let selectedSymbol = '';
 
@@ -277,21 +253,6 @@
       calc();
     }
 
-    // ── SL % quick buttons (set SL price from Entry) ──
-    function setSlPct(pct) {
-      currentSlPct = pct;
-      document.querySelectorAll('.sl-pct-btn').forEach(b => {
-        b.classList.toggle('active', parseInt(b.textContent) === pct);
-      });
-      const entry = parseFloat(document.getElementById('entry').value);
-      if (!entry) return;
-      let sl;
-      if (direction === 'LONG') sl = entry * (1 - pct / 100);
-      else sl = entry * (1 + pct / 100);
-      document.getElementById('sl').value = sl.toFixed(entry < 1 ? 6 : 2);
-      calc();
-    }
-
     // ── Core calculation ──
     function calc() {
       const entry = parseFloat(document.getElementById('entry').value);
@@ -340,10 +301,7 @@
       document.getElementById('sl').value = '';
       document.getElementById('margin').value = '100';
       document.getElementById('riskCustom').value = '12';
-      currentRisk = 12; currentSlPct = 5;
-      document.querySelectorAll('.sl-pct-btn').forEach(b => {
-        b.classList.toggle('active', parseInt(b.textContent) === 5);
-      });
+      currentRisk = 12;
       selectedSymbol = '';
       coinSearch.value = '';
       coinPriceInfo.textContent = '';
