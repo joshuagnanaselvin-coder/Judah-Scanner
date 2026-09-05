@@ -2,12 +2,12 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta theme-color" content="#0c1220">
   <title>Judah — Journal</title>
-  <link rel="stylesheet" href="/static/style.css?v=6">
+  <link rel="stylesheet" href="/static/style.css?v=7">
   <style>
-    .j-wrap { max-width: 820px; margin: 0 auto; padding: 12px; }
+    .j-wrap { max-width: 960px; margin: 0 auto; padding: 12px; }
     .card {
       background: var(--bg-card); border: 1px solid var(--border);
       border-radius: var(--radius); padding: 16px; margin-bottom: 12px;
@@ -17,7 +17,12 @@
       text-transform: uppercase; letter-spacing: 0.5px;
       margin-bottom: 12px; padding-bottom: 8px;
       border-bottom: 1px solid var(--border-subtle);
+      cursor: pointer; display: flex; justify-content: space-between; align-items: center;
     }
+    .card-title .arrow { transition: transform 0.2s; }
+    .card-title.collapsed .arrow { transform: rotate(-90deg); }
+    .card-body { transition: max-height 0.3s ease; overflow: hidden; }
+    .card-body.hidden { display: none; }
     .field { margin-bottom: 10px; }
     .field label {
       display: block; font-size: 11px; color: var(--text-muted);
@@ -76,8 +81,9 @@
       border: none; font-size: 12px; font-weight: 700;
       cursor: pointer; transition: all 0.15s;
     }
-    .btn-primary { background: var(--accent); color: #fff; flex: 1; }
+    .btn-primary { background: var(--accent); color: #fff; }
     .btn-primary:hover { filter: brightness(1.15); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
     .btn-ghost {
       background: transparent; color: var(--text-sec);
       border: 1px solid var(--border);
@@ -89,49 +95,53 @@
     .btn-sm.danger:hover { border-color: var(--red); }
     .btn-row { display: flex; gap: 8px; margin-top: 14px; }
 
-    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
-    .toolbar .month-nav { display: flex; gap: 4px; align-items: center; }
-    .toolbar .month-nav span { font-size: 13px; font-weight: 700; min-width: 120px; text-align: center; }
+    /* Tabs */
+    .tab-bar { display: flex; gap: 4px; margin-bottom: 12px; }
+    .tab-btn {
+      padding: 8px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border);
+      background: var(--bg); color: var(--text-sec); font-size: 12px; font-weight: 700;
+      cursor: pointer;
+    }
+    .tab-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
 
-    /* Calendar grid */
-    .cal-grid {
-      display: grid;
-      grid-template-columns: repeat(7, 1fr);
-      gap: 2px;
+    /* Binance API Manager */
+    .conn-list { display: flex; flex-direction: column; gap: 8px; }
+    .conn-item {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 10px 12px;
     }
-    .cal-dow {
-      text-align: center; font-size: 10px; font-weight: 700;
-      color: var(--text-muted); padding: 4px; text-transform: uppercase;
+    .conn-item .conn-label { font-weight: 700; font-size: 13px; flex: 1; }
+    .conn-item .conn-status {
+      font-size: 10px; font-weight: 700; padding: 3px 8px;
+      border-radius: 3px; text-transform: uppercase;
     }
-    .cal-cell {
-      background: var(--bg); border-radius: var(--radius-sm);
-      padding: 6px; min-height: 55px; font-size: 11px;
-      position: relative; border: 1px solid transparent;
+    .conn-status.active { background: rgba(34,197,94,0.15); color: var(--green); }
+    .conn-status.inactive { background: rgba(156,163,175,0.15); color: var(--text-muted); }
+    .api-form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .api-form .full { grid-column: 1 / -1; }
+    .progress-bar {
+      height: 4px; background: var(--border); border-radius: 2px; margin-top: 8px; overflow: hidden;
     }
-    .cal-cell.has-trades { border-color: var(--accent); }
-    .cal-cell.empty { opacity: 0.3; }
-    .cal-cell .day-num { font-weight: 700; font-size: 12px; margin-bottom: 2px; }
-    .cal-cell .day-count { font-size: 10px; color: var(--accent); }
-    .cal-cell .day-pnl { font-size: 10px; }
-    .cal-cell .day-pnl.win { color: var(--green); }
-    .cal-cell .day-pnl.loss { color: var(--red); }
-    .cal-cell.today { background: rgba(99,102,241,0.1); border-color: var(--accent); }
+    .progress-bar .fill { height: 100%; background: var(--accent); transition: width 0.3s; border-radius: 2px; }
 
-    /* Trade log */
-    .trade-log-header {
-      display: grid; grid-template-columns: 35px 70px 55px 28px 65px 55px 65px 55px 65px 1fr 32px;
-      gap: 4px; padding: 8px 10px; background: var(--bg);
-      font-size: 10px; font-weight: 700; color: var(--text-muted);
-      text-transform: uppercase; letter-spacing: 0.3px;
-      border-bottom: 1px solid var(--border); border-radius: var(--radius) var(--radius) 0 0;
+    /* Trade table */
+    .trade-table { width: 100%; border-collapse: collapse; }
+    .trade-table th {
+      text-align: left; padding: 8px 6px; font-size: 10px; font-weight: 700;
+      color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.3px;
+      border-bottom: 1px solid var(--border-subtle); cursor: pointer; white-space: nowrap;
     }
-    .trade-row {
-      display: grid; grid-template-columns: 35px 70px 55px 28px 65px 55px 65px 55px 65px 1fr 32px;
-      gap: 4px; padding: 7px 10px; font-size: 12px;
-      border-bottom: 1px solid var(--border-subtle);
-      align-items: center;
+    .trade-table th:hover { color: var(--accent); }
+    .trade-table td {
+      padding: 8px 6px; font-size: 12px; border-bottom: 1px solid var(--border-subtle);
+      vertical-align: middle;
     }
-    .trade-row:hover { background: var(--bg-hover); }
+    .trade-table tr:hover td { background: var(--bg-hover); }
+    .trade-table tr.clickable { cursor: pointer; }
+
     .badge {
       display: inline-block; padding: 2px 6px; border-radius: 3px;
       font-size: 10px; font-weight: 700; text-align: center;
@@ -142,19 +152,17 @@
     .badge-open { background: rgba(59,130,246,0.15); color: var(--accent); }
     .badge-long { background: rgba(34,197,94,0.1); color: var(--green); }
     .badge-short { background: rgba(239,68,68,0.1); color: var(--red); }
+    .badge-binance { background: rgba(245,158,11,0.1); color: var(--amber); }
     .pnl-pos { color: var(--green); font-weight: 600; }
     .pnl-neg { color: var(--red); font-weight: 600; }
-    .notes-preview {
-      font-size: 11px; color: var(--text-muted);
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
+
     .del-btn {
       background: none; border: none; color: var(--red);
       cursor: pointer; font-size: 14px; padding: 0;
     }
     .del-btn:hover { color: #ff3333; }
     .img-preview {
-      max-width: 60px; max-height: 40px; border-radius: 3px;
+      max-width: 40px; max-height: 30px; border-radius: 3px;
       border: 1px solid var(--border); cursor: pointer;
       vertical-align: middle; margin-left: 4px;
     }
@@ -169,51 +177,75 @@
     .toast.info { background: var(--accent); color: #fff; }
     @keyframes toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; } }
 
-    /* Paste overlay */
-    .paste-hint {
-      font-size: 10px; color: var(--text-muted); margin-top: 4px;
-      font-style: italic;
-    }
-    .image-preview-area {
-      display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px;
-    }
-    .image-preview-area img {
-      max-width: 80px; max-height: 60px; border-radius: 4px;
-      border: 1px solid var(--border); cursor: pointer;
-    }
     .modal-overlay {
       display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.85); z-index: 10000; justify-content: center; align-items: center;
+      background: rgba(0,0,0,0.7); z-index: 9998; overflow-y: auto;
+      padding: 20px;
     }
-    .modal-overlay.open { display: flex; }
-    .modal-overlay img { max-width: 90vw; max-height: 90vh; border-radius: 8px; }
-    .modal-close { position: absolute; top: 20px; right: 20px; color: #fff; font-size: 30px; cursor: pointer; }
-
-    .bk-table { width: 100%; border-collapse: collapse; }
-    .bk-table td {
-      padding: 6px 10px; font-size: 12px;
-      border-bottom: 1px solid var(--border-subtle);
+    .modal-overlay.open { display: block; }
+    .modal {
+      max-width: 640px; margin: 20px auto; background: var(--bg-card);
+      border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 20px;
     }
-    .bk-table tr:last-child td { border-bottom: none; }
-
+    .modal-title {
+      font-size: 14px; font-weight: 700; margin-bottom: 16px;
+      padding-bottom: 10px; border-bottom: 1px solid var(--border-subtle);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .modal-close {
+      background: none; border: none; color: var(--text-muted);
+      font-size: 22px; cursor: pointer;
+    }
+    .modal-close:hover { color: var(--text); }
     .empty { text-align: center; color: var(--text-muted); padding: 20px; font-size: 13px; }
-    .tab-bar { display: flex; gap: 4px; margin-bottom: 12px; }
-    .tab-btn {
-      padding: 6px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border);
-      background: var(--bg); color: var(--text-sec); font-size: 11px; font-weight: 700;
-      cursor: pointer;
+
+    /* Calendar */
+    .cal-grid {
+      display: grid; grid-template-columns: repeat(7, 1fr);
+      gap: 2px;
     }
-    .tab-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-    .tab-panel { display: none; }
-    .tab-panel.active { display: block; }
+    .cal-dow {
+      text-align: center; font-size: 10px; font-weight: 700;
+      color: var(--text-muted); padding: 4px; text-transform: uppercase;
+    }
+    .cal-cell {
+      background: var(--bg); border-radius: var(--radius-sm);
+      padding: 6px; min-height: 45px; font-size: 11px;
+      position: relative; border: 1px solid transparent;
+    }
+    .cal-cell.has-trades { border-color: var(--accent); }
+    .cal-cell.empty { opacity: 0.3; }
+    .cal-cell .day-num { font-weight: 700; font-size: 12px; }
+    .cal-cell .day-count { font-size: 10px; color: var(--accent); }
+    .cal-cell.today { background: rgba(99,102,241,0.1); border-color: var(--accent); }
+    .cal-cell.clickable { cursor: pointer; }
+    .cal-cell.clickable:hover { background: var(--bg-hover); }
   </style>
 </head>
 <body>
   <div class="j-wrap">
+
+    <!-- ═══ BINANCE API MANAGER ═══ -->
+    <div class="card">
+      <div class="card-title" onclick="toggleSection(this)">
+        <span>Binance API Manager</span>
+        <span class="arrow">&#9662;</span>
+      </div>
+      <div class="card-body" id="binancePanel">
+        <div id="binanceConnections">
+          <div class="empty">Loading connections...</div>
+        </div>
+        <div class="btn-row" style="margin-top:12px;">
+          <button class="btn btn-primary btn-sm" onclick="showAddConnModal()">+ Add API Key</button>
+          <button class="btn btn-ghost btn-sm" onclick="showImportModal()">Import from Binance</button>
+        </div>
+      </div>
+    </div>
+
     <!-- ═══ NEW TRADE ═══ -->
     <div class="card">
       <div class="card-title">New Trade</div>
-
       <div class="field-row">
         <div class="field">
           <label>Coin</label>
@@ -231,7 +263,6 @@
           </div>
         </div>
       </div>
-
       <div class="field">
         <label>Direction</label>
         <div class="dir-toggle">
@@ -239,7 +270,6 @@
           <button class="dir-btn short" onclick="setDir('SHORT',this)">SHORT</button>
         </div>
       </div>
-
       <div class="field-row">
         <div class="field">
           <label>Entry Price</label>
@@ -250,23 +280,16 @@
           <input type="number" id="fExit" step="any" placeholder="0.00">
         </div>
       </div>
-
       <div class="field-row">
         <div class="field">
-          <label>Max Loss ($)</label>
-          <input type="number" id="fMaxLoss" step="any" placeholder="e.g. 50">
+          <label>RR (Risk:Reward)</label>
+          <input type="number" id="fRR" step="0.1" placeholder="e.g. 3.0 for 3:1">
         </div>
         <div class="field">
-          <label>Max Profit ($)</label>
-          <input type="number" id="fMaxProfit" step="any" placeholder="e.g. 150">
+          <label>Profit %</label>
+          <input type="number" id="fPnl" step="0.1" placeholder="e.g. 5.2 for +5.2%">
         </div>
       </div>
-
-      <div class="field">
-        <label>Profit %</label>
-        <input type="number" id="fPnl" step="0.1" placeholder="e.g. 5.2 for +5.2%">
-      </div>
-
       <div class="field">
         <label>Outcome</label>
         <div class="outcome-toggle">
@@ -276,24 +299,19 @@
           <button class="out-btn open active" onclick="setOutcome('OPEN',this)">OPEN</button>
         </div>
       </div>
-
       <div class="field">
         <label>Why I took this trade</label>
         <textarea id="fNotes" placeholder="Setup reason, confluence, market condition..."></textarea>
       </div>
-
       <div class="field">
-        <label>Chart Screenshot (Ctrl+V paste below or click to upload)</label>
-        <textarea id="fScreenshot" style="min-height:35px;font-size:11px;" placeholder="Paste image here (Ctrl+V) — or paste into this box"></textarea>
+        <label>Chart Screenshot (Ctrl+V paste)</label>
+        <textarea id="fScreenshot" style="min-height:35px;font-size:11px;" placeholder="Ctrl+V paste from TradingView"></textarea>
         <div class="image-preview-area" id="imagePreviewArea"></div>
-        <div class="paste-hint">Ctrl+V paste from TradingView works here. The image is saved with the trade.</div>
       </div>
-
       <div class="field">
         <label>Learning / Remarks</label>
-        <textarea id="fRemarks" placeholder="What went right / wrong, what to improve next time..."></textarea>
+        <textarea id="fRemarks" placeholder="What went right / wrong..."></textarea>
       </div>
-
       <div class="btn-row">
         <button class="btn btn-primary" onclick="saveTrade()">Save Trade</button>
         <button class="btn btn-ghost" onclick="clearForm()">Clear</button>
@@ -301,56 +319,107 @@
       </div>
     </div>
 
-    <!-- ═══ CALENDAR + TOOLBAR ═══ -->
+    <!-- ═══ TRADE TABS ═══ -->
+    <div class="tab-bar">
+      <button class="tab-btn active" onclick="setTradeTab('open', this)">Open Trades</button>
+      <button class="tab-btn" onclick="setTradeTab('closed', this)">Closed Trades</button>
+      <button class="tab-btn" onclick="setTradeTab('all', this)">All Trades</button>
+    </div>
+
     <div class="card">
-      <div class="card-title">Journal Calendar</div>
-      <div class="toolbar">
-        <div class="month-nav">
-          <button class="btn-sm" onclick="changeMonth(-1)">&lt;</button>
-          <span id="monthLabel"></span>
-          <button class="btn-sm" onclick="changeMonth(1)">&gt;</button>
-        </div>
-        <span style="font-size:11px;color:var(--text-muted);">Click a day to view trades</span>
-      </div>
-      <div class="cal-grid" id="calGrid"></div>
-    </div>
-
-    <!-- ═══ TRADE LOG / TRADE DETAIL ═══ -->
-    <div class="tab-bar" id="tabBar" style="display:none;">
-      <button class="tab-btn active" data-tab="trades" onclick="switchTab('trades')">Trades</button>
-      <button class="tab-btn" data-tab="detail" onclick="switchTab('detail')">Detail</button>
-    </div>
-
-    <div class="card" id="tradesCard">
-      <div class="card-title">Trade Log <span id="tradeDateLabel" style="color:var(--accent)"></span></div>
+      <div class="card-title" id="tradeListTitle">Open Trades</div>
       <div id="tradeList">
         <div class="empty">Loading...</div>
       </div>
     </div>
 
-    <div class="card" id="detailCard" style="display:none;">
-      <div class="card-title">Trade Detail</div>
-      <div id="tradeDetail"><div class="empty">Select a trade to view details.</div></div>
+  </div>
+
+  <!-- Edit Modal -->
+  <div class="modal-overlay" id="editModal">
+    <div class="modal">
+      <div class="modal-title">
+        <span>Edit Trade</span>
+        <button class="modal-close" onclick="closeEditModal()">&times;</button>
+      </div>
+      <div id="editForm"></div>
+    </div>
+  </div>
+
+  <!-- Add Connection Modal -->
+  <div class="modal-overlay" id="connModal">
+    <div class="modal">
+      <div class="modal-title">
+        <span>Add Binance API Connection</span>
+        <button class="modal-close" onclick="closeConnModal()">&times;</button>
+      </div>
+      <div class="field">
+        <label>Label</label>
+        <input type="text" id="connLabel" placeholder="My Binance" value="Binance">
+      </div>
+      <div class="field">
+        <label>API Key</label>
+        <input type="text" id="connApiKey" placeholder="Enter API key">
+      </div>
+      <div class="field">
+        <label>API Secret</label>
+        <input type="text" id="connApiSecret" placeholder="Enter API secret">
+      </div>
+      <div id="connTestResult" style="font-size:12px;margin-bottom:10px;"></div>
+      <div class="btn-row">
+        <button class="btn btn-sm btn-ghost" onclick="testConn()">Test Connection</button>
+        <button class="btn btn-primary btn-sm" onclick="saveConn()">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Import Modal -->
+  <div class="modal-overlay" id="importModal">
+    <div class="modal">
+      <div class="modal-title">
+        <span>Import Trades from Binance</span>
+        <button class="modal-close" onclick="closeImportModal()">&times;</button>
+      </div>
+      <div class="field">
+        <label>Connection</label>
+        <select id="importConnId"></select>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>From Date</label>
+          <input type="date" id="importStart" value="2026-09-01">
+        </div>
+        <div class="field">
+          <label>To Date</label>
+          <input type="date" id="importEnd">
+        </div>
+      </div>
+      <div id="importProgress" style="font-size:12px;margin:10px 0;"></div>
+      <div class="progress-bar" id="importProgressBar" style="display:none;">
+        <div class="fill" id="importProgressFill" style="width:0%"></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary btn-sm" id="importBtn" onclick="startImport()">Fetch from Binance</button>
+        <button class="btn btn-ghost btn-sm" onclick="closeImportModal()">Cancel</button>
+      </div>
     </div>
   </div>
 
   <!-- Image modal -->
-  <div class="modal-overlay" id="imgModal" onclick="closeModal()">
-    <span class="modal-close">&times;</span>
-    <img id="modalImg" src="">
+  <div class="modal-overlay" id="imgModal" onclick="closeImgModal()">
+    <span class="modal-close" style="position:fixed;top:20px;right:20px;color:#fff;font-size:30px;cursor:pointer;z-index:9999;">&times;</span>
+    <img id="modalImg" src="" style="max-width:90%;max-height:90vh;margin:auto;display:block;">
   </div>
 
   <script>
-    let direction = 'LONG';
-    let signalType = 'A';
-    let outcome = 'OPEN';
+    let direction = 'LONG', signalType = 'A', outcome = 'OPEN';
     let pastedImage = null;
-
-    // Calendar state
-    let calYear, calMonth, selectedDay;
+    let currentTradeTab = 'open';
+    let currentEditId = null;
+    let binanceConnections = [];
+    let allTradesCache = [];
 
     const STYPE_CLASS = { A:'active-a', B:'active-b', C:'active-c', D:'active-d', E:'active-e', F:'active-f' };
-    const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
     function setDir(d, btn) {
       direction = d;
@@ -367,235 +436,405 @@
       document.querySelectorAll('.out-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
     }
-
-    // ── Calendar ──
-    function initCalendar() {
-      const now = new Date();
-      calYear = now.getFullYear();
-      calMonth = now.getMonth();
-      selectedDay = null;
-      renderCalendar();
+    function toggleSection(titleEl) {
+      const body = titleEl.nextElementSibling;
+      titleEl.classList.toggle('collapsed');
+      body.classList.toggle('hidden');
     }
 
-    function changeMonth(delta) {
-      calMonth += delta;
-      if (calMonth < 0) { calMonth = 11; calYear--; }
-      if (calMonth > 11) { calMonth = 0; calYear++; }
-      selectedDay = null;
-      renderCalendar();
+    function setTradeTab(tab, btn) {
+      currentTradeTab = tab;
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const titles = { open: 'Open Trades', closed: 'Closed Trades', all: 'All Trades' };
+      document.getElementById('tradeListTitle').textContent = titles[tab] || 'Trades';
       loadTrades();
     }
 
-    async function renderCalendar() {
-      document.getElementById('monthLabel').textContent = MONTHS[calMonth] + ' ' + calYear;
-      const grid = document.getElementById('calGrid');
-      const firstDay = new Date(calYear, calMonth, 1).getDay(); // 0=Sun
-      const daysInMonth = new Date(calYear, calMonth + 1, 0).getDate();
-      const today = new Date();
+    // ── Binance API Manager ──
 
-      // Fetch trade counts per day for this month
-      let dayData = {};
+    async function loadConnections() {
       try {
-        const url = '/api/journal/trades?limit=500&sort_by=opened_at&sort_dir=ASC';
-        const res = await fetch(url, { credentials: 'same-origin' });
+        const res = await fetch('/api/binance/connections', { credentials: 'same-origin' });
         const d = await res.json();
-        if (d.trades) {
-          d.trades.forEach(t => {
-            if (!t.opened_at) return;
-            const day = new Date(t.opened_at);
-            if (day.getFullYear() === calYear && day.getMonth() === calMonth) {
-              const dNum = day.getDate();
-              if (!dayData[dNum]) dayData[dNum] = { count: 0, pnl: 0, wins: 0, losses: 0 };
-              dayData[dNum].count++;
-              if (t.pnl_pct != null) {
-                dayData[dNum].pnl += t.pnl_pct;
-                if (t.outcome === 'WIN') dayData[dNum].wins++;
-                if (t.outcome === 'LOSS') dayData[dNum].losses++;
-              }
-            }
-          });
+        if (d.connections) {
+          binanceConnections = d.connections;
+          renderConnections();
         }
-      } catch (e) { console.error(e); }
-
-      let html = '';
-      ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach(d => {
-        html += `<div class="cal-dow">${d}</div>`;
-      });
-      for (let i = 0; i < firstDay; i++) {
-        html += '<div class="cal-cell empty"></div>';
-      }
-      for (let d = 1; d <= daysInMonth; d++) {
-        const isToday = (calYear === today.getFullYear() && calMonth === today.getMonth() && d === today.getDate());
-        const hasTrades = dayData[d];
-        const cls = ['cal-cell', isToday ? 'today' : '', hasTrades ? 'has-trades' : ''].join(' ');
-        let pnlHtml = '';
-        if (hasTrades) {
-          const dd = dayData[d];
-          const pnlClass = dd.pnl > 0 ? 'win' : dd.pnl < 0 ? 'loss' : '';
-          pnlHtml = `<div class="day-pnl ${pnlClass}">${dd.wins}W/${dd.losses}L</div>`;
-        }
-        html += `<div class="${cls}" onclick="selectDay(${d})" style="cursor:pointer;">
-          <div class="day-num">${d}</div>
-          ${hasTrades ? `<div class="day-count">${hasTrades.count} trades</div>` : ''}
-          ${pnlHtml}
-        </div>`;
-      }
-      grid.innerHTML = html;
-    }
-
-    function selectDay(d) {
-      selectedDay = d;
-      loadTrades();
-    }
-
-    function getDateLabel() {
-      if (selectedDay) {
-        return `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(selectedDay).padStart(2,'0')}`;
-      }
-      return '';
-    }
-
-    function switchTab(tab) {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-      document.getElementById('tradesCard').style.display = tab === 'trades' ? '' : 'none';
-      document.getElementById('detailCard').style.display = tab === 'detail' ? '' : 'none';
-      document.getElementById('tabBar').style.display = 'flex';
-    }
-
-    // ── Trades ──
-    async function loadTrades() {
-      const list = document.getElementById('tradeList');
-      const dateLabel = document.getElementById('tradeDateLabel');
-      const tabBar = document.getElementById('tabBar');
-
-      if (selectedDay) {
-        tabBar.style.display = 'flex';
-        const ds = getDateLabel();
-        dateLabel.textContent = '— ' + ds;
-      } else {
-        tabBar.style.display = 'none';
-        dateLabel.textContent = '';
-      }
-
-      let url = '/api/journal/trades?limit=50&sort_by=opened_at&sort_dir=DESC';
-      const date = getDateLabel();
-      if (date) url += '&date=' + date;
-
-      try {
-        const res = await fetch(url, { credentials: 'same-origin' });
-        const d = await res.json();
-        if (!d.trades || !d.trades.length) {
-          list.innerHTML = '<div class="empty">No trades for this day.</div>';
-          return;
-        }
-        list.innerHTML = d.trades.map(t => {
-          const outClass = t.outcome === 'WIN' ? 'badge-win' : t.outcome === 'LOSS' ? 'badge-loss' : t.outcome === 'BREAK_EVEN' ? 'badge-be' : 'badge-open';
-          const dirClass = t.direction === 'LONG' ? 'badge-long' : 'badge-short';
-          const pnlClass = t.pnl_pct > 0 ? 'pnl-pos' : t.pnl_pct < 0 ? 'pnl-neg' : '';
-          const date = t.opened_at ? t.opened_at.split('T')[0] : '—';
-          const time = t.opened_at ? t.opened_at.split('T')[1]?.substring(0,5) || '' : '';
-          const shortNotes = (t.notes || '').split('\n')[0].slice(0, 40);
-          let imgHtml = '';
-          if (t.screenshot_url) {
-            imgHtml = `<img class="img-preview" src="${t.screenshot_url}" onclick="showImage('${t.screenshot_url}')" title="Chart screenshot">`;
-          }
-          return `<div class="trade-row" onclick="showDetail(${t.id})" style="cursor:pointer;">
-            <span style="color:var(--text-muted)">${t.id}</span>
-            <span><strong>${t.symbol}</strong>${imgHtml}</span>
-            <span><span class="badge ${dirClass}">${t.direction}</span></span>
-            <span><span class="badge" style="background:var(--border);color:var(--text-sec)">${t.signal_type||'—'}</span></span>
-            <span style="font-family:'SF Mono',monospace;font-size:11px">${t.entry_price ? t.entry_price.toFixed(t.entry_price < 1 ? 6 : 2) : '—'}</span>
-            <span style="font-family:'SF Mono',monospace;font-size:11px">${t.exit_price ? t.exit_price.toFixed(t.exit_price < 1 ? 6 : 2) : '—'}</span>
-            <span class="${pnlClass}">${t.pnl_pct != null ? t.pnl_pct.toFixed(2) + '%' : '—'}</span>
-            <span><span class="badge ${outClass}">${t.outcome}</span></span>
-            <span style="font-size:11px;color:var(--text-muted)">${time}</span>
-            <span class="notes-preview" title="${(t.notes||'').replace(/"/g,'&quot;')}">${shortNotes || '—'}</span>
-            <button class="del-btn" onclick="event.stopPropagation();delTrade(${t.id})" title="Delete">&times;</button>
-          </div>`;
-        }).join('');
       } catch (e) { console.error(e); }
     }
 
-    async function showDetail(id) {
-      document.getElementById('tabBar').style.display = 'flex';
-      switchTab('detail');
-      const detail = document.getElementById('tradeDetail');
-      detail.innerHTML = '<div class="empty">Loading...</div>';
-      try {
-        const res = await fetch('/api/journal/trades/' + id, { credentials: 'same-origin' });
-        const t = await res.json();
-        if (!t.id) { detail.innerHTML = '<div class="empty">Not found.</div>'; return; }
-        const rows = [
-          ['Coin', t.symbol], ['Direction', t.direction], ['Signal Type', t.signal_type],
-          ['Entry', t.entry_price], ['Exit', t.exit_price], ['SL', t.sl_price],
-          ['Outcome', t.outcome], ['PnL %', t.pnl_pct != null ? t.pnl_pct + '%' : '—'],
-          ['Opened', t.opened_at], ['Closed', t.closed_at || '—'],
-          ['Notes', (t.notes || '').substring(0, 500)],
-        ];
-        detail.innerHTML = '<table class="bk-table" style="width:100%;">' +
-          rows.map(([k,v]) => `<tr><td style="width:30%;padding:6px 10px;font-weight:700;font-size:11px;text-transform:uppercase;color:var(--text-muted);border-bottom:1px solid var(--border-subtle);">${k}</td><td style="padding:6px 10px;font-size:12px;border-bottom:1px solid var(--border-subtle);">${v||'—'}</td></tr>`).join('') +
-          '</table>' +
-          `<div style="margin-top:12px;">
-            <button class="btn-sm" onclick="delTrade(${t.id})">Delete Trade</button>
-            <button class="btn-sm" onclick="switchTab('trades')">Back to List</button>
-          </div>`;
-      } catch (e) { detail.innerHTML = '<div class="empty">Error loading.</div>'; }
+    function renderConnections() {
+      const el = document.getElementById('binanceConnections');
+      if (!binanceConnections.length) {
+        el.innerHTML = '<div class="empty">No API connections. Add one to import trades.</div>';
+        return;
+      }
+      el.innerHTML = '<div class="conn-list">' +
+        binanceConnections.map(c => `
+          <div class="conn-item">
+            <span class="conn-label">${c.label || 'Binance'}</span>
+            <span class="conn-status ${c.is_active ? 'active' : 'inactive'}">${c.is_active ? 'Active' : 'Inactive'}</span>
+            <button class="btn-sm danger" onclick="deleteConn(${c.id})">Remove</button>
+          </div>
+        `).join('') +
+        `<div style="font-size:10px;color:var(--text-muted);margin-top:4px;">${binanceConnections.length}/10 connections used</div>` +
+        '</div>';
     }
 
-    async function delTrade(id) {
-      if (!confirm('Delete trade #' + id + '?')) return;
+    async function deleteConn(id) {
+      if (!confirm('Remove this Binance connection?')) return;
       try {
-        const res = await fetch('/api/journal/trades/' + id, { method: 'DELETE', credentials: 'same-origin' });
-        if (res.ok) { showToast('Deleted', 'success'); renderCalendar(); loadTrades(); }
+        const res = await fetch('/api/binance/connections/' + id, { method: 'DELETE', credentials: 'same-origin' });
+        if (res.ok) { showToast('Connection removed', 'success'); loadConnections(); }
+        else { showToast('Failed', 'error'); }
       } catch (e) { showToast('Error', 'error'); }
     }
 
-    // ── Image paste ──
-    document.addEventListener('paste', async (e) => {
-      const items = e.clipboardData?.items;
-      if (!items) return;
-      for (const item of items) {
-        if (item.type.startsWith('image/')) {
-          e.preventDefault();
-          const file = item.getAsFile();
-          const reader = new FileReader();
-          reader.onload = async () => {
-            pastedImage = reader.result;
-            const area = document.getElementById('imagePreviewArea');
-            area.innerHTML = `<img src="${reader.result}" title="Pasted from clipboard" onclick="showImage('${reader.result}')">`;
-            showToast('Image pasted — will save with trade', 'success');
-          };
-          reader.readAsDataURL(file);
-          break;
+    function showAddConnModal() {
+      document.getElementById('connLabel').value = 'Binance';
+      document.getElementById('connApiKey').value = '';
+      document.getElementById('connApiSecret').value = '';
+      document.getElementById('connTestResult').textContent = '';
+      document.getElementById('connModal').classList.add('open');
+    }
+    function closeConnModal() { document.getElementById('connModal').classList.remove('open'); }
+
+    async function testConn() {
+      const api_key = document.getElementById('connApiKey').value.trim();
+      const api_secret = document.getElementById('connApiSecret').value.trim();
+      const resultEl = document.getElementById('connTestResult');
+      if (!api_key || !api_secret) { resultEl.textContent = 'Enter both key and secret'; resultEl.style.color = 'var(--red)'; return; }
+      resultEl.textContent = 'Testing...';
+      resultEl.style.color = 'var(--text-muted)';
+      try {
+        const res = await fetch('/api/binance/test', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ api_key, api_secret }),
+        });
+        const d = await res.json();
+        if (d.valid) {
+          resultEl.textContent = 'Valid! Account: ' + (d.account_type || 'SPOT') + ' | Can trade: ' + (d.can_trade || false);
+          resultEl.style.color = 'var(--green)';
+        } else {
+          resultEl.textContent = 'Invalid: ' + (d.error || 'Check keys');
+          resultEl.style.color = 'var(--red)';
         }
+      } catch (e) {
+        resultEl.textContent = 'Network error';
+        resultEl.style.color = 'var(--red)';
       }
-    });
-
-    function showImage(url) {
-      document.getElementById('modalImg').src = url;
-      document.getElementById('imgModal').classList.add('open');
-    }
-    function closeModal() {
-      document.getElementById('imgModal').classList.remove('open');
     }
 
-    // ── Save trade ──
+    async function saveConn() {
+      const label = document.getElementById('connLabel').value.trim() || 'Binance';
+      const api_key = document.getElementById('connApiKey').value.trim();
+      const api_secret = document.getElementById('connApiSecret').value.trim();
+      if (!api_key || !api_secret) { showToast('Enter API key and secret', 'error'); return; }
+      try {
+        const res = await fetch('/api/binance/connect', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ label, api_key, api_secret }),
+        });
+        const d = await res.json();
+        if (res.ok) { showToast('Connection saved', 'success'); closeConnModal(); loadConnections(); }
+        else { showToast(d.error || 'Failed', 'error'); }
+      } catch (e) { showToast('Error', 'error'); }
+    }
+
+    function showImportModal() {
+      const select = document.getElementById('importConnId');
+      select.innerHTML = binanceConnections.map(c => `<option value="${c.id}">${c.label || 'Binance'} #${c.id}</option>`).join('');
+      if (!binanceConnections.length) { showToast('Add a connection first', 'error'); return; }
+      // Set default end date to today
+      const today = new Date().toISOString().split('T')[0];
+      document.getElementById('importEnd').value = today;
+      document.getElementById('importProgress').textContent = '';
+      document.getElementById('importProgressBar').style.display = 'none';
+      document.getElementById('importBtn').disabled = false;
+      document.getElementById('importModal').classList.add('open');
+    }
+    function closeImportModal() { document.getElementById('importModal').classList.remove('open'); }
+
+    async function startImport() {
+      const connId = parseInt(document.getElementById('importConnId').value);
+      const startDate = document.getElementById('importStart').value;
+      const endDate = document.getElementById('importEnd').value;
+      const progressEl = document.getElementById('importProgress');
+      const barEl = document.getElementById('importProgressBar');
+      const fillEl = document.getElementById('importProgressFill');
+      const btn = document.getElementById('importBtn');
+
+      btn.disabled = true;
+      progressEl.textContent = 'Starting import...';
+      barEl.style.display = 'block';
+      fillEl.style.width = '10%';
+
+      try {
+        const res = await fetch('/api/binance/import', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ conn_id: connId, start_date: startDate, end_date: endDate }),
+        });
+        const d = await res.json();
+        fillEl.style.width = '100%';
+        if (d.error) {
+          progressEl.textContent = 'Error: ' + d.error;
+          progressEl.style.color = 'var(--red)';
+        } else {
+          progressEl.textContent = `Imported ${d.imported || 0} trades` + (d.skipped ? ` (${d.skipped} skipped — already exists)` : '');
+          progressEl.style.color = 'var(--green)';
+          if (d.imported > 0) loadTrades();
+        }
+      } catch (e) {
+        progressEl.textContent = 'Network error';
+        progressEl.style.color = 'var(--red)';
+      }
+      btn.disabled = false;
+    }
+
+    // ── Trade List ──
+
+    async function loadTrades() {
+      const list = document.getElementById('tradeList');
+      list.innerHTML = '<div class="empty">Loading...</div>';
+
+      let url = '/api/journal/trades?limit=200&sort_by=opened_at&sort_dir=DESC';
+      if (currentTradeTab === 'open') url += '&outcome=OPEN';
+      else if (currentTradeTab === 'closed') url += '&outcome=WIN,LOSS,BREAK_EVEN';
+
+      try {
+        const res = await fetch(url, { credentials: 'same-origin' });
+        const d = await res.json();
+        allTradesCache = d.trades || [];
+        if (!allTradesCache.length) {
+          list.innerHTML = '<div class="empty">No trades found.</div>';
+          return;
+        }
+        const isBinance = t => t.binance_order_id;
+        list.innerHTML = '<table class="trade-table">' +
+          '<thead><tr>' +
+            '<th>ID</th><th>Coin</th><th>Dir</th><th>Type</th><th>Entry</th><th>Exit</th><th>SL</th><th>RR</th><th>P&L %</th><th>Outcome</th><th>Source</th><th>Date</th><th></th>' +
+          '</tr></thead><tbody>' +
+          allTradesCache.map(t => {
+            const outClass = t.outcome === 'WIN' ? 'badge-win' : t.outcome === 'LOSS' ? 'badge-loss' : t.outcome === 'BREAK_EVEN' ? 'badge-be' : 'badge-open';
+            const dirClass = t.direction === 'LONG' ? 'badge-long' : 'badge-short';
+            const pnlClass = t.pnl_pct > 0 ? 'pnl-pos' : t.pnl_pct < 0 ? 'pnl-neg' : '';
+            const date = t.opened_at ? t.opened_at.split('T')[0] : '—';
+            const source = t.binance_order_id ? '<span class="badge badge-binance">API</span>' : '<span class="badge" style="background:var(--border);color:var(--text-sec)">Manual</span>';
+            let imgHtml = '';
+            if (t.screenshot_url) {
+              imgHtml = `<img class="img-preview" src="${t.screenshot_url}" onclick="event.stopPropagation();showImage('${t.screenshot_url}')">`;
+            }
+            return `<tr class="clickable" onclick="openEditModal(${t.id})">
+              <td>${t.id}</td>
+              <td><strong>${t.symbol}</strong>${imgHtml}</td>
+              <td><span class="badge ${dirClass}">${t.direction}</span></td>
+              <td>${t.signal_type || '—'}</td>
+              <td style="font-family:'SF Mono',monospace;font-size:11px">${t.entry_price ? t.entry_price.toFixed(t.entry_price < 1 ? 6 : 2) : '—'}</td>
+              <td style="font-family:'SF Mono',monospace;font-size:11px">${t.exit_price ? t.exit_price.toFixed(t.exit_price < 1 ? 6 : 2) : '—'}</td>
+              <td style="font-family:'SF Mono',monospace;font-size:11px">${t.sl_price ? t.sl_price.toFixed(t.sl_price < 1 ? 6 : 2) : '—'}</td>
+              <td style="font-size:11px">${t.rr != null ? t.rr.toFixed(2) : '—'}</td>
+              <td class="${pnlClass}">${t.pnl_pct != null ? t.pnl_pct.toFixed(2) + '%' : '—'}</td>
+              <td><span class="badge ${outClass}">${t.outcome}</span></td>
+              <td>${source}</td>
+              <td style="font-size:11px;white-space:nowrap">${date}</td>
+              <td><button class="del-btn" onclick="event.stopPropagation();delTrade(${t.id})" title="Delete">&times;</button></td>
+            </tr>`;
+          }).join('') +
+          '</tbody></table>';
+      } catch (e) { list.innerHTML = '<div class="empty">Error loading trades.</div>'; }
+    }
+
+    // ── Edit Modal ──
+
+    async function openEditModal(id) {
+      currentEditId = id;
+      const form = document.getElementById('editForm');
+      form.innerHTML = '<div class="empty">Loading...</div>';
+      document.getElementById('editModal').classList.add('open');
+
+      try {
+        const res = await fetch('/api/journal/trades/' + id, { credentials: 'same-origin' });
+        const t = await res.json();
+        if (!t.id) { form.innerHTML = '<div class="empty">Not found.</div>'; return; }
+
+        const setChecked = (val, btnClass) => val ? `checked` : '';
+        const setActive = (val, cls) => val === cls ? 'active' : '';
+
+        form.innerHTML = `
+          <div class="field-row">
+            <div class="field">
+              <label>Symbol</label>
+              <input type="text" id="eSymbol" value="${t.symbol || ''}">
+            </div>
+            <div class="field">
+              <label>Direction</label>
+              <div class="dir-toggle">
+                <button class="dir-btn long ${setActive(t.direction, 'LONG')}" onclick="editSetDir('LONG',this)">LONG</button>
+                <button class="dir-btn short ${setActive(t.direction, 'SHORT')}" onclick="editSetDir('SHORT',this)">SHORT</button>
+              </div>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Signal Type</label>
+              <div class="stype-row">
+                ${['A','B','C','D','E','F'].map(s => `<button class="stype-btn ${setActive(t.signal_type, s)}" onclick="editSetType('${s}',this)">${s}</button>`).join('')}
+              </div>
+            </div>
+            <div class="field">
+              <label>Outcome</label>
+              <div class="outcome-toggle">
+                ${['WIN','LOSS','BREAK_EVEN','OPEN'].map(o => `<button class="out-btn ${o.toLowerCase().replace('_','')} ${setActive(t.outcome, o)}" onclick="editSetOutcome('${o}',this)">${o}</button>`).join('')}
+              </div>
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Entry Price</label>
+              <input type="number" id="eEntry" step="any" value="${t.entry_price || ''}">
+            </div>
+            <div class="field">
+              <label>Exit Price</label>
+              <input type="number" id="eExit" step="any" value="${t.exit_price || ''}">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>SL Price</label>
+              <input type="number" id="eSL" step="any" value="${t.sl_price || ''}">
+            </div>
+            <div class="field">
+              <label>RR (Risk:Reward)</label>
+              <input type="number" id="eRR" step="0.1" value="${t.rr || ''}">
+            </div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Profit %</label>
+              <input type="number" id="ePnl" step="0.1" value="${t.pnl_pct != null ? t.pnl_pct : ''}">
+            </div>
+            <div class="field">
+              <label>P&L Amount ($)</label>
+              <input type="number" id="ePnlAmt" step="any" value="${t.pnl_amount != null ? t.pnl_amount : ''}">
+            </div>
+          </div>
+          <div class="field">
+            <label>Notes / Why I took this trade</label>
+            <textarea id="eNotes">${(t.notes || '').replace(/</g, '&lt;')}</textarea>
+          </div>
+          <div class="field">
+            <label>Chart Screenshot (Ctrl+V paste)</label>
+            <textarea id="eScreenshot" style="min-height:35px;font-size:11px;" placeholder="Paste image (Ctrl+V) or leave empty to keep existing"></textarea>
+            <div class="image-preview-area" id="editImagePreviewArea"></div>
+          </div>
+          <div class="field">
+            <label>Tags</label>
+            <input type="text" id="eTags" value="${(t.tags || []).join(', ')}" placeholder="comma separated">
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary btn-sm" onclick="saveEdit()">Save Changes</button>
+            <button class="btn btn-ghost btn-sm" onclick="closeEditModal()">Cancel</button>
+          </div>
+        `;
+        window._editDir = t.direction || 'LONG';
+        window._editType = t.signal_type || 'NONE';
+        window._editOutcome = t.outcome || 'OPEN';
+      } catch (e) {
+        form.innerHTML = '<div class="empty">Error loading trade.</div>';
+      }
+    }
+
+    window.editSetDir = function(d, btn) {
+      window._editDir = d;
+      btn.parentElement.querySelectorAll('.dir-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    };
+    window.editSetType = function(t, btn) {
+      window._editType = t;
+      btn.parentElement.querySelectorAll('.stype-btn').forEach(b => b.className = 'stype-btn');
+      btn.classList.add(STYPE_CLASS[t] || 'active-a');
+    };
+    window.editSetOutcome = function(o, btn) {
+      window._editOutcome = o;
+      btn.parentElement.querySelectorAll('.out-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    };
+
+    async function saveEdit() {
+      const payload = {
+        symbol: document.getElementById('eSymbol').value.trim().toUpperCase(),
+        direction: window._editDir,
+        signal_type: window._editType,
+        entry_price: parseFloat(document.getElementById('eEntry').value) || null,
+        exit_price: parseFloat(document.getElementById('eExit').value) || null,
+        sl_price: parseFloat(document.getElementById('eSL').value) || null,
+        rr: parseFloat(document.getElementById('eRR').value) || null,
+        pnl_pct: parseFloat(document.getElementById('ePnl').value) || null,
+        pnl_amount: parseFloat(document.getElementById('ePnlAmt').value) || null,
+        outcome: window._editOutcome,
+        notes: document.getElementById('eNotes').value,
+        tags: document.getElementById('eTags').value.split(',').map(s => s.trim()).filter(Boolean),
+      };
+
+      // Upload screenshot if pasted
+      let screenshotUrl = null;
+      const eScreenshot = document.getElementById('eScreenshot').value;
+      if (eScreenshot && eScreenshot.startsWith('data:')) {
+        try {
+          const res = await fetch('/api/journal/image', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ image: eScreenshot, filename: (payload.symbol || 'chart') + '_' + currentEditId + '.png' }),
+          });
+          const d = await res.json();
+          if (d.url) screenshotUrl = d.url;
+        } catch (e) { console.error(e); }
+      }
+
+      if (screenshotUrl) payload.screenshot_url = screenshotUrl;
+
+      // Set closed_at if outcome is closed
+      if (payload.outcome !== 'OPEN') {
+        payload.closed_at = new Date().toISOString();
+      } else {
+        payload.closed_at = null;
+      }
+
+      try {
+        const res = await fetch('/api/journal/trades/' + currentEditId, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin', body: JSON.stringify(payload),
+        });
+        const d = await res.json();
+        if (res.ok) { showToast('Trade updated', 'success'); closeEditModal(); loadTrades(); }
+        else { showToast(d.error || 'Update failed', 'error'); }
+      } catch (e) { showToast('Network error', 'error'); }
+    }
+
+    function closeEditModal() {
+      document.getElementById('editModal').classList.remove('open');
+      currentEditId = null;
+    }
+
+    // ── Trade CRUD ──
+
     async function saveTrade() {
       const coin = document.getElementById('fCoin').value.trim().toUpperCase();
       if (!coin) { showToast('Enter coin name', 'error'); return; }
       const entryRaw = document.getElementById('fEntry').value.trim();
       const entry = entryRaw !== '' ? parseFloat(entryRaw) : null;
       if (entry === null || isNaN(entry)) { showToast('Enter entry price', 'error'); return; }
-      const exitRaw = document.getElementById('fExit').value.trim();
-      const exit = exitRaw !== '' ? parseFloat(exitRaw) : null;
-      const maxLoss = parseFloat(document.getElementById('fMaxLoss').value) || null;
-      const maxProfit = parseFloat(document.getElementById('fMaxProfit').value) || null;
+      const exit = parseFloat(document.getElementById('fExit').value) || null;
+      const rr = parseFloat(document.getElementById('fRR').value) || null;
       const pnl = parseFloat(document.getElementById('fPnl').value) || null;
       const notes = document.getElementById('fNotes').value;
       const remarks = document.getElementById('fRemarks').value;
       const fullNotes = [notes, remarks ? '[Learning: ' + remarks + ']' : ''].filter(Boolean).join('\n');
 
-      // Upload screenshot if pasted
       let screenshotUrl = null;
       if (pastedImage) {
         try {
@@ -612,8 +851,7 @@
       const payload = {
         symbol: coin, direction, signal_type: signalType,
         entry_price: entry, exit_price: exit,
-        sl_price: entry ? (direction === 'LONG' ? entry * 0.96 : entry * 1.04) : null,
-        tp_price: null, rr: null,
+        rr: rr,
         outcome, pnl_pct: pnl,
         notes: fullNotes || 'No notes',
         screenshot_url: screenshotUrl,
@@ -627,51 +865,86 @@
           credentials: 'same-origin', body: JSON.stringify(payload),
         });
         const respData = await res.json().catch(() => ({}));
-        if (res.ok) {
-          showToast('Saved', 'success');
-          clearForm();
-          initCalendar();
-          loadTrades();
-        } else {
-          showToast('Save failed: ' + (respData.error || res.status + ' ' + res.statusText), 'error');
-        }
+        if (res.ok) { showToast('Saved', 'success'); clearForm(); loadTrades(); }
+        else { showToast('Save failed: ' + (respData.error || res.status + ' ' + res.statusText), 'error'); }
       } catch (e) { showToast('Network error', 'error'); }
     }
 
     function clearForm() {
-      ['fCoin','fEntry','fExit','fMaxLoss','fMaxProfit','fPnl','fNotes','fRemarks','fScreenshot'].forEach(id => {
-        document.getElementById(id).value = '';
+      ['fCoin','fEntry','fExit','fRR','fPnl','fNotes','fRemarks','fScreenshot'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
       });
       direction = 'LONG'; signalType = 'A'; outcome = 'OPEN'; pastedImage = null;
       document.querySelectorAll('.dir-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.dir-btn.long')[0]?.classList.add('active');
+      const longBtn = document.querySelector('.dir-btn.long');
+      if (longBtn) longBtn.classList.add('active');
       document.querySelectorAll('.stype-btn').forEach(b => b.className = 'stype-btn');
-      document.querySelectorAll('.stype-btn')[0]?.classList.add('active-a');
+      const firstSt = document.querySelector('.stype-btn');
+      if (firstSt) firstSt.classList.add('active-a');
       document.querySelectorAll('.out-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.out-btn.open')[0]?.classList.add('active');
-      document.getElementById('imagePreviewArea').innerHTML = '';
+      const openBtn = document.querySelector('.out-btn.open');
+      if (openBtn) openBtn.classList.add('active');
+      const previewArea = document.getElementById('imagePreviewArea');
+      if (previewArea) previewArea.innerHTML = '';
+    }
+
+    async function delTrade(id) {
+      if (!confirm('Delete trade #' + id + '?')) return;
+      try {
+        const res = await fetch('/api/journal/trades/' + id, { method: 'DELETE', credentials: 'same-origin' });
+        if (res.ok) { showToast('Deleted', 'success'); loadTrades(); }
+        else { showToast('Failed', 'error'); }
+      } catch (e) { showToast('Error', 'error'); }
     }
 
     // ── CSV Export ──
+
     async function exportCSV() {
       try {
-        const date = getDateLabel();
-        const url = '/api/journal/export?format=csv' + (date ? '&date=' + date : '');
+        const url = '/api/journal/export?format=csv';
         const res = await fetch(url, { credentials: 'same-origin' });
         if (!res.ok) { showToast('No trades to export', 'error'); return; }
         const blob = await res.blob();
         const dl = document.createElement('a');
         dl.href = URL.createObjectURL(blob);
-        dl.download = 'journal_' + (date || 'all') + '.csv';
+        dl.download = 'journal_trades.csv';
         dl.click();
         showToast('CSV downloaded', 'success');
       } catch (e) { showToast('Export failed', 'error'); }
     }
 
-    function getCookie(name) {
-      const m = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
-      return m ? m[2] : '';
+    // ── Image handling ──
+
+    document.addEventListener('paste', async (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          const reader = new FileReader();
+          reader.onload = async () => {
+            pastedImage = reader.result;
+            const area = document.getElementById('imagePreviewArea');
+            if (area) {
+              area.innerHTML = `<img src="${reader.result}" title="Pasted" style="max-width:80px;max-height:60px;border-radius:4px;border:1px solid var(--border);cursor:pointer;" onclick="showImage('${reader.result}')">`;
+            }
+            showToast('Image pasted', 'success');
+          };
+          reader.readAsDataURL(file);
+          break;
+        }
+      }
+    });
+
+    function showImage(url) {
+      document.getElementById('modalImg').src = url;
+      document.getElementById('imgModal').classList.add('open');
     }
+    function closeImgModal() { document.getElementById('imgModal').classList.remove('open'); }
+
+    // ── Toast ──
 
     function showToast(msg, type) {
       const t = document.createElement('div');
@@ -681,7 +954,9 @@
       setTimeout(() => t.remove(), 2500);
     }
 
-    initCalendar();
+    // ── Init ──
+
+    loadConnections();
     loadTrades();
   </script>
 </body>

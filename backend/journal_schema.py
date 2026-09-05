@@ -79,7 +79,10 @@ CREATE TABLE IF NOT EXISTS trades (
     closed_at        TEXT,
     created_at       TEXT    DEFAULT (datetime('now')),
     updated_at       TEXT    DEFAULT (datetime('now')),
-    is_deleted       INTEGER DEFAULT 0
+    is_deleted       INTEGER DEFAULT 0,
+    -- Binance import tracking
+    binance_order_id TEXT,
+    binance_market_type TEXT
 );
 
 -- Journal Table 2: Trade Notes (free-text + screenshot per trade)
@@ -126,7 +129,8 @@ async def init_journal_schema() -> None:
                         "planned_entry", "actual_entry", "exit_reason",
                         "mfe", "mae", "session", "r_multiple", "holding_time", "max_drawdown",
                         "confidence_score", "position_size", "leverage",
-                        "pnl_pct", "pnl_amount", "is_deleted"):
+                        "pnl_pct", "pnl_amount", "is_deleted",
+                        "binance_order_id", "binance_market_type"):
                 try:
                     await conn.execute(f"ALTER TABLE trades ADD COLUMN {col} TEXT")
                 except Exception:
@@ -220,6 +224,10 @@ async def create_trade(data: dict[str, Any], user_id: str = "default") -> int | 
             raise
     finally:
         _write_unlock()
+
+
+async def update_trade(trade_id: int, data: dict[str, Any], user_id: str = "default") -> bool:
+    """Update fields on a trade. Only updates provided fields."""
     await _write_lock()
     try:
         fields: list[str] = []
@@ -245,7 +253,32 @@ async def create_trade(data: dict[str, Any], user_id: str = "default") -> int | 
 
         fields.append("updated_at = ?")
         values.append(datetime.now(timezone.utc).isoformat())
-        values.extend([user_id, trade_id])
+        values.extend([trade_id, user_id])
+
+        async with _PooledConn() as conn:
+            await conn.execute(
+                f"UPDATE trades SET {', '.join(fields)} "
+                f"WHERE id = ? AND user_id = ? AND is_deleted = 0",
+                values,
+            )
+            # Replace tags if provided
+            if "tags" in data:
+                await conn.execute(
+                    "DELETE FROM trade_tags WHERE trade_id = ?", (trade_id,)
+                )
+                tags = data["tags"]
+                if tags:
+                    await conn.executemany(
+                        "INSERT OR IGNORE INTO trade_tags (trade_id, tag) VALUES (?, ?)",
+                        [(trade_id, t.strip().lower()) for t in tags if t.strip()],
+                    )
+            await conn.commit()
+        _write_unlock()
+        return True
+    except Exception:
+        _write_unlock()
+        logger.exception("[journal] Failed to update trade %s", trade_id)
+        return False
 
         async with _PooledConn() as conn:
             await conn.execute(
@@ -501,14 +534,13 @@ async def get_all_tags(user_id: str = "default") -> list[str]:
 # ── Statistics ──────────────────────────────────────────────────
 
 async def prune_old_trades(days: int = 30) -> int:
-    """Delete trades older than `days` days. Returns number of rows deleted."""
+    """Soft-delete trades older than `days` days. Returns number of rows updated."""
     try:
         async with _PooledConn() as conn:
-            cutoff_dt = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             cutoff_iso = (datetime.now(timezone.utc) - __import__('datetime').timedelta(days=days)).isoformat()
             async with conn.execute(
-                "DELETE FROM trades WHERE opened_at < ?",
-                (cutoff_iso,),
+                "UPDATE trades SET is_deleted = 1, updated_at = ? WHERE opened_at < ? AND is_deleted = 0",
+                (datetime.now(timezone.utc).isoformat(), cutoff_iso),
             ) as cur:
                 deleted = cur.rowcount
             await conn.commit()
@@ -531,7 +563,7 @@ async def export_trades_csv(user_id: str = "default", date: str = "") -> str | N
         sql = (
             "SELECT id, symbol, direction, signal_type, entry_price, exit_price, "
             "sl_price, tp_price, rr, position_size, leverage, outcome, "
-            "pnl_pct, pnl_amount, opened_at, closed_at, notes "
+            "pnl_pct, pnl_amount, opened_at, closed_at, notes, screenshot_url "
             "FROM trades "
             f"WHERE {' AND '.join(where)} "
             "ORDER BY opened_at DESC"
@@ -583,28 +615,54 @@ async def save_journal_image(base64_data: str, filename: str) -> str | None:
 
 # ── Statistics ──────────────────────────────────────────────────
 
-async def get_journal_stats(user_id: str = "default") -> dict[str, Any]:
-    """Aggregate statistics from the journal for a specific user."""
+async def get_journal_stats(user_id: str = "default", date: str = "", admin_mode: bool = False) -> dict[str, Any]:
+    """Aggregate statistics from the journal for a specific user or all users.
+
+    Args:
+        user_id: User ID, or '__all__' for admin mode
+        date: Optional YYYY-MM filter (e.g. '2026-09')
+        admin_mode: When True and user_id='__all__', aggregate across all users
+    """
     try:
+        target_user = user_id
+        user_filter_sql = ""
+        params: list[Any] = []
+
+        if admin_mode and user_id == "__all__":
+            user_filter_sql = ""  # no user filter
+        else:
+            user_filter_sql = "AND user_id = ?"
+            params = [user_id]
+
+        def _date_filter(field: str = "opened_at") -> tuple[str, list]:
+            if date:
+                return f"AND {field} LIKE ?", [f"{date}%"]
+            return "", []
+
+        date_sql_open, date_params_open = _date_filter("opened_at")
+        date_sql_closed, date_params_closed = _date_filter("closed_at")
+
         async with _PooledConn() as conn:
             # Totals
-            async with conn.execute(
-                "SELECT COUNT(*) as total FROM trades WHERE is_deleted = 0 AND user_id = ?",
-                (user_id,),
-            ) as cur:
+            total_q = (
+                "SELECT COUNT(*) as total FROM trades WHERE is_deleted = 0 "
+                f"{user_filter_sql} {date_sql_open}"
+            )
+            async with conn.execute(total_q, params + date_params_open) as cur:
                 totals = dict(await cur.fetchone())
 
-            # Outcomes breakdown
-            async with conn.execute(
+            # Outcomes breakdown (closed trades)
+            outcomes_q = (
                 """SELECT outcome, COUNT(*) as n,
                           SUM(pnl_pct) as total_pnl_pct,
                           AVG(pnl_pct) as avg_pnl_pct,
                           SUM(pnl_amount) as total_pnl
                    FROM trades
-                   WHERE is_deleted = 0 AND user_id = ? AND outcome != 'OPEN'
-                   GROUP BY outcome""",
-                (user_id,),
-            ) as cur:
+                   WHERE is_deleted = 0 AND outcome != 'OPEN'
+                   """ + user_filter_sql + " " + date_sql_closed + """
+                   GROUP BY outcome"""
+            )
+            async with conn.execute(outcomes_q, params + date_params_closed) as cur:
                 outcomes = {r["outcome"]: dict(r) for r in await cur.fetchall()}
 
             wins = outcomes.get("WIN", {}).get("n", 0)
@@ -617,7 +675,8 @@ async def get_journal_stats(user_id: str = "default") -> dict[str, Any]:
             async with conn.execute(
                 "SELECT AVG(rr) as avg_rr FROM trades "
                 "WHERE is_deleted = 0 AND rr IS NOT NULL AND rr > 0 "
-                "AND outcome != 'OPEN'"
+                "AND outcome != 'OPEN' " + user_filter_sql,
+                params,
             ) as cur:
                 avg_rr_row = await cur.fetchone()
             avg_rr = round(avg_rr_row["avg_rr"], 2) if avg_rr_row and avg_rr_row["avg_rr"] else 0
@@ -626,9 +685,10 @@ async def get_journal_stats(user_id: str = "default") -> dict[str, Any]:
             async with conn.execute(
                 """SELECT direction, COUNT(*) as n,
                           SUM(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END) as wins
-                   FROM trades WHERE is_deleted = 0 AND user_id = ? AND outcome != 'OPEN'
+                   FROM trades WHERE is_deleted = 0 AND outcome != 'OPEN'
+                   """ + user_filter_sql + " " + date_sql_closed + """
                    GROUP BY direction""",
-                (user_id,),
+                params + date_params_closed,
             ) as cur:
                 by_direction = {r["direction"]: dict(r) async for r in cur}
 
@@ -636,45 +696,56 @@ async def get_journal_stats(user_id: str = "default") -> dict[str, Any]:
             async with conn.execute(
                 """SELECT signal_type, COUNT(*) as n,
                           SUM(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END) as wins
-                   FROM trades WHERE is_deleted = 0 AND user_id = ? AND outcome != 'OPEN'
+                   FROM trades WHERE is_deleted = 0 AND outcome != 'OPEN'
+                   """ + user_filter_sql + " " + date_sql_closed + """
                    GROUP BY signal_type""",
-                (user_id,),
+                params + date_params_closed,
             ) as cur:
                 by_signal_type = {r["signal_type"]: dict(r) async for r in cur}
 
-            # By tag (joins with trades to filter non-deleted and user)
-            async with conn.execute(
+            # By tag
+            tag_sql = (
                 """SELECT tt.tag, COUNT(*) as n,
                           SUM(CASE WHEN t.outcome='WIN' THEN 1 ELSE 0 END) as wins,
                           AVG(t.pnl_pct) as avg_pnl_pct
                    FROM trade_tags tt
                    JOIN trades t ON t.id = tt.trade_id
-                   WHERE t.is_deleted = 0 AND t.user_id = ? AND t.outcome != 'OPEN'
-                   GROUP BY tt.tag""",
-                (user_id,),
-            ) as cur:
+                   WHERE t.is_deleted = 0 AND t.outcome != 'OPEN'
+                   """ + user_filter_sql + " " + date_sql_closed + """
+                   GROUP BY tt.tag"""
+            )
+            async with conn.execute(tag_sql, params + date_params_closed) as cur:
                 by_tag = {r["tag"]: dict(r) async for r in cur}
 
-            # Expectancy: (win_rate% * avg_win) - (loss_rate% * avg_loss)
+            # Expectancy
             avg_win = outcomes.get("WIN", {}).get("avg_pnl_pct", 0) or 0
             avg_loss = outcomes.get("LOSS", {}).get("avg_pnl_pct", 0) or 0
             win_rate_d = wins / closed if closed else 0
-            expectancy = round(
-                win_rate_d * avg_win + (1 - win_rate_d) * avg_loss, 4
-            ) if closed else 0.0
+            expectancy = round(win_rate_d * avg_win + (1 - win_rate_d) * avg_loss, 4) if closed else 0.0
 
-            # Profit factor: gross profit / gross loss
+            # Profit factor
             gross_profit = outcomes.get("WIN", {}).get("total_pnl_pct", 0) or 0
             gross_loss = abs(outcomes.get("LOSS", {}).get("total_pnl_pct", 0) or 0)
             profit_factor = round(gross_profit / gross_loss, 2) if gross_loss else 0.0
 
-            # Max consecutive wins/losses (simple)
-            async with conn.execute(
-                """SELECT outcome FROM trades
-                   WHERE is_deleted = 0 AND user_id = ? AND outcome IN ('WIN','LOSS')
-                   ORDER BY closed_at ASC""",
-                (user_id,),
-            ) as cur:
+            # Total PnL
+            total_pnl_pct = outcomes.get("WIN", {}).get("total_pnl_pct", 0) or 0
+            total_pnl_pct += outcomes.get("LOSS", {}).get("total_pnl_pct", 0) or 0
+            total_pnl_amount = outcomes.get("WIN", {}).get("total_pnl", 0) or 0
+            total_pnl_amount += outcomes.get("LOSS", {}).get("total_pnl", 0) or 0
+
+            # Avg Win / Avg Loss
+            avg_win_amount = outcomes.get("WIN", {}).get("total_pnl", 0) or 0
+            avg_win_amount = round(avg_win_amount / wins, 2) if wins else 0
+            avg_loss_amount = outcomes.get("LOSS", {}).get("total_pnl", 0) or 0
+            avg_loss_amount = round(avg_loss_amount / losses, 2) if losses else 0
+
+            # Max consecutive wins/losses
+            consec_q = (
+                "SELECT outcome FROM trades WHERE is_deleted = 0 AND outcome IN ('WIN','LOSS')"
+                + user_filter_sql + " ORDER BY closed_at ASC"
+            )
+            async with conn.execute(consec_q, params) as cur:
                 rows = await cur.fetchall()
             max_consec_wins = 0
             max_consec_losses = 0
@@ -690,7 +761,7 @@ async def get_journal_stats(user_id: str = "default") -> dict[str, Any]:
                     cur_wins = 0
                     max_consec_losses = max(max_consec_losses, cur_losses)
 
-        return {
+        result = {
             "total_trades": totals.get("total", 0),
             "closed_trades": closed,
             "open_trades": totals.get("total", 0) - closed,
@@ -701,6 +772,13 @@ async def get_journal_stats(user_id: str = "default") -> dict[str, Any]:
             "avg_rr": avg_rr,
             "expectancy_pct": expectancy,
             "profit_factor": profit_factor,
+            "total_pnl_pct": round(total_pnl_pct, 2),
+            "total_pnl_amount": round(total_pnl_amount, 2),
+            "avg_win_pct": round(avg_win, 2),
+            "avg_loss_pct": round(avg_loss, 2),
+            "avg_win_amount": avg_win_amount,
+            "avg_loss_amount": avg_loss_amount,
+            "win_loss_ratio": round(abs(avg_win / avg_loss), 2) if avg_loss else 0.0,
             "max_consec_wins": max_consec_wins,
             "max_consec_losses": max_consec_losses,
             "by_direction": by_direction,
@@ -708,6 +786,35 @@ async def get_journal_stats(user_id: str = "default") -> dict[str, Any]:
             "by_tag": by_tag,
             "outcomes": outcomes,
         }
+
+        # Admin mode: add per-user breakdown
+        if admin_mode and user_id == "__all__":
+            per_user_q = (
+                "SELECT user_id, COUNT(*) as total, "
+                "SUM(CASE WHEN outcome='WIN' THEN 1 ELSE 0 END) as wins, "
+                "SUM(CASE WHEN outcome='LOSS' THEN 1 ELSE 0 END) as losses, "
+                "SUM(CASE WHEN outcome='BREAK_EVEN' THEN 1 ELSE 0 END) as break_even, "
+                "SUM(CASE WHEN outcome='OPEN' THEN 1 ELSE 0 END) as open_trades, "
+                "SUM(pnl_pct) as total_pnl_pct, "
+                "SUM(pnl_amount) as total_pnl_amount "
+                "FROM trades WHERE is_deleted = 0 "
+                + date_sql_open + " "
+                + "GROUP BY user_id ORDER BY total DESC"
+            )
+            async with conn.execute(per_user_q, date_params_open) as cur:
+                per_user_rows = await cur.fetchall()
+            per_user = []
+            for r in per_user_rows:
+                rdict = dict(r)
+                t = rdict["total"]
+                w = rdict["wins"] or 0
+                l = rdict["losses"] or 0
+                c = w + l
+                rdict["win_rate"] = round(w / c * 100, 1) if c else 0
+                per_user.append(rdict)
+            result["per_user"] = per_user
+
+        return result
     except Exception:
         logger.exception("[journal] get_journal_stats failed")
         return {}

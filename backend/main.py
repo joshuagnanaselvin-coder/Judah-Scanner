@@ -128,6 +128,8 @@ from backend.auth import (
 )
 from backend.db import prune_old, _PooledConn
 from backend import journal_schema
+from backend.binance_schema import init_binance_schema, get_connections, save_connection, delete_connection
+from backend.binance_service import import_binance_trades, test_binance_connection
 from backend.config import HOST, PORT, TIMEFRAMES_HTF, BINANCE_REST_BASE, TIER_SNIPER_SCORE, TIER_OPPORTUNITY_SCORE, TIER_WATCH_SCORE
 
 logging.basicConfig(
@@ -452,18 +454,6 @@ async def _serve_page(loader, request: Request) -> HTMLResponse:
         logger.error(f"[serve_page] Unexpected error serving page: {e}", exc_info=True)
         return HTMLResponse(
             content=f"<h2>Server Error</h2><pre>{type(e).__name__}: {e}</pre>",
-            status_code=500
-        )
-    except Exception as e:
-        logger.error(f"[serve_page] Unexpected error serving page: {e}", exc_info=True)
-        return HTMLResponse(
-            content=f"<h2>Server Error</h2><pre>{type(e).__name__}: {e}</pre>",
-            status_code=500
-        )
-    except Exception as e:
-        logger.error(f"[serve_page] Unexpected error serving page: {e}", exc_info=True)
-        return HTMLResponse(
-            content=f"<h2>Server Error</h2><pre>{e}</pre>",
             status_code=500
         )
 
@@ -1115,6 +1105,13 @@ async def startup():
     except Exception:
         logger.exception("[startup] Journal schema init failed")
 
+    # Initialize binance schema (additive, idempotent)
+    try:
+        await init_binance_schema()
+        logger.info("[startup] Binance schema initialized")
+    except Exception:
+        logger.exception("[startup] Binance schema init failed")
+
     # Create admin user if not exists (idempotent)
     try:
         await ensure_bootstrap()
@@ -1184,6 +1181,111 @@ async def journal_upload_image(request: Request):
         logger.error(f"[api/journal/image] Error: {e}")
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+
+# ── Binance API Management ─────────────────────────────────────────
+
+@app.get("/api/binance/connections")
+async def binance_list_connections(user: dict = Depends(get_current_user)):
+    """List Binance API connections for the authenticated user (no keys)."""
+    try:
+        connections = await get_connections(user["user_id"])
+        masked = []
+        for c in connections:
+            masked.append({
+                "id": c["id"],
+                "label": c["label"],
+                "is_active": c["is_active"],
+                "created_at": c["created_at"],
+            })
+        return {"connections": masked, "max_allowed": 10}
+    except Exception as e:
+        logger.error(f"[api/binance] List connections error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/binance/connect")
+async def binance_connect(request: Request, user: dict = Depends(get_current_user)):
+    """Save a new Binance API connection (encrypted)."""
+    try:
+        body = await request.json()
+        label = (body.get("label") or "Binance").strip()
+        api_key = (body.get("api_key") or "").strip()
+        api_secret = (body.get("api_secret") or "").strip()
+        if not api_key or not api_secret:
+            return JSONResponse(status_code=400, content={"error": "API key and secret required"})
+        conn_id = await save_connection(user["user_id"], label, api_key, api_secret)
+        return {"ok": True, "conn_id": conn_id}
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except Exception as e:
+        logger.error(f"[api/binance] Connect error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.delete("/api/binance/connections/{conn_id}")
+async def binance_delete_connection(conn_id: int, user: dict = Depends(get_current_user)):
+    """Remove a Binance API connection."""
+    try:
+        ok = await delete_connection(conn_id, user["user_id"])
+        if not ok:
+            return JSONResponse(status_code=404, content={"error": "Connection not found"})
+        return {"ok": True}
+    except Exception as e:
+        logger.error(f"[api/binance] Delete error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/binance/test")
+async def binance_test_keys(request: Request):
+    """Test Binance API keys before saving (no auth required)."""
+    try:
+        body = await request.json()
+        api_key = (body.get("api_key") or "").strip()
+        api_secret = (body.get("api_secret") or "").strip()
+        if not api_key or not api_secret:
+            return JSONResponse(status_code=400, content={"error": "API key and secret required"})
+        result = await test_binance_connection(api_key, api_secret)
+        return result
+    except Exception as e:
+        logger.error(f"[api/binance] Test error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@app.post("/api/binance/import")
+async def binance_import_trades(request: Request, user: dict = Depends(get_current_user)):
+    """Import trades from Binance to journal for a specific connection."""
+    try:
+        body = await request.json()
+        conn_id = body.get("conn_id")
+        start_date = body.get("start_date", "2026-09-01")
+        end_date = body.get("end_date")
+        if not conn_id:
+            return JSONResponse(status_code=400, content={"error": "conn_id required"})
+        result = await import_binance_trades(
+            user_id=user["user_id"],
+            conn_id=conn_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        if result.get("error"):
+            return JSONResponse(status_code=400, content=result)
+        return result
+    except Exception as e:
+        logger.error(f"[api/binance] Import error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+# ── Admin Analytics ─────────────────────────────────────────────────
+
+@app.get("/api/journal/stats/all-users", dependencies=[Depends(get_current_admin)])
+async def journal_stats_all_users():
+    """Admin-only: aggregate stats across ALL users with per-user breakdown."""
+    try:
+        stats = await journal_schema.get_journal_stats(user_id="__all__", admin_mode=True)
+        return stats
+    except Exception as e:
+        logger.error(f"[api/journal/stats/all-users] Error: {e}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
 
 if __name__ == "__main__":
     import uvicorn
